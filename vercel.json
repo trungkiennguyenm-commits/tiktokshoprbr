@@ -1,10 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["sin1"],
   "crons": [
     {
       "path": "/api/cron/refresh-tokens",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/sync?resource=orders",
+      "schedule": "0 20 * * *"
     }
   ]
 }
