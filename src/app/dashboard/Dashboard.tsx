@@ -53,24 +53,42 @@ type CatKey = (typeof CATS)[number]['key']
 const TABS = ['Tổng quan', 'Theo ngành hàng', 'Theo SKU', 'Khuyến mãi', 'Huỷ đơn', 'PnL'] as const
 type Tab = (typeof TABS)[number]
 
-/** Gộp nhiều dòng (mỗi category một dòng) thành một dòng tổng theo kỳ. */
-function rollup<T extends Record<string, unknown>>(rows: T[], key: keyof T, cat: CatKey) {
+/**
+ * Gộp các dòng (mỗi category một dòng) thành một dòng tổng theo kỳ.
+ * Khai báo kiểu tường minh — đừng dùng spread của Record<string, number>,
+ * TypeScript không suy ra được từng cột và build sẽ hỏng.
+ */
+type Rolled = {
+  ky: string
+  so_luong: number; sl_hoan_tat: number; sl_huy: number
+  gmv: number; nmv: number; seller_disc: number; platform_disc: number
+  cancel_rate: number
+}
+
+const ZERO = (ky: string): Rolled => ({
+  ky, so_luong: 0, sl_hoan_tat: 0, sl_huy: 0,
+  gmv: 0, nmv: 0, seller_disc: 0, platform_disc: 0, cancel_rate: 0,
+})
+
+function rollup(rows: (Monthly | Daily)[], cat: CatKey): Rolled[] {
   const filtered = cat === 'all' ? rows : rows.filter((r) => r.category === cat)
-  const map = new Map<string, Record<string, number>>()
+  const map = new Map<string, Rolled>()
+
   for (const r of filtered) {
-    const k = String(r[key])
-    const cur = map.get(k) ?? {}
-    for (const [f, v] of Object.entries(r)) {
-      if (typeof v === 'number' || (!isNaN(Number(v)) && f !== 'thang' && f !== 'ngay')) {
-        if (f === 'cancel_rate' || f === 'gio_huy_tb') continue
-        cur[f] = (cur[f] ?? 0) + Number(v || 0)
-      }
-    }
+    const k = 'thang' in r ? r.thang : r.ngay
+    const cur = map.get(k) ?? ZERO(k)
+    cur.so_luong += Number(r.so_luong || 0)
+    cur.sl_hoan_tat += Number(r.sl_hoan_tat || 0)
+    cur.sl_huy += Number(r.sl_huy || 0)
+    cur.gmv += Number(r.gmv || 0)
+    cur.nmv += Number(r.nmv || 0)
+    cur.seller_disc += Number(r.seller_disc || 0)
+    cur.platform_disc += Number(r.platform_disc || 0)
     map.set(k, cur)
   }
-  return Array.from(map.entries())
-    .map(([k, v]) => ({
-      ky: k,
+
+  return Array.from(map.values())
+    .map((v) => ({
       ...v,
       cancel_rate: v.so_luong ? Math.round((v.sl_huy / v.so_luong) * 1000) / 10 : 0,
     }))
@@ -184,11 +202,8 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
   const [mode, setMode] = useState<'mom' | 'd30'>('mom')
   const [sortKey, setSortKey] = useState<keyof Sku>('nmv')
 
-  const src = mode === 'mom' ? monthly : daily
-  const series = useMemo(
-    () => rollup(src as unknown as Record<string, unknown>[], mode === 'mom' ? 'thang' : 'ngay', cat),
-    [src, mode, cat],
-  )
+  const src: (Monthly | Daily)[] = mode === 'mom' ? monthly : daily
+  const series = useMemo(() => rollup(src, cat), [src, cat])
   const shown = mode === 'mom' ? series.filter((r) => r.so_luong >= 20) : series.slice(-30)
 
   const cur = shown[shown.length - 1]
@@ -253,6 +268,7 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
                 sub={deltaText(delta(cur?.gmv, prev?.gmv), kyText)} />
               <Tile label="Số lượng bán" value={n0(cur?.so_luong ?? 0)} unit=" máy"
                 sub={deltaText(delta(cur?.so_luong, prev?.so_luong), kyText)} />
+              {/* cancel rate dùng cur.cancel_rate đã tính lại trong rollup */}
               <Tile label="Cancel rate" value={pct(cur?.cancel_rate ?? 0)}
                 tone={(cur?.cancel_rate ?? 0) > 40 ? 'bad' : 'ok'}
                 sub={`${n0(cur?.sl_huy ?? 0)} máy bị huỷ`} />
