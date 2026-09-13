@@ -7,57 +7,70 @@ import type { SyncAdapter, SyncPage } from '../runner'
 /**
  * Đồng bộ đơn hàng.
  *
- * Cursor ở đây là hai phần ghép bằng dấu "|":
- *   <mốc thời gian update_time_ge>|<page_token>
- * Nhờ vậy vừa nhớ được lấy từ đâu, vừa nhớ được đang ở trang nào.
+ * Cursor = "<mốc update_time_ge>|<page_token>".
  *
- * LƯU Ý: tên field trong response của TikTok có thể đổi theo version.
- * Vì vậy toàn bộ payload gốc được lưu vào cột `raw` — nếu map sai field nào
- * thì vẫn tính lại được từ `raw` mà không phải kéo lại dữ liệu.
+ * Toàn bộ payload gốc vẫn được lưu vào cột `raw`, nên nếu TikTok đổi tên field
+ * thì tính lại được bằng SQL mà không phải kéo lại dữ liệu.
+ *
+ * ĐÃ ĐỐI CHIẾU VỚI DỮ LIỆU THẬT (2026-09-12, 2.250 đơn của Roborock Official VN):
+ * - line_items KHÔNG có field số lượng. Mỗi phần tử = một đơn vị sản phẩm.
+ *   Muốn biết số lượng bán thì ĐẾM số line_items, đừng cộng cột quantity.
+ * - KHÔNG có creator_id / live_id / content_type trong Order API.
+ *   Quy thuộc đơn về phiên live phải lấy từ Analytics API, không lấy ở đây.
+ * - Field huỷ đúng tên là `cancel_time` và `cancellation_initiator`
+ *   (không phải `cancel_user` như doc gợi ý).
+ * - KHÔNG có `paid_time` ở cấp đơn hàng.
+ * - `is_cod` có mặt ở mọi đơn và là yếu tố chi phối cancel rate mạnh nhất.
  */
+
+type TtsLineItem = {
+  id?: string
+  sku_id?: string
+  product_id?: string
+  product_name?: string
+  sku_name?: string
+  seller_sku?: string
+  sku_type?: string
+  is_gift?: boolean
+  original_price?: string
+  sale_price?: string
+  seller_discount?: string
+  platform_discount?: string
+}
 
 type TtsOrder = {
   id: string
   status?: string
   create_time?: number
   update_time?: number
+  cancel_time?: number
   paid_time?: number
   delivery_time?: number
   cancel_reason?: string
-  cancel_user?: string
+  cancellation_initiator?: string
+  is_cod?: boolean
+  order_type?: string
+  commerce_platform?: string
   payment?: { total_amount?: string; currency?: string }
   payment_method_name?: string
   recipient_address?: { region_code?: string }
-  line_items?: Array<{
-    id?: string
-    sku_id?: string
-    product_id?: string
-    product_name?: string
-    sku_name?: string
-    original_price?: string
-    sale_price?: string
-  }>
+  line_items?: TtsLineItem[]
   [k: string]: unknown
 }
 
 const PAGE_SIZE = 50
-
-/** Backfill mặc định 90 ngày khi chạy lần đầu. */
 const DEFAULT_BACKFILL_DAYS = 90
+/** Biên chồng lấn giữa hai lần chạy, tính bằng ngày. */
+const OVERLAP_DAYS = 2
 
 function parseCursor(cursor: string): { since: number; pageToken: string } {
   const [sincePart, tokenPart = ''] = cursor.split('|')
   return { since: Number(sincePart), pageToken: tokenPart }
 }
 
-function toSeconds(d: Date) {
-  return Math.floor(d.getTime() / 1000)
-}
+const toSeconds = (d: Date) => Math.floor(d.getTime() / 1000)
 
-function tsToIso(seconds?: number): string | null {
-  if (!seconds) return null
-  return new Date(seconds * 1000).toISOString()
-}
+const tsToIso = (s?: number) => (s ? new Date(s * 1000).toISOString() : null)
 
 function toNumber(v?: string): number | null {
   if (v === undefined || v === null || v === '') return null
@@ -74,15 +87,21 @@ export const ordersAdapter: SyncAdapter<TtsOrder> = {
     return `${toSeconds(since)}|`
   },
 
+  /**
+   * Sau khi kéo hết: lùi lại 2 ngày làm biên an toàn, để không sót đơn
+   * được cập nhật ngay lúc giao thời giữa hai lần chạy.
+   */
+  completedCursor() {
+    const since = new Date()
+    since.setDate(since.getDate() - OVERLAP_DAYS)
+    return `${toSeconds(since)}|`
+  },
+
   async fetchPage(ctx: ShopContext, cursor: string): Promise<SyncPage<TtsOrder>> {
     const { since, pageToken } = parseCursor(cursor)
 
     const data = await withRetry(() =>
-      ttsRequest<{
-        orders?: TtsOrder[]
-        next_page_token?: string
-        total_count?: number
-      }>({
+      ttsRequest<{ orders?: TtsOrder[]; next_page_token?: string }>({
         path: TTS.PATHS.orderList,
         method: 'POST',
         accessToken: ctx.accessToken,
@@ -115,12 +134,16 @@ export const ordersAdapter: SyncAdapter<TtsOrder> = {
       shop_id: ctx.shopId,
       status: o.status ?? null,
       create_time: tsToIso(o.create_time),
-      paid_time: tsToIso(o.paid_time),
-      delivery_time: tsToIso(o.delivery_time),
       update_time: tsToIso(o.update_time),
-      cancel_time: o.status === 'CANCELLED' ? tsToIso(o.update_time) : null,
+      cancel_time: tsToIso(o.cancel_time),
+      delivery_time: tsToIso(o.delivery_time),
+      paid_time: tsToIso(o.paid_time), // có ở ~40% đơn (đơn đã thanh toán)
       cancel_reason: o.cancel_reason ?? null,
-      cancel_by: o.cancel_user ?? null,
+      cancellation_initiator: o.cancellation_initiator ?? null,
+      cancel_by: o.cancellation_initiator ?? null,
+      is_cod: o.is_cod ?? null,
+      order_type: o.order_type ?? null,
+      commerce_platform: o.commerce_platform ?? null,
       total_amount: toNumber(o.payment?.total_amount),
       currency: o.payment?.currency ?? 'VND',
       payment_method: o.payment_method_name ?? null,
@@ -142,9 +165,15 @@ export const ordersAdapter: SyncAdapter<TtsOrder> = {
         product_id: li.product_id ?? null,
         product_name: li.product_name ?? null,
         sku_name: li.sku_name ?? null,
+        seller_sku: li.seller_sku ?? null,
+        sku_type: li.sku_type ?? null,
+        is_gift: li.is_gift ?? null,
+        // Mỗi line_item là MỘT đơn vị sản phẩm — TikTok không trả số lượng.
         quantity: 1,
         original_price: toNumber(li.original_price),
         sale_price: toNumber(li.sale_price),
+        seller_discount: toNumber(li.seller_discount),
+        platform_discount: toNumber(li.platform_discount),
       })),
     )
 

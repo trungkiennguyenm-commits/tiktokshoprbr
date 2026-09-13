@@ -11,8 +11,14 @@ export type SyncPage<T> = {
 export type SyncAdapter<T> = {
   /** Tên resource, dùng làm khoá trong sync_cursors và sync_runs */
   name: string
-  /** Giá trị cursor khi chạy lần đầu */
+  /** Cursor khi chạy lần đầu — thường là backfill lùi lại một khoảng dài */
   initialCursor: () => string
+  /**
+   * Cursor đặt lại sau khi đã kéo hết.
+   * PHẢI là một mốc gần hiện tại, nếu không lần chạy sau sẽ kéo lại toàn bộ
+   * backfill và cron hằng ngày quay vòng mãi không xong.
+   */
+  completedCursor: () => string
   fetchPage: (ctx: ShopContext, cursor: string) => Promise<SyncPage<T>>
   /** Phải idempotent: chạy lại cùng dữ liệu không được nhân đôi bản ghi */
   upsert: (ctx: ShopContext, rows: T[]) => Promise<number>
@@ -82,8 +88,8 @@ export async function runSync<T>(
     }
 
     if (!hasMore && result.status === 'success') {
-      // Chạy hết rồi thì đặt lại mốc cho lần sau, để lần sau chỉ lấy phần mới.
-      await writeCursor(ctx.shopId, adapter.name, adapter.initialCursor())
+      // Kéo hết rồi: đẩy mốc lên sát hiện tại, để lần sau chỉ lấy phần mới.
+      await writeCursor(ctx.shopId, adapter.name, adapter.completedCursor())
     }
   } catch (err) {
     result.status = 'error'
