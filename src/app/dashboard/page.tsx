@@ -44,8 +44,17 @@ export default async function Dashboard() {
     )
   }
 
-  const maxCancel = Math.max(60, ...monthly.map((m) => Number(m.cancel_rate) || 0))
-  const maxGmv = Math.max(1, ...monthly.map((m) => Number(m.gmv) || 0))
+  /**
+   * Tháng có quá ít đơn thì tỷ lệ vô nghĩa — một đơn huỷ trên một đơn cũng ra 100%.
+   * Những tháng đó chỉ lọt vào vì bộ lọc theo thời điểm cập nhật, không phản ánh
+   * hoạt động thật của tháng. Bỏ ra khỏi biểu đồ thay vì để người đọc tự đoán.
+   */
+  const MIN_ORDERS = 50
+  const plotted = monthly.filter((m) => Number(m.don) >= MIN_ORDERS)
+  const hidden = monthly.length - plotted.length
+
+  const maxCancel = Math.max(60, ...plotted.map((m) => Number(m.cancel_rate) || 0))
+  const maxGmv = Math.max(1, ...plotted.map((m) => Number(m.gmv) || 0))
   const maxReason = Math.max(1, ...reasons.map((r) => r.don))
   const maxSku = Math.max(1, ...skus.map((s) => Number(s.doanh_thu) || 0))
 
@@ -76,13 +85,16 @@ export default async function Dashboard() {
         {/* ---- Cancel rate theo tháng ---- */}
         <section>
           <h2>Cancel rate theo tháng</h2>
-          <p className="sub">Đường đứt là ngưỡng KPI {CANCEL_KPI}%. Cột đỏ là tháng vượt ngưỡng.</p>
+          <p className="sub">
+            Đường đứt là ngưỡng KPI {CANCEL_KPI}%. Cột đỏ là tháng vượt ngưỡng.
+            {hidden > 0 && ` Đã ẩn ${hidden} tháng có dưới ${MIN_ORDERS} đơn — mẫu quá nhỏ nên tỷ lệ không có ý nghĩa.`}
+          </p>
 
           <div className="chart" style={{ ['--kpi' as string]: `${(1 - CANCEL_KPI / maxCancel) * 100}%` }}>
             <div className="kpi-line" aria-hidden="true">
               <span>{CANCEL_KPI}%</span>
             </div>
-            {monthly.map((m) => {
+            {plotted.map((m) => {
               const v = Number(m.cancel_rate) || 0
               const over = v > CANCEL_KPI
               return (
@@ -94,7 +106,10 @@ export default async function Dashboard() {
                     />
                   </div>
                   <div className="val">{v}%</div>
-                  <div className="lbl">{m.thang.slice(5)}/{m.thang.slice(2, 4)}</div>
+                  <div className="lbl">
+                    {m.thang.slice(5)}/{m.thang.slice(2, 4)}
+                    <span className="n-small">{num(m.don)} đơn</span>
+                  </div>
                 </div>
               )
             })}
@@ -107,7 +122,7 @@ export default async function Dashboard() {
           <p className="sub">Chỉ đơn đã COMPLETED. Tháng gần nhất còn nhiều đơn đang giao nên sẽ thấp giả tạo.</p>
 
           <div className="chart">
-            {monthly.map((m) => {
+            {plotted.map((m) => {
               const v = Number(m.gmv) || 0
               return (
                 <div className="col" key={m.thang} title={`${m.thang}: ${vnd(v)}đ`}>
@@ -278,7 +293,9 @@ const CSS = `
 .bar{width:100%;border-radius:4px 4px 0 0;min-height:2px;transition:opacity .15s}
 .col:hover .bar{opacity:.82}
 .val{font-size:11.5px;font-variant-numeric:tabular-nums;text-align:center;margin-top:6px;color:var(--ink-2)}
-.lbl{position:absolute;bottom:12px;font-size:11px;color:var(--muted);text-align:center;width:100%;left:0}
+.lbl{position:absolute;bottom:4px;font-size:11px;color:var(--muted);text-align:center;width:100%;left:0;
+  line-height:1.35}
+.n-small{display:block;font-size:9.5px;opacity:.75;font-variant-numeric:tabular-nums}
 .col{position:relative}
 
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:22px}
