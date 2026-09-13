@@ -3,14 +3,16 @@
 import { Fragment, useMemo, useState } from 'react'
 import {
   BarChart, StackChart, DeltaChart, RowBars, ComboChart, MultiStack,
-  type Pt, type Pt2, type PtN,
+  type Pt, type PtN,
 } from './charts'
 
-/* ============================ kiểu dữ liệu ============================ */
+/* ============================== data types ==============================
+   GMV and NMV share one money formula: list price − seller discount.
+   They differ only in the order set: GMV takes every status, NMV drops
+   cancelled orders. So GMV = NMV + gmv_mat_do_huy, which is why NMV can
+   legitimately stack inside the GMV column.
+   ====================================================================== */
 
-/* GMV và NMV cùng công thức tiền: giá gốc − seller discount.
-   Khác nhau ở tập đơn: GMV lấy mọi trạng thái, NMV bỏ đơn đã huỷ.
-   Vì vậy GMV = NMV + gmv_mat_do_huy, và NMV xếp chồng được trong cột GMV. */
 export type Monthly = {
   thang: string; category: string; so_luong: number
   sl_chua_huy: number; sl_hoan_tat: number; sl_huy: number; cancel_rate: number
@@ -23,13 +25,13 @@ export type Daily = {
   gmv: number; nmv: number; nmv_hoan_tat: number; gmv_mat_do_huy: number; khach_tra: number
   seller_disc: number; platform_disc: number
 }
-/** Một model trong một kỳ. Dùng cho cột chồng theo model. */
 export type SkuPeriod = {
-  product_id: string; model: string; category: string; ky: string
-  so_luong: number; sl_huy: number; gmv: number; nmv: number
+  model: string; category: string; ky: string
+  so_luong: number; sl_chua_huy: number; sl_huy: number; cancel_rate: number
+  gmv: number; nmv: number
 }
 export type Sku = {
-  product_id: string; model: string; category: string
+  model: string; category: string
   so_luong: number; sl_chua_huy: number; sl_hoan_tat: number; sl_huy: number; cancel_rate: number
   gmv: number; nmv: number; nmv_hoan_tat: number
   gia_goc_tb: number; gia_ban_tb: number; gia_khach_tra_tb: number
@@ -53,30 +55,37 @@ type Props = {
   lapse: Lapse[]; pnl: Pnl[]; ship: Ship[]
 }
 
-/* ============================ tiện ích ============================ */
+/* ============================== helpers ============================== */
 
-const n0 = (v: number) => new Intl.NumberFormat('vi-VN').format(Math.round(v || 0))
-const ty = (v: number) => ((v || 0) / 1e9).toFixed(2)
-const tr = (v: number) => ((v || 0) / 1e6).toFixed(0)
+const n0 = (v: number) => new Intl.NumberFormat('en-US').format(Math.round(v || 0))
+const bn = (v: number) => ((v || 0) / 1e9).toFixed(2)
+const mn = (v: number) => ((v || 0) / 1e6).toFixed(0)
 const pct = (v: number) => (v == null ? '—' : `${v}%`)
-const mmyy = (s: string) => `${s.slice(5, 7)}/${s.slice(2, 4)}`
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const mmyy = (s: string) => `${MONTH_NAMES[Number(s.slice(5, 7)) - 1]} ${s.slice(2, 4)}`
 const ddmm = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`
 
 const CATS = [
-  { key: 'all', nhan: 'Tất cả' },
-  { key: 'robot', nhan: 'Robot' },
-  { key: 'handheld', nhan: 'Handheld' },
+  { key: 'all', label: 'All products' },
+  { key: 'robot', label: 'Robot' },
+  { key: 'handheld', label: 'Handheld' },
 ] as const
 type CatKey = (typeof CATS)[number]['key']
 
-const TABS = ['Tổng quan', 'Theo ngành hàng', 'Theo SKU', 'Khuyến mãi', 'Huỷ đơn', 'PnL'] as const
+const RANGES = [
+  { key: 'mom', label: 'By month' },
+  { key: 'd30', label: 'Last 30 days' },
+  { key: 'd7', label: 'Last 7 days' },
+] as const
+type RangeKey = 'mom' | 'd30' | 'd7' | 'month'
+
+const TABS = ['Overview', 'Category', 'SKU', 'Discounts', 'Cancellations', 'P&L'] as const
 type Tab = (typeof TABS)[number]
 
-/**
- * Gộp các dòng (mỗi category một dòng) thành một dòng tổng theo kỳ.
- * Khai báo kiểu tường minh — đừng dùng spread của Record<string, number>,
- * TypeScript không suy ra được từng cột và build sẽ hỏng.
- */
+/** Roll per-category rows up into one row per period. Declare the type
+ *  explicitly — spreading Record<string, number> loses the index signature
+ *  and the build fails on every field access. */
 type Rolled = {
   ky: string
   so_luong: number; sl_chua_huy: number; sl_hoan_tat: number; sl_huy: number
@@ -91,12 +100,12 @@ const ZERO = (ky: string): Rolled => ({
   seller_disc: 0, platform_disc: 0, cancel_rate: 0,
 })
 
-/** Bảng màu định tính cho cột chồng theo model. */
+/** Categorical palette for the model mix column. */
 const PALETTE = [
   '#2563A8', '#C2620B', '#1F7A4D', '#8E44AD', '#B31B4A',
   '#0E7490', '#8A6D1F', '#4A5568', '#166534', '#7C2D12',
 ]
-const MAU_KHAC = '#A9A2AB'
+const GREY = '#A9A2AB'
 
 const keyOf = (r: Monthly | Daily) => ('thang' in r ? r.thang : r.ngay)
 
@@ -129,9 +138,8 @@ function rollup(rows: (Monthly | Daily)[], cat: CatKey): Rolled[] {
     .sort((a, b) => a.ky.localeCompare(b.ky))
 }
 
-/** Tách một chỉ tiêu thành hai chuỗi robot / handheld để vẽ cột chồng. */
-function splitByCat(rows: (Monthly | Daily)[], pick: (r: Monthly | Daily) => number): Pt2[] {
-  const map = new Map<string, Pt2>()
+function splitByCat(rows: (Monthly | Daily)[], pick: (r: Monthly | Daily) => number) {
+  const map = new Map<string, { ky: string; a: number; b: number }>()
   for (const r of rows) {
     const k = keyOf(r)
     const cur = map.get(k) ?? { ky: k, a: 0, b: 0 }
@@ -142,7 +150,7 @@ function splitByCat(rows: (Monthly | Daily)[], pick: (r: Monthly | Daily) => num
   return Array.from(map.values()).sort((a, b) => a.ky.localeCompare(b.ky))
 }
 
-/* ============================ thành phần chung ============================ */
+/* ============================ shared pieces ============================ */
 
 function Tile({ label, value, unit, sub, tone }: {
   label: string; value: string; unit?: string; sub?: string; tone?: 'ok' | 'bad'
@@ -158,30 +166,35 @@ function Tile({ label, value, unit, sub, tone }: {
   )
 }
 
-/** Bảng chi tiết đi kèm biểu đồ: mỗi kỳ một dòng, kèm biến động so với kỳ trước. */
+/** Change vs the previous row. */
+function Dd({ a, b }: { a?: number; b?: number }) {
+  if (a == null || b == null || !b) return <span className="muted">—</span>
+  const d = Math.round(((a - b) / b) * 1000) / 10
+  return <span className={d >= 0 ? 'up' : 'down'}>{d >= 0 ? '▲' : '▼'}{Math.abs(d)}%</span>
+}
+
 function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string }) {
-  const [mo, setMo] = useState(false)
-  const view = mo ? rows : rows.slice(-12)
+  const [all, setAll] = useState(false)
+  const view = all ? rows : rows.slice(-14)
   return (
     <>
       <div className="tablewrap">
         <table>
           <thead><tr>
-            <th>Kỳ</th>
-            <th className="n">SL bán</th>
-            <th className="n">±SL</th>
-            <th className="n">Hoàn tất</th>
-            <th className="n">Huỷ</th>
-            <th className="n">Huỷ %</th>
+            <th>Period</th>
+            <th className="n">Gross pcs</th>
+            <th className="n">±</th>
+            <th className="n">Net pcs</th>
+            <th className="n">Cancelled</th>
+            <th className="n">Cancel %</th>
             <th className="n">GMV</th>
-            <th className="n">±GMV</th>
             <th className="n">NMV</th>
             <th className="n">±NMV</th>
-            <th className="n">Mất do huỷ</th>
-            <th className="n">NMV hoàn tất</th>
-            <th className="n">Khách thực trả</th>
-            <th className="n">Shop giảm</th>
-            <th className="n">Sàn giảm</th>
+            <th className="n">Lost to cancels</th>
+            <th className="n">NMV completed</th>
+            <th className="n">Buyer paid</th>
+            <th className="n">Seller disc.</th>
+            <th className="n">Platform disc.</th>
           </tr></thead>
           <tbody>
             {view.map((r, i) => {
@@ -191,18 +204,17 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
                   <td className="k">{lbl(r.ky)}</td>
                   <td className="n">{n0(r.so_luong)}</td>
                   <td className="n"><Dd a={r.so_luong} b={p?.so_luong} /></td>
-                  <td className="n">{n0(r.sl_hoan_tat)}</td>
+                  <td className="n"><b>{n0(r.sl_chua_huy)}</b></td>
                   <td className="n">{n0(r.sl_huy)}</td>
                   <td className="n" style={{ color: r.cancel_rate > 40 ? 'var(--bad)' : 'inherit' }}>{pct(r.cancel_rate)}</td>
-                  <td className="n">{ty(r.gmv)}</td>
-                  <td className="n"><Dd a={r.gmv} b={p?.gmv} /></td>
-                  <td className="n"><b>{ty(r.nmv)}</b></td>
+                  <td className="n">{bn(r.gmv)}</td>
+                  <td className="n"><b>{bn(r.nmv)}</b></td>
                   <td className="n"><Dd a={r.nmv} b={p?.nmv} /></td>
-                  <td className="n" style={{ color: 'var(--bad)' }}>{ty(r.gmv_mat_do_huy)}</td>
-                  <td className="n muted">{ty(r.nmv_hoan_tat)}</td>
-                  <td className="n muted">{ty(r.khach_tra)}</td>
-                  <td className="n">{ty(r.seller_disc)}</td>
-                  <td className="n">{ty(r.platform_disc)}</td>
+                  <td className="n" style={{ color: 'var(--bad)' }}>{bn(r.gmv_mat_do_huy)}</td>
+                  <td className="n muted">{bn(r.nmv_hoan_tat)}</td>
+                  <td className="n muted">{bn(r.khach_tra)}</td>
+                  <td className="n">{bn(r.seller_disc)}</td>
+                  <td className="n muted">{bn(r.platform_disc)}</td>
                 </tr>
               )
             })}
@@ -210,10 +222,10 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
         </table>
       </div>
       <p className="foot">
-        Tiền tính bằng tỷ đồng.{' '}
-        {rows.length > 12 && (
-          <button className="lnk" onClick={() => setMo(!mo)}>
-            {mo ? 'Thu gọn' : `Xem tất cả ${rows.length} kỳ`}
+        Money in VND bn.{' '}
+        {rows.length > 14 && (
+          <button className="lnk" onClick={() => setAll(!all)}>
+            {all ? 'Show fewer' : `Show all ${rows.length} periods`}
           </button>
         )}
       </p>
@@ -221,37 +233,43 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
   )
 }
 
-/** Ô biến động % so với dòng trước. */
-function Dd({ a, b }: { a?: number; b?: number }) {
-  if (a == null || b == null || !b) return <span className="muted">—</span>
-  const d = Math.round(((a - b) / b) * 1000) / 10
-  return <span className={d >= 0 ? 'up' : 'down'}>{d >= 0 ? '▲' : '▼'}{Math.abs(d)}%</span>
-}
-
-/* ============================ trang ============================ */
+/* ================================ page ================================ */
 
 export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, lapse, pnl, ship }: Props) {
-  const [tab, setTab] = useState<Tab>('Tổng quan')
+  const [tab, setTab] = useState<Tab>('Overview')
   const [cat, setCat] = useState<CatKey>('all')
-  const [mode, setMode] = useState<'mom' | 'd30'>('mom')
+  const [range, setRange] = useState<RangeKey>('mom')
+  const [month, setMonth] = useState('')
   const [sortKey, setSortKey] = useState<keyof Sku>('nmv')
-  const [skuMetric, setSkuMetric] = useState<'gmv' | 'so_luong'>('gmv')
-  const [dong, setDong] = useState<Set<string>>(new Set())
-  const toggleDong = (c: string) =>
-    setDong((p) => {
+  const [mixMetric, setMixMetric] = useState<'gmv' | 'so_luong'>('gmv')
+  const [modelSel, setModelSel] = useState('')
+  const [closed, setClosed] = useState<Set<string>>(new Set())
+
+  const toggleClosed = (c: string) =>
+    setClosed((p) => {
       const n = new Set(p)
       if (n.has(c)) n.delete(c); else n.add(c)
       return n
     })
 
-  const src: (Monthly | Daily)[] = mode === 'mom' ? monthly : daily
+  const byMonth = range === 'mom'
+  const src: (Monthly | Daily)[] = byMonth ? monthly : daily
 
-  /** Các kỳ đủ dữ liệu để so sánh. Tháng quá ít đơn là do cửa sổ đồng bộ, không phải kinh doanh. */
+  const months = useMemo(
+    () => Array.from(new Set(monthly.map((r) => r.thang))).sort().reverse(),
+    [monthly],
+  )
+
+  /** Which periods the current filter keeps. */
   const keys = useMemo(() => {
     const all = rollup(src, 'all')
-    const ok = mode === 'mom' ? all.filter((r) => r.so_luong >= 20) : all.slice(-30)
-    return new Set(ok.map((r) => r.ky))
-  }, [src, mode])
+    let picked: Rolled[]
+    if (range === 'mom') picked = all.filter((r) => r.so_luong >= 20)
+    else if (range === 'd30') picked = all.slice(-30)
+    else if (range === 'd7') picked = all.slice(-7)
+    else picked = all.filter((r) => r.ky.slice(0, 7) === month.slice(0, 7))
+    return new Set(picked.map((r) => r.ky))
+  }, [src, range, month])
 
   const srcShown = useMemo(() => src.filter((r) => keys.has(keyOf(r))), [src, keys])
   const shown = useMemo(() => rollup(srcShown, cat), [srcShown, cat])
@@ -263,31 +281,54 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
 
   const skuF = useMemo(
     () => (cat === 'all' ? sku : sku.filter((s) => s.category === cat))
+      .filter((s) => !modelSel || s.model === modelSel)
       .slice()
       .sort((a, b) => Number(b[sortKey] ?? 0) - Number(a[sortKey] ?? 0)),
-    [sku, cat, sortKey],
+    [sku, cat, sortKey, modelSel],
   )
 
-  /** Cột chồng theo model: giữ 8 model lớn nhất, phần còn lại gộp vào "Khác". */
-  const modelStack = useMemo(() => {
-    const rows = (mode === 'mom' ? skuMonthly : skuDaily)
+  const allModels = useMemo(
+    () => Array.from(new Set(sku.filter((s) => cat === 'all' || s.category === cat).map((s) => s.model))).sort(),
+    [sku, cat],
+  )
+
+  /** SKU rows inside the current period + category + model filter. */
+  const skuRows = useMemo(
+    () => (byMonth ? skuMonthly : skuDaily)
       .filter((r) => keys.has(r.ky))
       .filter((r) => cat === 'all' || r.category === cat)
-    const val = (r: SkuPeriod) => Number((skuMetric === 'gmv' ? r.gmv : r.so_luong) || 0)
+      .filter((r) => !modelSel || r.model === modelSel),
+    [byMonth, skuMonthly, skuDaily, keys, cat, modelSel],
+  )
 
-    const tong = new Map<string, number>()
-    for (const r of rows) tong.set(r.model, (tong.get(r.model) ?? 0) + val(r))
-    const top = Array.from(tong.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8).map((e) => e[0])
-    const co_khac = tong.size > top.length
+  /** Gross / net per period for the SKU combo chart. */
+  const skuTrend = useMemo(() => {
+    const map = new Map<string, { ky: string; gross: number; net: number }>()
+    for (const r of skuRows) {
+      const c = map.get(r.ky) ?? { ky: r.ky, gross: 0, net: 0 }
+      c.gross += Number(r.so_luong || 0)
+      c.net += Number(r.sl_chua_huy || 0)
+      map.set(r.ky, c)
+    }
+    return Array.from(map.values()).sort((a, b) => a.ky.localeCompare(b.ky))
+  }, [skuRows])
+
+  /** Model mix column: keep the 8 largest, fold the rest into "Other". */
+  const mix = useMemo(() => {
+    const val = (r: SkuPeriod) => Number((mixMetric === 'gmv' ? r.gmv : r.so_luong) || 0)
+    const totals = new Map<string, number>()
+    for (const r of skuRows) totals.set(r.model, (totals.get(r.model) ?? 0) + val(r))
+    const top = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8).map((e) => e[0])
+    const hasOther = totals.size > top.length
 
     const series = [
       ...top.map((m, i) => ({ ten: m, color: PALETTE[i % PALETTE.length] })),
-      ...(co_khac ? [{ ten: 'Khác', color: MAU_KHAC }] : []),
+      ...(hasOther ? [{ ten: 'Other', color: GREY }] : []),
     ]
     const idx = new Map(top.map((m, i) => [m, i]))
 
     const byKy = new Map<string, number[]>()
-    for (const r of rows) {
+    for (const r of skuRows) {
       const arr = byKy.get(r.ky) ?? new Array(series.length).fill(0)
       arr[idx.get(r.model) ?? top.length] += val(r)
       byKy.set(r.ky, arr)
@@ -297,11 +338,12 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
       .map(([ky, parts]) => ({ ky, parts }))
 
     return { series, data }
-  }, [mode, skuMonthly, skuDaily, keys, cat, skuMetric])
+  }, [skuRows, mixMetric])
 
-  const lbl = mode === 'mom' ? mmyy : ddmm
-  const kyText = mode === 'mom' ? 'tháng' : 'ngày'
-  const dodText = mode === 'mom' ? 'MoM' : 'DoD'
+  const lbl = byMonth ? mmyy : ddmm
+  const periodWord = byMonth ? 'month' : 'day'
+  const dod = byMonth ? 'MoM' : 'DoD'
+  const scopeLabel = modelSel || (cat === 'all' ? 'all products' : cat)
 
   const pt = (pick: (r: Rolled) => number): Pt[] => shown.map((r) => ({ ky: r.ky, v: pick(r) }))
 
@@ -311,31 +353,49 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
       <main className="wrap">
         <header>
           <p className="eyebrow">Roborock Official VN · TikTok Shop</p>
-          <h1>Hiệu quả kinh doanh</h1>
+          <h1>Business performance</h1>
           <p className="lede">
-            Robot và handheld, đã loại quà tặng và phụ kiện. GMV và NMV cùng tính bằng
-            <b> giá gốc trừ seller discount</b>, không trừ voucher sàn. GMV lấy mọi trạng thái đơn,
-            NMV bỏ đơn đã huỷ — nên GMV = NMV + phần mất do huỷ. Xếp kỳ theo ngày đặt đơn.
+            Robots and handhelds only — gifts and accessories excluded. GMV and NMV both use
+            <b> list price minus seller discount</b>; platform vouchers are not deducted because
+            TikTok funds them. GMV covers every order status, NMV drops cancelled orders, so
+            GMV = NMV + value lost to cancellations. Periods are keyed on order creation date.
           </p>
         </header>
 
-        {/* ---- bộ lọc ---- */}
+        {/* ---- filters ---- */}
         <div className="filters">
           <div className="seg">
-            {(['mom', 'd30'] as const).map((m) => (
-              <button key={m} className={mode === m ? 'on' : ''} onClick={() => setMode(m)}>
-                {m === 'mom' ? 'Theo tháng' : '30 ngày gần nhất'}
+            {RANGES.map((r) => (
+              <button key={r.key} className={range === r.key ? 'on' : ''}
+                onClick={() => { setRange(r.key); setMonth('') }}>
+                {r.label}
               </button>
             ))}
           </div>
+
+          <select
+            className="drop"
+            value={range === 'month' ? month : ''}
+            onChange={(e) => {
+              const v = e.target.value
+              if (!v) { setRange('mom'); setMonth('') }
+              else { setMonth(v); setRange('month') }
+            }}
+          >
+            <option value="">Pick a month…</option>
+            {months.map((m) => <option key={m} value={m}>{mmyy(m)}</option>)}
+          </select>
+
           <div className="seg">
             {CATS.map((c) => (
-              <button key={c.key} className={cat === c.key ? 'on' : ''} onClick={() => setCat(c.key)}>
-                {c.nhan}
+              <button key={c.key} className={cat === c.key ? 'on' : ''}
+                onClick={() => { setCat(c.key); setModelSel('') }}>
+                {c.label}
               </button>
             ))}
           </div>
         </div>
+        {range === 'month' && <p className="foot">Showing every day in {mmyy(month)}.</p>}
 
         <nav className="tabs">
           {TABS.map((t) => (
@@ -343,172 +403,164 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
           ))}
         </nav>
 
-        {/* =================== TỔNG QUAN =================== */}
-        {tab === 'Tổng quan' && (
+        {/* =================== OVERVIEW =================== */}
+        {tab === 'Overview' && (
           <>
             <section className="tiles">
-              <Tile label="GMV" value={ty(cur?.gmv ?? 0)} unit=" tỷ"
-                sub={deltaText(delta(cur?.gmv, prev?.gmv), kyText)} />
-              <Tile label="Số lượng bán" value={n0(cur?.so_luong ?? 0)} unit=" máy"
-                sub={deltaText(delta(cur?.so_luong, prev?.so_luong), kyText)} />
-              <Tile label="NMV (trừ đơn huỷ)" value={ty(cur?.nmv ?? 0)} unit=" tỷ"
-                sub={deltaText(delta(cur?.nmv, prev?.nmv), kyText)} />
-              <Tile label="Cancel rate" value={pct(cur?.cancel_rate ?? 0)}
+              <Tile label="NMV" value={bn(cur?.nmv ?? 0)} unit=" bn"
+                sub={deltaText(delta(cur?.nmv, prev?.nmv), periodWord)} />
+              <Tile label="Net quantity" value={n0(cur?.sl_chua_huy ?? 0)} unit=" pcs"
+                sub={deltaText(delta(cur?.sl_chua_huy, prev?.sl_chua_huy), periodWord)} />
+              <Tile label="GMV" value={bn(cur?.gmv ?? 0)} unit=" bn"
+                sub={deltaText(delta(cur?.gmv, prev?.gmv), periodWord)} />
+              <Tile label="Cancellation rate" value={pct(cur?.cancel_rate ?? 0)}
                 tone={(cur?.cancel_rate ?? 0) > 40 ? 'bad' : 'ok'}
-                sub={`${n0(cur?.sl_huy ?? 0)} máy bị huỷ`} />
+                sub={`${n0(cur?.sl_huy ?? 0)} pcs cancelled`} />
             </section>
 
             <section>
-              <h2>GMV, NMV và tỷ lệ huỷ trong cùng một hình</h2>
+              <h2>GMV, NMV and cancellation rate in one picture</h2>
               <p className="sub">
-                Chiều cao cả cột là GMV. Phần đậm dưới là NMV — phần còn sống. Phần nhạt trên
-                là tiền mất vì huỷ đơn. Hai phần cộng lại đúng bằng GMV, vì cả hai dùng chung
-                công thức giá gốc trừ seller discount, chỉ khác tập đơn. Đường xanh lá là phần
-                NMV đã thật sự hoàn tất. Đường đỏ là tỷ lệ huỷ, đọc ở trục phải, cố định 0–100%.
+                Full column height is GMV. The solid part is NMV — what is still alive. The pale
+                part is value lost to cancellations. They add up exactly, because both sides use
+                the same money formula and differ only in which orders they count. The green line
+                is the share of NMV that has actually completed. The red line is the cancellation
+                rate, read on the right axis, fixed 0–100%.
               </p>
               <ComboChart
                 data={shown.map((r) => ({ ky: r.ky, a: r.nmv, b: r.gmv_mat_do_huy }))}
-                names={['NMV (đơn chưa huỷ)', 'Mất do huỷ đơn']}
+                names={['NMV (live orders)', 'Lost to cancellations']}
                 colors={['var(--c1)', 'var(--c1-soft)']}
                 lines={[
-                  { ten: 'NMV đã hoàn tất', color: 'var(--ok)', truc: 'tien', vals: shown.map((r) => r.nmv_hoan_tat) },
-                  { ten: 'Tỷ lệ huỷ (trục phải)', color: 'var(--bad)', truc: 'pct', vals: shown.map((r) => r.cancel_rate) },
+                  { ten: 'NMV completed', color: 'var(--ok)', truc: 'tien', vals: shown.map((r) => r.nmv_hoan_tat) },
+                  { ten: 'Cancellation rate (right axis)', color: 'var(--bad)', truc: 'pct', vals: shown.map((r) => r.cancel_rate) },
                 ]}
-                fmt={ty} label={lbl} unit="tỷ đồng"
+                fmt={bn} label={lbl} unit="VND bn"
                 tip={(d) => {
                   const r = shown.find((x) => x.ky === d.ky)!
                   return (
                     <><b>{lbl(d.ky)}</b><br />
-                      GMV {ty(r.gmv)} tỷ<br />
-                      · NMV {ty(r.nmv)} tỷ<br />
-                      · mất do huỷ {ty(r.gmv_mat_do_huy)} tỷ<br />
-                      NMV đã hoàn tất {ty(r.nmv_hoan_tat)} tỷ<br />
-                      Khách thực trả {ty(r.khach_tra)} tỷ<br />
-                      Tỷ lệ huỷ {r.cancel_rate}%</>
+                      GMV {bn(r.gmv)} bn<br />
+                      · NMV {bn(r.nmv)} bn<br />
+                      · lost to cancels {bn(r.gmv_mat_do_huy)} bn<br />
+                      NMV completed {bn(r.nmv_hoan_tat)} bn<br />
+                      Buyer paid {bn(r.khach_tra)} bn<br />
+                      Cancellation rate {r.cancel_rate}%</>
                   )
                 }}
               />
             </section>
 
             <section>
-              <h2>GMV theo {kyText} · {dodText}</h2>
-              <p className="sub">Cùng số liệu, nhưng đọc biến động so với kỳ liền trước.</p>
+              <h2>NMV per {periodWord} · {dod}</h2>
+              <p className="sub">
+                Cancelled orders already removed. The figure under each column is the change
+                against the previous period.
+              </p>
               <DeltaChart
-                data={pt((r) => r.gmv)} color="var(--c1)" fmt={ty} label={lbl} unit="tỷ đồng"
+                data={pt((r) => r.nmv)} color="var(--c1)" fmt={bn} label={lbl} unit="VND bn"
                 tip={(d, dl) => (
-                  <><b>{lbl(d.ky)}</b><br />GMV {n0(d.v)}đ
-                    {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% so với kỳ trước</>}</>
+                  <><b>{lbl(d.ky)}</b><br />NMV {n0(d.v)} VND
+                    {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% vs previous period</>}</>
                 )}
               />
             </section>
 
             <section>
-              <h2>Số lượng bán theo {kyText} · {dodText}</h2>
-              <p className="sub">Đếm số máy, đã loại quà tặng và phụ kiện.</p>
+              <h2>Net quantity per {periodWord} · {dod}</h2>
+              <p className="sub">Units that have not been cancelled. Gifts and accessories excluded.</p>
               <DeltaChart
-                data={pt((r) => r.so_luong)} color="var(--c3)" fmt={n0} label={lbl} unit="máy"
+                data={pt((r) => r.sl_chua_huy)} color="var(--c3)" fmt={n0} label={lbl} unit="pcs"
                 tip={(d, dl) => (
-                  <><b>{lbl(d.ky)}</b><br />{n0(d.v)} máy
-                    {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% so với kỳ trước</>}</>
+                  <><b>{lbl(d.ky)}</b><br />{n0(d.v)} net pcs
+                    {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% vs previous period</>}</>
                 )}
               />
             </section>
 
             <section>
-              <h2>Cơ cấu số lượng: robot và handheld</h2>
-              <p className="sub">Cột chồng. Nhìn được cả tổng lẫn tỷ trọng trong cùng một hình.</p>
+              <h2>Robot vs handheld mix</h2>
+              <p className="sub">Stacked net quantity. Shows the total and the split in one shape.</p>
               <StackChart
-                data={splitByCat(srcShown, (r) => r.so_luong)}
+                data={splitByCat(srcShown, (r) => r.sl_chua_huy)}
                 fmt={n0} label={lbl} names={['Robot', 'Handheld']}
-                colors={['var(--c1)', 'var(--c2)']} unit="máy"
+                colors={['var(--c1)', 'var(--c2)']} unit="net pcs"
                 tip={(d) => (
                   <><b>{lbl(d.ky)}</b><br />Robot {n0(d.a)} · Handheld {n0(d.b)}
-                    <br />Tổng {n0(d.a + d.b)} máy
-                    <br />Robot chiếm {Math.round((d.a / Math.max(1, d.a + d.b)) * 100)}%</>
+                    <br />Total {n0(d.a + d.b)} pcs
+                    <br />Robot share {Math.round((d.a / Math.max(1, d.a + d.b)) * 100)}%</>
                 )}
               />
             </section>
 
             <section>
-              <h2>Đơn còn sống và đơn huỷ</h2>
-              <p className="sub">
-                Cột chồng: phần xanh là máy còn cơ hội ra tiền, phần đỏ là máy đã huỷ.
-              </p>
-              <StackChart
-                data={shown.map((r) => ({ ky: r.ky, a: r.sl_chua_huy, b: r.sl_huy }))}
-                fmt={n0} label={lbl} names={['Chưa huỷ', 'Huỷ']}
-                colors={['var(--ok)', 'var(--bad)']} unit="máy"
-                tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />Hoàn tất {n0(d.a)} · Huỷ {n0(d.b)}
-                    <br />Tỷ lệ huỷ {Math.round((d.b / Math.max(1, d.a + d.b)) * 1000) / 10}%</>
-                )}
-              />
-            </section>
-
-            <section>
-              <h2>Bảng chi tiết theo {kyText}</h2>
-              <p className="sub">Tất cả chỉ tiêu của biểu đồ phía trên, kèm biến động {dodText}.</p>
+              <h2>Detail by {periodWord}</h2>
+              <p className="sub">Every metric behind the charts above, with {dod} change.</p>
               <SeriesTable rows={shown} lbl={lbl} />
             </section>
 
             <div className="note warn">
-              <b>NMV giờ đọc được theo thời gian thực, nhưng vẫn còn một độ trễ.</b> NMV đã bỏ
-              điều kiện COMPLETED và chỉ loại đơn đã huỷ, nên đơn đang trên đường giao vẫn được
-              tính ngay. Cái còn lại: đơn của kỳ đang chạy chưa kịp bị huỷ hết, nên tỷ lệ huỷ của
-              kỳ gần nhất sẽ còn tăng và NMV sẽ còn giảm trong vài ngày tới — phần lớn đơn bị huỷ
-              rơi vào mốc 3–7 ngày sau khi đặt.
+              <b>The newest period still understates cancellations.</b> Orders placed in the current
+              period have not finished their life cycle, and the largest cancellation cluster lands
+              3–7 days after the order. Expect the cancellation rate to climb and NMV to drift down
+              over the following week.
             </div>
           </>
         )}
 
-        {/* =================== NGÀNH HÀNG =================== */}
-        {tab === 'Theo ngành hàng' && (
+        {/* =================== CATEGORY =================== */}
+        {tab === 'Category' && (
           <>
             <section className="cards">
               {(['robot', 'handheld'] as const).map((c, i) => {
                 const rows = srcShown.filter((r) => r.category === c)
-                const sl = rows.reduce((s, r) => s + Number(r.so_luong || 0), 0)
-                const nmv = rows.reduce((s, r) => s + Number(r.nmv || 0), 0)
-                const gmv = rows.reduce((s, r) => s + Number(r.gmv || 0), 0)
-                const huy = rows.reduce((s, r) => s + Number(r.sl_huy || 0), 0)
+                const sum = (f: (r: Monthly | Daily) => number) =>
+                  rows.reduce((a, r) => a + Number(f(r) || 0), 0)
+                const gross = sum((r) => r.so_luong)
+                const net = sum((r) => r.sl_chua_huy)
+                const nmv = sum((r) => r.nmv)
+                const gmv = sum((r) => r.gmv)
+                const cancelled = sum((r) => r.sl_huy)
                 return (
                   <div className="card" key={c}>
                     <div className="card-h">
                       <i className="sw" style={{ background: i === 0 ? 'var(--c1)' : 'var(--c2)' }} />
-                      <b>{c === 'robot' ? 'Robot hút bụi' : 'Máy hút bụi cầm tay'}</b>
+                      <b>{c === 'robot' ? 'Robot vacuums' : 'Handheld vacuums'}</b>
                     </div>
-                    <div className="kv"><span>GMV</span><b>{ty(gmv)} tỷ</b></div>
-                    <div className="kv"><span>NMV</span><b>{ty(nmv)} tỷ</b></div>
-                    <div className="kv"><span>Số lượng</span><b>{n0(sl)} máy</b></div>
-                    <div className="kv"><span>Cancel rate</span>
-                      <b style={{ color: huy / Math.max(1, sl) > 0.4 ? 'var(--bad)' : 'inherit' }}>
-                        {Math.round((huy / Math.max(1, sl)) * 1000) / 10}%
+                    <div className="kv"><span>NMV</span><b>{bn(nmv)} bn</b></div>
+                    <div className="kv"><span>GMV</span><b>{bn(gmv)} bn</b></div>
+                    <div className="kv"><span>Net quantity</span><b>{n0(net)} pcs</b></div>
+                    <div className="kv"><span>Gross quantity</span><b>{n0(gross)} pcs</b></div>
+                    <div className="kv"><span>Cancellation rate</span>
+                      <b style={{ color: cancelled / Math.max(1, gross) > 0.4 ? 'var(--bad)' : 'inherit' }}>
+                        {Math.round((cancelled / Math.max(1, gross)) * 1000) / 10}%
                       </b></div>
-                    <div className="kv"><span>Giá sau giảm shop</span><b>{n0(gmv / Math.max(1, sl))}đ</b></div>
+                    <div className="kv"><span>Avg price after seller disc.</span>
+                      <b>{n0(gmv / Math.max(1, gross))}</b></div>
                   </div>
                 )
               })}
             </section>
 
             <section>
-              <h2>GMV hai ngành hàng theo {kyText}</h2>
-              <p className="sub">Cột chồng, đơn vị tỷ đồng.</p>
+              <h2>NMV by category per {periodWord}</h2>
+              <p className="sub">Stacked columns, VND bn.</p>
               <StackChart
-                data={splitByCat(srcShown, (r) => r.gmv)}
-                fmt={ty} label={lbl} names={['Robot', 'Handheld']}
-                colors={['var(--c1)', 'var(--c2)']} unit="tỷ đồng"
+                data={splitByCat(srcShown, (r) => r.nmv)}
+                fmt={bn} label={lbl} names={['Robot', 'Handheld']}
+                colors={['var(--c1)', 'var(--c2)']} unit="VND bn"
                 tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />Robot {ty(d.a)} tỷ · Handheld {ty(d.b)} tỷ
-                    <br />Robot chiếm {Math.round((d.a / Math.max(1, d.a + d.b)) * 100)}%</>
+                  <><b>{lbl(d.ky)}</b><br />Robot {bn(d.a)} bn · Handheld {bn(d.b)} bn
+                    <br />Robot share {Math.round((d.a / Math.max(1, d.a + d.b)) * 100)}%</>
                 )}
               />
             </section>
 
             <section>
-              <h2>Tỷ lệ huỷ từng ngành hàng · {dodText}</h2>
+              <h2>Cancellation rate by category · {dod}</h2>
               <p className="sub">
-                Handheld thường huỷ nặng hơn robot. Cùng một vấn đề giao nhận nhưng giá trị đơn
-                thấp hơn nên khách dễ từ chối nhận.
+                Handhelds usually cancel harder than robots. Same delivery problem, lower order
+                value, so buyers refuse more easily.
               </p>
               <div className="two">
                 {(['robot', 'handheld'] as const).map((c) => {
@@ -519,8 +571,8 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                       <DeltaChart
                         data={rr.map((r) => ({ ky: r.ky, v: r.cancel_rate }))}
                         color={c === 'robot' ? 'var(--c1)' : 'var(--c2)'}
-                        fmt={(v) => `${v}`} label={lbl} unit="% huỷ"
-                        tip={(d) => <><b>{lbl(d.ky)}</b><br />Huỷ {d.v}%</>}
+                        fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
+                        tip={(d) => <><b>{lbl(d.ky)}</b><br />Cancelled {d.v}%</>}
                       />
                     </div>
                   )
@@ -529,14 +581,14 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
             </section>
 
             <section>
-              <h2>Bảng chi tiết theo ngành hàng</h2>
+              <h2>Category detail</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
-                    <th>Kỳ</th><th>Ngành hàng</th>
-                    <th className="n">SL bán</th><th className="n">Hoàn tất</th><th className="n">Huỷ</th>
-                    <th className="n">Huỷ %</th><th className="n">GMV</th><th className="n">NMV</th>
-                    <th className="n">Giá sau giảm shop</th>
+                    <th>Period</th><th>Category</th>
+                    <th className="n">Gross pcs</th><th className="n">Net pcs</th><th className="n">Cancelled</th>
+                    <th className="n">Cancel %</th><th className="n">GMV</th><th className="n">NMV</th>
+                    <th className="n">Avg price</th>
                   </tr></thead>
                   <tbody>
                     {srcShown
@@ -552,105 +604,126 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                             {r.category === 'robot' ? 'Robot' : 'Handheld'}
                           </td>
                           <td className="n">{n0(r.so_luong)}</td>
-                          <td className="n">{n0(r.sl_hoan_tat)}</td>
+                          <td className="n"><b>{n0(r.sl_chua_huy)}</b></td>
                           <td className="n">{n0(r.sl_huy)}</td>
                           <td className="n" style={{ color: Number(r.cancel_rate) > 40 ? 'var(--bad)' : 'inherit' }}>
                             {pct(r.cancel_rate)}
                           </td>
-                          <td className="n">{ty(r.gmv)}</td>
-                          <td className="n">{ty(r.nmv)}</td>
+                          <td className="n">{bn(r.gmv)}</td>
+                          <td className="n">{bn(r.nmv)}</td>
                           <td className="n">{n0(Number(r.gmv || 0) / Math.max(1, Number(r.so_luong || 0)))}</td>
                         </tr>
                       ))}
                   </tbody>
                 </table>
               </div>
-              <p className="foot">Tiền tính bằng tỷ đồng, riêng giá bán trung bình tính bằng đồng. Tối đa 60 dòng gần nhất.</p>
+              <p className="foot">Money in VND bn, average price in VND. Latest 60 rows.</p>
             </section>
           </>
         )}
 
         {/* =================== SKU =================== */}
-        {tab === 'Theo SKU' && (
+        {tab === 'SKU' && (
           <>
+            <div className="filters" style={{ marginTop: 26 }}>
+              <select className="drop wide" value={modelSel} onChange={(e) => setModelSel(e.target.value)}>
+                <option value="">All models ({allModels.length})</option>
+                {allModels.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              {modelSel && <button className="lnk" onClick={() => setModelSel('')}>Clear model filter</button>}
+            </div>
+
             <section>
-              <h2>Top SKU theo NMV</h2>
-              <p className="sub">Thanh ngang xếp theo cột đang sắp xếp ở bảng dưới.</p>
+              <h2>Gross vs net units and cancellation rate — {scopeLabel}</h2>
+              <p className="sub">
+                Column height is gross units. The solid part is net — units not cancelled. The red
+                line is the cancellation rate on the right axis, fixed 0–100%. Pick a model above
+                to isolate it.
+              </p>
+              <ComboChart
+                data={skuTrend.map((d) => ({ ky: d.ky, a: d.net, b: Math.max(0, d.gross - d.net) }))}
+                names={['Net pcs', 'Cancelled pcs']}
+                colors={['var(--c1)', 'var(--c1-soft)']}
+                lines={[{
+                  ten: 'Cancellation rate (right axis)', color: 'var(--bad)', truc: 'pct',
+                  vals: skuTrend.map((d) => (d.gross ? Math.round((1 - d.net / d.gross) * 1000) / 10 : null)),
+                }]}
+                fmt={n0} label={lbl} unit="pcs"
+                tip={(d) => {
+                  const g = d.a + d.b
+                  return (
+                    <><b>{lbl(d.ky)}</b><br />
+                      Gross {n0(g)} pcs<br />
+                      Net {n0(d.a)} pcs<br />
+                      Cancelled {n0(d.b)} pcs<br />
+                      Cancellation rate {g ? Math.round((d.b / g) * 1000) / 10 : 0}%</>
+                  )
+                }}
+              />
+            </section>
+
+            {!modelSel && (
+              <section>
+                <h2>Model mix per {periodWord}</h2>
+                <p className="sub">
+                  Top 8 models by the chosen metric, everything else folded into &ldquo;Other&rdquo;
+                  so the column stays readable.
+                </p>
+                <div className="seg" style={{ marginTop: 14 }}>
+                  {(['gmv', 'so_luong'] as const).map((k) => (
+                    <button key={k} className={mixMetric === k ? 'on' : ''} onClick={() => setMixMetric(k)}>
+                      {k === 'gmv' ? 'By GMV' : 'By quantity'}
+                    </button>
+                  ))}
+                </div>
+                <MultiStack
+                  data={mix.data} series={mix.series}
+                  fmt={mixMetric === 'gmv' ? bn : n0} label={lbl}
+                  unit={mixMetric === 'gmv' ? 'VND bn' : 'gross pcs'}
+                  tip={(d) => (
+                    <><b>{lbl(d.ky)}</b><br />
+                      {mix.series.map((s, j) => (d.parts[j] > 0
+                        ? <span key={s.ten}>{s.ten}: {mixMetric === 'gmv' ? `${bn(d.parts[j])} bn` : `${n0(d.parts[j])} pcs`}<br /></span>
+                        : null))}</>
+                  )}
+                />
+              </section>
+            )}
+
+            <section>
+              <h2>Top models by NMV</h2>
               <RowBars
                 rows={skuF.slice(0, 15).map((s) => ({
                   nhan: s.model,
                   segs: [{ v: s.nmv, color: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)', ten: 'NMV' }],
-                  phu: `${tr(s.nmv)}tr · ${n0(s.so_luong)} máy`,
+                  phu: `${mn(s.nmv)}m · ${n0(s.sl_chua_huy)} net pcs`,
                 }))}
               />
             </section>
 
             <section>
-              <h2>Cơ cấu model theo {kyText}</h2>
+              <h2>Full table, grouped by category</h2>
               <p className="sub">
-                Cột chồng theo model. Lấy 8 model lớn nhất, phần còn lại gộp vào &ldquo;Khác&rdquo;
-                để cột không vỡ vụn thành 28 mảnh không đọc được.
-              </p>
-              <div className="seg" style={{ marginTop: 14 }}>
-                {(['gmv', 'so_luong'] as const).map((k) => (
-                  <button key={k} className={skuMetric === k ? 'on' : ''} onClick={() => setSkuMetric(k)}>
-                    {k === 'gmv' ? 'Theo GMV' : 'Theo số lượng'}
-                  </button>
-                ))}
-              </div>
-              <MultiStack
-                data={modelStack.data} series={modelStack.series}
-                fmt={skuMetric === 'gmv' ? ty : n0} label={lbl}
-                unit={skuMetric === 'gmv' ? 'tỷ đồng' : 'máy'}
-                tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />
-                    {modelStack.series.map((s, j) => (d.parts[j] > 0
-                      ? <span key={s.ten}>{s.ten}: {skuMetric === 'gmv' ? `${ty(d.parts[j])} tỷ` : `${n0(d.parts[j])} máy`}<br /></span>
-                      : null))}</>
-                )}
-              />
-            </section>
-
-            <section>
-              <h2>Đơn còn sống và đơn huỷ theo SKU</h2>
-              <p className="sub">Cột chồng cho 14 SKU bán nhiều nhất. Phần đỏ là phần không ra tiền.</p>
-              <StackChart
-                data={skuF.slice()
-                  .sort((a, b) => b.so_luong - a.so_luong)
-                  .slice(0, 14)
-                  .map((s) => ({ ky: s.model, a: s.sl_chua_huy, b: s.sl_huy }))}
-                fmt={n0} label={(k) => k.split(' ').slice(-1)[0]} names={['Chưa huỷ', 'Huỷ']}
-                colors={['var(--ok)', 'var(--bad)']} unit="máy"
-                tip={(d) => (
-                  <><b>{d.ky}</b><br />Hoàn tất {n0(d.a)} · Huỷ {n0(d.b)}
-                    <br />Huỷ {Math.round((d.b / Math.max(1, d.a + d.b)) * 1000) / 10}%</>
-                )}
-              />
-            </section>
-
-            <section>
-              <h2>Bảng đầy đủ, gom theo ngành hàng</h2>
-              <p className="sub">
-                Dòng đậm là tổng của ngành hàng, bấm vào để thu gọn hoặc mở ra danh sách model bên trong.
-                Bấm tiêu đề cột để sắp xếp lại các model. Đang sắp theo <b>{String(sortKey)}</b>.
+                The bold row is the category total — click it to collapse or expand its models.
+                Click a column header to re-sort. Currently sorted by <b>{String(sortKey)}</b>.
               </p>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
                     <th>Model</th>
-                    <Th k="so_luong" cur={sortKey} set={setSortKey}>Bán</Th>
-                    <Th k="sl_chua_huy" cur={sortKey} set={setSortKey}>Chưa huỷ</Th>
-                    <Th k="sl_huy" cur={sortKey} set={setSortKey}>Huỷ</Th>
-                    <Th k="cancel_rate" cur={sortKey} set={setSortKey}>Huỷ %</Th>
+                    <Th k="so_luong" cur={sortKey} set={setSortKey}>Gross</Th>
+                    <Th k="sl_chua_huy" cur={sortKey} set={setSortKey}>Net</Th>
+                    <Th k="sl_huy" cur={sortKey} set={setSortKey}>Cancelled</Th>
+                    <Th k="cancel_rate" cur={sortKey} set={setSortKey}>Cancel %</Th>
                     <Th k="gmv" cur={sortKey} set={setSortKey}>GMV</Th>
                     <Th k="nmv" cur={sortKey} set={setSortKey}>NMV</Th>
-                    <Th k="gia_goc_tb" cur={sortKey} set={setSortKey}>Giá niêm yết</Th>
-                    <Th k="gia_ban_tb" cur={sortKey} set={setSortKey}>Giá sau giảm shop</Th>
-                    <Th k="gia_khach_tra_tb" cur={sortKey} set={setSortKey}>Khách trả TB</Th>
-                    <Th k="pct_seller_disc" cur={sortKey} set={setSortKey}>Shop giảm %</Th>
-                    <Th k="pct_platform_disc" cur={sortKey} set={setSortKey}>Sàn giảm %</Th>
-                    <Th k="gio_huy_trung_vi" cur={sortKey} set={setSortKey}>Huỷ sau (median)</Th>
-                    <Th k="gio_huy_tb" cur={sortKey} set={setSortKey}>Huỷ sau (TB)</Th>
+                    <Th k="gia_goc_tb" cur={sortKey} set={setSortKey}>List price</Th>
+                    <Th k="gia_ban_tb" cur={sortKey} set={setSortKey}>After seller disc.</Th>
+                    <Th k="gia_khach_tra_tb" cur={sortKey} set={setSortKey}>Buyer paid</Th>
+                    <Th k="pct_seller_disc" cur={sortKey} set={setSortKey}>Seller disc. %</Th>
+                    <Th k="pct_platform_disc" cur={sortKey} set={setSortKey}>Platform disc. %</Th>
+                    <Th k="gio_huy_trung_vi" cur={sortKey} set={setSortKey}>Lapse (median)</Th>
+                    <Th k="gio_huy_tb" cur={sortKey} set={setSortKey}>Lapse (avg)</Th>
                   </tr></thead>
                   <tbody>
                     {(['robot', 'handheld'] as const)
@@ -659,41 +732,41 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                         const rows = skuF.filter((s) => s.category === c)
                         if (!rows.length) return null
                         const sum = (f: (s: Sku) => number) => rows.reduce((a, s) => a + Number(f(s) || 0), 0)
-                        const sl = sum((s) => s.so_luong)
-                        const huy = sum((s) => s.sl_huy)
-                        const mo = !dong.has(c)
+                        const gross = sum((s) => s.so_luong)
+                        const cancelled = sum((s) => s.sl_huy)
+                        const open = !closed.has(c)
                         return (
                           <Fragment key={c}>
-                            <tr className="grp" onClick={() => toggleDong(c)}>
+                            <tr className="grp" onClick={() => toggleClosed(c)}>
                               <td>
-                                <span className="car">{mo ? '▾' : '▸'}</span>{' '}
+                                <span className="car">{open ? '▾' : '▸'}</span>{' '}
                                 <span className="sw sm" style={{ background: c === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
-                                <b>{c === 'robot' ? 'Robot hút bụi' : 'Máy hút bụi cầm tay'}</b>
-                                <span className="muted"> · {rows.length} model</span>
+                                <b>{c === 'robot' ? 'Robot vacuums' : 'Handheld vacuums'}</b>
+                                <span className="muted"> · {rows.length} models</span>
                               </td>
-                              <td className="n"><b>{n0(sl)}</b></td>
+                              <td className="n"><b>{n0(gross)}</b></td>
                               <td className="n"><b>{n0(sum((s) => s.sl_chua_huy))}</b></td>
-                              <td className="n"><b>{n0(huy)}</b></td>
-                              <td className="n"><b>{Math.round((huy / Math.max(1, sl)) * 1000) / 10}%</b></td>
-                              <td className="n"><b>{tr(sum((s) => s.gmv))}tr</b></td>
-                              <td className="n"><b>{tr(sum((s) => s.nmv))}tr</b></td>
+                              <td className="n"><b>{n0(cancelled)}</b></td>
+                              <td className="n"><b>{Math.round((cancelled / Math.max(1, gross)) * 1000) / 10}%</b></td>
+                              <td className="n"><b>{mn(sum((s) => s.gmv))}m</b></td>
+                              <td className="n"><b>{mn(sum((s) => s.nmv))}m</b></td>
                               <td className="n muted">—</td>
-                              <td className="n"><b>{n0(sum((s) => s.gmv) / Math.max(1, sl))}</b></td>
+                              <td className="n"><b>{n0(sum((s) => s.gmv) / Math.max(1, gross))}</b></td>
                               <td className="n muted">—</td>
                               <td className="n muted">—</td>
                               <td className="n muted">—</td>
                               <td className="n muted">—</td>
                               <td className="n muted">—</td>
                             </tr>
-                            {mo && rows.map((s) => (
-                              <tr key={s.product_id}>
+                            {open && rows.map((s) => (
+                              <tr key={s.model}>
                                 <td className="ind">{s.model}</td>
                                 <td className="n">{n0(s.so_luong)}</td>
-                                <td className="n">{n0(s.sl_chua_huy)}</td>
+                                <td className="n"><b>{n0(s.sl_chua_huy)}</b></td>
                                 <td className="n">{n0(s.sl_huy)}</td>
                                 <td className="n" style={{ color: s.cancel_rate > 70 ? 'var(--bad)' : 'inherit' }}>{pct(s.cancel_rate)}</td>
-                                <td className="n">{tr(s.gmv)}tr</td>
-                                <td className="n"><b>{tr(s.nmv)}tr</b></td>
+                                <td className="n">{mn(s.gmv)}m</td>
+                                <td className="n"><b>{mn(s.nmv)}m</b></td>
                                 <td className="n">{n0(s.gia_goc_tb)}</td>
                                 <td className="n">{n0(s.gia_ban_tb)}</td>
                                 <td className="n muted">{n0(s.gia_khach_tra_tb)}</td>
@@ -710,81 +783,83 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                 </table>
               </div>
               <p className="foot">
-                &ldquo;Huỷ sau&rdquo; là khoảng cách từ lúc đặt tới lúc huỷ. Median đáng tin hơn trung bình
-                vì vài đơn treo rất lâu sẽ kéo lệch trung bình.
+                Money in VND m, prices in VND. &ldquo;Lapse&rdquo; is the gap between order and
+                cancellation; the median is more trustworthy than the average because a few very
+                late cancellations drag the average up. This table covers all time, not the
+                selected period.
               </p>
             </section>
           </>
         )}
 
-        {/* =================== KHUYẾN MÃI =================== */}
-        {tab === 'Khuyến mãi' && (
+        {/* =================== DISCOUNTS =================== */}
+        {tab === 'Discounts' && (
           <>
             <section>
-              <h2>Ai gánh khuyến mãi</h2>
+              <h2>Who funds the discount</h2>
               <p className="sub">
-                Phần trăm trên giá niêm yết. Xanh là shop tự bỏ tiền, cam là sàn tài trợ.
-                Chỉ phần xanh mới ăn vào lãi của mình.
+                Percentage of list price. Blue is money the shop gives up, orange is funded by
+                TikTok. Only the blue part eats into your margin.
               </p>
               <RowBars
                 rows={skuF.slice(0, 15).map((s) => ({
                   nhan: s.model,
                   segs: [
-                    { v: s.pct_seller_disc, color: 'var(--c1)', ten: 'Shop gánh (%)' },
-                    { v: s.pct_platform_disc, color: 'var(--c2)', ten: 'Sàn gánh (%)' },
+                    { v: s.pct_seller_disc, color: 'var(--c1)', ten: 'Seller funded (%)' },
+                    { v: s.pct_platform_disc, color: 'var(--c2)', ten: 'Platform funded (%)' },
                   ],
                   phu: `${pct(s.pct_seller_disc)} + ${pct(s.pct_platform_disc)}`,
                 }))}
               />
               <div className="legend" style={{ marginTop: 14 }}>
-                <span><i className="sw" style={{ background: 'var(--c1)' }} />Shop gánh</span>
-                <span><i className="sw" style={{ background: 'var(--c2)' }} />Sàn gánh</span>
+                <span><i className="sw" style={{ background: 'var(--c1)' }} />Seller funded</span>
+                <span><i className="sw" style={{ background: 'var(--c2)' }} />Platform funded</span>
               </div>
             </section>
 
             <section>
-              <h2>Tiền khuyến mãi theo {kyText}</h2>
-              <p className="sub">Cột chồng: phần shop và phần sàn. Đơn vị tỷ đồng.</p>
+              <h2>Discount spend per {periodWord}</h2>
+              <p className="sub">Stacked: seller share and platform share. VND bn.</p>
               <StackChart
                 data={shown.map((r) => ({ ky: r.ky, a: r.seller_disc ?? 0, b: r.platform_disc ?? 0 }))}
-                fmt={ty} label={lbl} names={['Shop gánh', 'Sàn gánh']}
-                colors={['var(--c1)', 'var(--c2)']} unit="tỷ đồng"
+                fmt={bn} label={lbl} names={['Seller funded', 'Platform funded']}
+                colors={['var(--c1)', 'var(--c2)']} unit="VND bn"
                 tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />Shop {ty(d.a)} tỷ · Sàn {ty(d.b)} tỷ
-                    <br />Shop gánh {Math.round((d.a / Math.max(1, d.a + d.b)) * 100)}% tổng khuyến mãi</>
+                  <><b>{lbl(d.ky)}</b><br />Seller {bn(d.a)} bn · Platform {bn(d.b)} bn
+                    <br />Seller carries {Math.round((d.a / Math.max(1, d.a + d.b)) * 100)}% of all discounting</>
                 )}
               />
             </section>
 
             <section>
-              <h2>Tỷ trọng shop gánh · {dodText}</h2>
+              <h2>Seller-funded share · {dod}</h2>
               <p className="sub">
-                Con số này tăng nghĩa là mình đang tự bỏ tiền nhiều hơn để giữ giá, chứ không phải
-                sàn đang tài trợ thêm.
+                Rising means you are buying the price position with your own money, not that the
+                platform is subsidising more.
               </p>
               <DeltaChart
                 data={shown.map((r) => ({
                   ky: r.ky,
                   v: Math.round((r.seller_disc / Math.max(1, r.seller_disc + r.platform_disc)) * 1000) / 10,
                 }))}
-                color="var(--c1)" fmt={(v) => `${v}`} label={lbl} unit="% khuyến mãi do shop gánh"
-                tip={(d) => <><b>{lbl(d.ky)}</b><br />Shop gánh {d.v}%</>}
+                color="var(--c1)" fmt={(v) => `${v}`} label={lbl} unit="% of discount funded by seller"
+                tip={(d) => <><b>{lbl(d.ky)}</b><br />Seller funded {d.v}%</>}
               />
             </section>
 
             <section>
-              <h2>Bảng khuyến mãi từng SKU</h2>
+              <h2>Discount detail by model</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
-                    <th>Model</th><th className="n">Giá niêm yết</th><th className="n">Giá sau giảm shop</th>
-                    <th className="n">Shop giảm (đ)</th><th className="n">Shop giảm %</th>
-                    <th className="n">Sàn giảm (đ)</th><th className="n">Sàn giảm %</th>
-                    <th className="n">Tổng giảm %</th><th className="n">SL bán</th>
+                    <th>Model</th><th className="n">List price</th><th className="n">After seller disc.</th>
+                    <th className="n">Seller disc. (VND)</th><th className="n">Seller disc. %</th>
+                    <th className="n">Platform disc. (VND)</th><th className="n">Platform disc. %</th>
+                    <th className="n">Total disc. %</th><th className="n">Gross pcs</th>
                   </tr></thead>
                   <tbody>
                     {skuF.map((s) => (
-                      <tr key={s.product_id}>
+                      <tr key={s.model}>
                         <td>
                           <span className="sw sm" style={{ background: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
                           {s.model}
@@ -806,23 +881,23 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
           </>
         )}
 
-        {/* =================== HUỶ ĐƠN =================== */}
-        {tab === 'Huỷ đơn' && (
+        {/* =================== CANCELLATIONS =================== */}
+        {tab === 'Cancellations' && (
           <>
             <section>
-              <h2>Bao lâu sau khi đặt thì đơn bị huỷ</h2>
-              <p className="sub">Hai cụm rõ rệt, và chúng là hai bài toán khác nhau — xem ghi chú bên dưới.</p>
+              <h2>How long after ordering do orders die</h2>
+              <p className="sub">Two distinct clusters, and they are two different problems — see the note below.</p>
               <BarChart
                 data={lapse.map((l) => ({ ky: l.khoang, v: l.so_luong }))}
-                color="var(--c2)" fmt={n0} label={(k) => k} unit="máy"
+                color="var(--c2)" fmt={n0} label={(k) => k} unit="pcs"
                 tip={(d) => {
                   const row = lapse.find((l) => l.khoang === d.ky)
-                  return <><b>{d.ky}</b><br />{n0(d.v)} máy · {row?.pct}% tổng số đơn huỷ</>
+                  return <><b>{d.ky}</b><br />{n0(d.v)} pcs · {row?.pct}% of all cancellations</>
                 }}
               />
               <div className="tablewrap" style={{ marginTop: 18 }}>
                 <table>
-                  <thead><tr><th>Khoảng thời gian</th><th className="n">Số máy</th><th className="n">Tỷ trọng</th><th className="n">Cộng dồn</th></tr></thead>
+                  <thead><tr><th>Time bucket</th><th className="n">Pcs</th><th className="n">Share</th><th className="n">Cumulative</th></tr></thead>
                   <tbody>
                     {(() => {
                       let run = 0
@@ -842,31 +917,31 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                 </table>
               </div>
               <div className="note hot">
-                <b>Cụm thứ nhất — huỷ trong vòng 1 giờ.</b> Đơn chết trước khi kịp đóng gói.
-                Đây là khách đặt nhầm, đặt thử, hoặc hệ thống tự huỷ vì quá hạn thanh toán.
-                Xử lý bằng luồng xác nhận đơn, không phải bằng vận chuyển.
+                <b>First cluster — cancelled within the hour.</b> The order dies before anyone picks
+                it. Mis-taps, test orders, or the system voiding unpaid orders. This is fixed in the
+                order-confirmation flow, not in logistics.
                 <br /><br />
-                <b>Cụm thứ hai — huỷ ở mốc 3–7 ngày.</b> Đúng cửa sổ giao hàng.
-                Đây là đơn đã đi đường rồi khách từ chối nhận, khớp với lý do
-                &ldquo;giao gói hàng thất bại&rdquo;. Tiền ship đã mất thật.
+                <b>Second cluster — cancelled at day 3–7.</b> That is the delivery window. The parcel
+                shipped and the buyer refused it, which matches the &ldquo;delivery failed&rdquo;
+                reason code. The shipping money is genuinely gone.
               </div>
             </section>
 
             <section>
-              <h2>Tỷ lệ huỷ theo {kyText} · {dodText}</h2>
-              <p className="sub">Mục tiêu nội bộ là dưới 40%. Đường lưới giữa là một nửa giá trị lớn nhất.</p>
+              <h2>Cancellation rate per {periodWord} · {dod}</h2>
+              <p className="sub">Internal target is 40% or below. The mid gridline is half the maximum.</p>
               <DeltaChart
-                data={pt((r) => r.cancel_rate)} color="var(--bad)" fmt={(v) => `${v}`} label={lbl} unit="% huỷ"
+                data={pt((r) => r.cancel_rate)} color="var(--bad)" fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
                 tip={(d) => {
-                  const row = shown.find((r) => r.ky === d.ky)
-                  return <><b>{lbl(d.ky)}</b><br />Huỷ {d.v}%<br />{n0(row?.sl_huy ?? 0)} / {n0(row?.so_luong ?? 0)} máy</>
+                  const r = shown.find((x) => x.ky === d.ky)
+                  return <><b>{lbl(d.ky)}</b><br />Cancelled {d.v}%<br />{n0(r?.sl_huy ?? 0)} of {n0(r?.so_luong ?? 0)} pcs</>
                 }}
               />
             </section>
 
             <section>
-              <h2>SKU huỷ nhiều nhất</h2>
-              <p className="sub">Sắp theo tỷ lệ huỷ, chỉ lấy SKU bán từ 30 máy trở lên.</p>
+              <h2>Worst models by cancellation rate</h2>
+              <p className="sub">Models with at least 30 gross units.</p>
               <RowBars
                 rows={skuF.filter((s) => s.so_luong >= 30)
                   .slice()
@@ -874,26 +949,26 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                   .slice(0, 14)
                   .map((s) => ({
                     nhan: s.model,
-                    segs: [{ v: s.cancel_rate, color: s.cancel_rate > 70 ? 'var(--bad)' : 'var(--c2)', ten: 'Tỷ lệ huỷ (%)' }],
-                    phu: `${pct(s.cancel_rate)} · ${n0(s.so_luong)} máy`,
+                    segs: [{ v: s.cancel_rate, color: s.cancel_rate > 70 ? 'var(--bad)' : 'var(--c2)', ten: 'Cancellation rate (%)' }],
+                    phu: `${pct(s.cancel_rate)} · ${n0(s.so_luong)} gross`,
                   }))}
               />
             </section>
 
             <section>
-              <h2>Bảng huỷ đơn từng SKU</h2>
+              <h2>Cancellation detail by model</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
-                    <th>Model</th><th className="n">SL bán</th><th className="n">Huỷ</th><th className="n">Huỷ %</th>
-                    <th className="n">Huỷ sau (median)</th><th className="n">Huỷ sau (TB)</th>
-                    <th className="n">GMV mất</th>
+                    <th>Model</th><th className="n">Gross pcs</th><th className="n">Cancelled</th><th className="n">Cancel %</th>
+                    <th className="n">Lapse (median)</th><th className="n">Lapse (avg)</th>
+                    <th className="n">Value lost</th>
                   </tr></thead>
                   <tbody>
                     {skuF.slice()
                       .sort((a, b) => b.sl_huy - a.sl_huy)
                       .map((s) => (
-                        <tr key={s.product_id}>
+                        <tr key={s.model}>
                           <td>
                             <span className="sw sm" style={{ background: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
                             {s.model}
@@ -903,25 +978,25 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                           <td className="n" style={{ color: s.cancel_rate > 70 ? 'var(--bad)' : 'inherit' }}>{pct(s.cancel_rate)}</td>
                           <td className="n">{s.gio_huy_trung_vi != null ? `${Math.round(s.gio_huy_trung_vi)}h` : '—'}</td>
                           <td className="n muted">{s.gio_huy_tb != null ? `${Math.round(s.gio_huy_tb)}h` : '—'}</td>
-                          <td className="n" style={{ color: 'var(--bad)' }}>{tr(s.gia_ban_tb * s.sl_huy)}tr</td>
+                          <td className="n" style={{ color: 'var(--bad)' }}>{mn(s.gmv - s.nmv)}m</td>
                         </tr>
                       ))}
                   </tbody>
                 </table>
               </div>
-              <p className="foot">GMV mất là ước lượng: giá bán trung bình nhân số máy bị huỷ.</p>
+              <p className="foot">Value lost = GMV minus NMV — the money that walked out with the cancelled orders.</p>
             </section>
           </>
         )}
 
-        {/* =================== PNL =================== */}
-        {tab === 'PnL' && (
+        {/* =================== P&L =================== */}
+        {tab === 'P&L' && (
           <>
             <section>
-              <h2>Từ giá niêm yết tới tiền về</h2>
+              <h2>From list price to cash</h2>
               <p className="sub">
-                Cộng dồn toàn kỳ, chỉ đơn hoàn tất. Đây là bản nháp — còn thiếu giá vốn,
-                phí sàn và chi phí quảng cáo.
+                All periods combined, cancelled orders excluded. This is a draft — COGS, platform
+                fees, affiliate commission and ad spend are still missing.
               </p>
               {(() => {
                 const t = pnl.reduce((a, r) => ({
@@ -934,13 +1009,13 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                 }), { gia_niem_yet: 0, shop_giam_gia: 0, san_giam_gia: 0, nmv: 0, khach_tra: 0, gmv_mat_do_huy: 0 })
                 const shipTot = ship.reduce((a, r) => a + Number(r.shop_tro_gia_ship || 0), 0)
                 const steps = [
-                  { nhan: 'Giá niêm yết', v: t.gia_niem_yet, kieu: 'base' },
-                  { nhan: 'Shop giảm giá', v: -t.shop_giam_gia, kieu: 'tru' },
-                  { nhan: 'NMV — shop ghi nhận', v: t.nmv, kieu: 'moc' },
-                  { nhan: 'Sàn giảm giá (TikTok trả)', v: -t.san_giam_gia, kieu: 'ghi' },
-                  { nhan: 'Khách thực trả', v: t.khach_tra, kieu: 'moc' },
-                  { nhan: 'Shop trợ giá vận chuyển', v: -shipTot, kieu: 'tru' },
-                  { nhan: 'Còn thiếu: giá vốn · phí sàn · hoa hồng · ads', v: 0, kieu: 'thieu' },
+                  { nhan: 'List price', v: t.gia_niem_yet, kieu: 'base' },
+                  { nhan: 'Seller discount', v: -t.shop_giam_gia, kieu: 'tru' },
+                  { nhan: 'NMV — recognised by shop', v: t.nmv, kieu: 'moc' },
+                  { nhan: 'Platform discount (TikTok funded)', v: -t.san_giam_gia, kieu: 'ghi' },
+                  { nhan: 'Buyer actually paid', v: t.khach_tra, kieu: 'moc' },
+                  { nhan: 'Seller-funded shipping subsidy', v: -shipTot, kieu: 'tru' },
+                  { nhan: 'Still missing: COGS · platform fees · commission · ads', v: 0, kieu: 'thieu' },
                 ]
                 const maxV = Math.max(...steps.map((s) => Math.abs(s.v)))
                 return (
@@ -958,7 +1033,7 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                             }} />
                           )}
                         </div>
-                        <div className="wf-v">{s.v === 0 ? '—' : `${s.v < 0 ? '−' : ''}${ty(Math.abs(s.v))} tỷ`}</div>
+                        <div className="wf-v">{s.v === 0 ? '—' : `${s.v < 0 ? '−' : ''}${bn(Math.abs(s.v))} bn`}</div>
                       </div>
                     ))}
                   </div>
@@ -966,41 +1041,41 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
               })()}
 
               <div className="note hot">
-                <b>Con số đắt nhất không nằm trong bảng trên.</b> GMV mất vì huỷ đơn là{' '}
-                <b>{ty(pnl.reduce((a, r) => a + Number(r.gmv_mat_do_huy || 0), 0))} tỷ</b>, và riêng tiền
-                shop trợ giá vận chuyển cho những đơn đó là{' '}
-                <b>{n0(ship.reduce((a, r) => a + Number(r.ship_dot_cho_don_huy || 0), 0))}đ</b> —
-                đã chi ra, không thu lại được gì.
+                <b>The most expensive number is not in the table above.</b> Value lost to cancellations
+                is <b>{bn(pnl.reduce((a, r) => a + Number(r.gmv_mat_do_huy || 0), 0))} bn</b>, and the
+                shipping subsidy burned on those cancelled orders alone is{' '}
+                <b>{n0(ship.reduce((a, r) => a + Number(r.ship_dot_cho_don_huy || 0), 0))} VND</b> —
+                spent, with nothing coming back.
               </div>
             </section>
 
             <section>
-              <h2>NMV và phần bị bào mòn, theo tháng</h2>
+              <h2>NMV and what erodes it, by month</h2>
               <p className="sub">
-                Cột chồng: phần xanh là NMV shop ghi nhận, phần đỏ là tiền shop tự giảm giá.
-                Cộng lại bằng giá niêm yết của đơn hoàn tất. Đơn vị tỷ đồng.
+                Stacked: green is NMV recognised, red is the discount the shop funded itself.
+                Together they equal the list price of non-cancelled orders. VND bn.
               </p>
               <StackChart
                 data={pnl.filter((r) => Number(r.gia_niem_yet || 0) > 0)
                   .map((r) => ({ ky: r.thang, a: Number(r.nmv || 0), b: Number(r.shop_giam_gia || 0) }))}
-                fmt={ty} label={mmyy} names={['NMV', 'Shop giảm giá']}
-                colors={['var(--ok)', 'var(--bad)']} unit="tỷ đồng"
+                fmt={bn} label={mmyy} names={['NMV', 'Seller discount']}
+                colors={['var(--ok)', 'var(--bad)']} unit="VND bn"
                 tip={(d) => (
-                  <><b>{mmyy(d.ky)}</b><br />NMV {ty(d.a)} tỷ · Shop giảm {ty(d.b)} tỷ
-                    <br />Shop giảm {Math.round((d.b / Math.max(1, d.a + d.b)) * 1000) / 10}% giá niêm yết</>
+                  <><b>{mmyy(d.ky)}</b><br />NMV {bn(d.a)} bn · Seller discount {bn(d.b)} bn
+                    <br />Seller gave up {Math.round((d.b / Math.max(1, d.a + d.b)) * 1000) / 10}% of list price</>
                 )}
               />
             </section>
 
             <section>
-              <h2>PnL theo tháng</h2>
+              <h2>P&amp;L by month</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
-                    <th>Tháng</th><th className="n">Giá niêm yết</th><th className="n">Shop giảm</th>
-                    <th className="n">Sàn giảm</th><th className="n">NMV</th><th className="n">Khách trả</th>
-                    <th className="n">GMV mất do huỷ</th><th className="n">Shop trợ ship</th>
-                    <th className="n">Ship đốt cho đơn huỷ</th>
+                    <th>Month</th><th className="n">List price</th><th className="n">Seller disc.</th>
+                    <th className="n">Platform disc.</th><th className="n">NMV</th><th className="n">Buyer paid</th>
+                    <th className="n">Lost to cancels</th><th className="n">Shipping subsidy</th>
+                    <th className="n">Shipping burned on cancels</th>
                   </tr></thead>
                   <tbody>
                     {pnl.filter((r) => Number(r.gia_niem_yet || 0) > 0).map((r) => {
@@ -1008,28 +1083,28 @@ export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, l
                       return (
                         <tr key={r.thang}>
                           <td className="k">{mmyy(r.thang)}</td>
-                          <td className="n">{ty(r.gia_niem_yet)}</td>
-                          <td className="n" style={{ color: 'var(--bad)' }}>−{ty(r.shop_giam_gia)}</td>
-                          <td className="n muted">−{ty(r.san_giam_gia)}</td>
-                          <td className="n"><b>{ty(r.nmv)}</b></td>
-                          <td className="n">{ty(r.khach_tra)}</td>
-                          <td className="n" style={{ color: 'var(--bad)' }}>{ty(r.gmv_mat_do_huy)}</td>
-                          <td className="n">{ty(s?.shop_tro_gia_ship ?? 0)}</td>
-                          <td className="n" style={{ color: 'var(--bad)' }}>{ty(s?.ship_dot_cho_don_huy ?? 0)}</td>
+                          <td className="n">{bn(r.gia_niem_yet)}</td>
+                          <td className="n" style={{ color: 'var(--bad)' }}>−{bn(r.shop_giam_gia)}</td>
+                          <td className="n muted">−{bn(r.san_giam_gia)}</td>
+                          <td className="n"><b>{bn(r.nmv)}</b></td>
+                          <td className="n">{bn(r.khach_tra)}</td>
+                          <td className="n" style={{ color: 'var(--bad)' }}>{bn(r.gmv_mat_do_huy)}</td>
+                          <td className="n">{bn(s?.shop_tro_gia_ship ?? 0)}</td>
+                          <td className="n" style={{ color: 'var(--bad)' }}>{bn(s?.ship_dot_cho_don_huy ?? 0)}</td>
                         </tr>
                       )
                     })}
                   </tbody>
                 </table>
               </div>
-              <p className="foot">Đơn vị: tỷ đồng</p>
+              <p className="foot">Money in VND bn.</p>
             </section>
           </>
         )}
 
         <div className="note">
-          <b>Chưa có trong trang này:</b> Livestream, Advertising và Product Funnel.
-          Ba phần đó cần adapter mới cắm vào khung đồng bộ — dữ liệu chưa nằm trong database.
+          <b>Not in this dashboard yet:</b> Livestream, Advertising and Product Funnel. Each needs a
+          new sync adapter — that data is not in the database.
         </div>
       </main>
     </>
@@ -1046,32 +1121,32 @@ function Th({ k, cur, set, children }: {
   )
 }
 
-function deltaText(d: number | null, ky: string) {
+function deltaText(d: number | null, periodWord: string) {
   if (d == null) return undefined
-  const mui = d > 0 ? '▲' : d < 0 ? '▼' : '·'
-  return `${mui} ${Math.abs(d)}% so với ${ky} trước`
+  const arrow = d > 0 ? '▲' : d < 0 ? '▼' : '·'
+  return `${arrow} ${Math.abs(d)}% vs previous ${periodWord}`
 }
 
-/* ============================ CSS ============================ */
+/* ================================ CSS ================================ */
 
 const CSS = `
 .wrap{--ground:#FBFAFA;--surface:#fff;--surface-2:#F3F1F2;--ink:#17151A;--ink-2:#4A444C;
   --muted:#7C737D;--line:#E3DFE1;--line-s:#CFC8CB;
   --c1:#2563A8;--c1-soft:#A9C4E0;--c2:#C2620B;--c3:#5B4A9E;--ok:#1F7A4D;--bad:#C1121F;
   background:var(--ground);color:var(--ink);min-height:100vh;
-  font-family:"Be Vietnam Pro",system-ui,-apple-system,sans-serif;
-  max-width:1100px;margin:0 auto;padding:40px 20px 96px}
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+  max-width:1180px;margin:0 auto;padding:40px 20px 96px}
 @media (prefers-color-scheme:dark){.wrap{--ground:#131215;--surface:#1B191D;--surface-2:#232025;
   --ink:#F2EFF1;--ink-2:#C6BEC6;--muted:#8F8691;--line:#312D33;--line-s:#453F47;
   --c1:#4E93DD;--c1-soft:#2F4E6E;--c2:#C07E1E;--c3:#9B8AE0;--ok:#5FCB92;--bad:#FF6B7B}}
 .wrap *{box-sizing:border-box}
 .eyebrow{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 11px}
 .wrap h1{font-size:32px;font-weight:700;letter-spacing:-.02em;margin:0}
-.lede{color:var(--ink-2);margin:11px 0 0;font-size:15.5px;max-width:70ch}
+.lede{color:var(--ink-2);margin:11px 0 0;font-size:15.5px;max-width:74ch;line-height:1.6}
 .wrap section{margin-top:44px}
 .wrap h2{font-size:18.5px;font-weight:600;letter-spacing:-.01em;margin:0}
 .wrap h3{font-size:14px;font-weight:600;margin:0 0 4px;color:var(--ink-2)}
-.sub{color:var(--ink-2);margin:7px 0 0;font-size:14.5px;max-width:70ch}
+.sub{color:var(--ink-2);margin:7px 0 0;font-size:14.5px;max-width:74ch;line-height:1.6}
 .foot{color:var(--muted);font-size:12.5px;margin:8px 0 0}
 .muted{color:var(--muted);font-weight:400}
 .up{color:var(--ok)}
@@ -1079,13 +1154,17 @@ const CSS = `
 .lnk{font:inherit;font-size:12.5px;background:none;border:0;padding:0;color:var(--c1);
   cursor:pointer;text-decoration:underline}
 
-.filters{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:26px}
 .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:2px}
 .seg button{font:inherit;font-size:13.5px;padding:6px 13px;border:0;background:transparent;
-  color:var(--ink-2);border-radius:4px;cursor:pointer}
+  color:var(--ink-2);border-radius:4px;cursor:pointer;white-space:nowrap}
 .seg button.on{background:var(--surface);color:var(--ink);font-weight:500;
   box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .seg button:focus-visible{outline:2px solid var(--c1);outline-offset:1px}
+.drop{font:inherit;font-size:13.5px;padding:7px 11px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);border-radius:5px;cursor:pointer;max-width:100%}
+.drop.wide{min-width:240px}
+.drop:focus-visible{outline:2px solid var(--c1);outline-offset:1px}
 
 .tabs{display:flex;gap:2px;margin-top:26px;border-bottom:1px solid var(--line);overflow-x:auto}
 .tabs button{font:inherit;font-size:14px;padding:9px 14px;border:0;background:transparent;
@@ -1101,9 +1180,10 @@ const CSS = `
 .tile-u{font-size:15px;font-weight:500;color:var(--muted);margin-left:2px}
 .tile-s{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.4}
 
-/* ---- tầng biểu đồ (charts.tsx) ----
-   Mọi thứ nằm trong luồng: khung cao cố định, cột co giãn, nhãn nằm dưới cột
-   chứ không định vị tuyệt đối. Đó là lý do không còn đè chữ. */
+/* ---- chart layer (charts.tsx) ----
+   Everything sits in normal flow: fixed-height plot, flexible columns, labels
+   below the columns instead of absolutely positioned. That is what stopped the
+   labels colliding. Axis numbers live in the left/right gutters. */
 .unit{font-size:12px;color:var(--muted);margin:14px 0 0}
 .unit-inline{color:var(--muted);font-size:12px}
 .cframe{position:relative;margin-top:14px;padding:8px 46px 0 50px}
@@ -1163,7 +1243,7 @@ const CSS = `
 .wrap table{border-collapse:collapse;width:100%;min-width:680px;background:var(--surface);font-size:13px}
 .wrap th,.wrap td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
 .wrap thead th{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
-  font-weight:500;background:var(--surface-2);position:sticky;top:0}
+  font-weight:500;background:var(--surface-2)}
 .wrap thead th.srt{cursor:pointer;user-select:none}
 .wrap thead th.srt:hover{color:var(--ink)}
 .wrap thead th[data-on="1"]{color:var(--c1)}
@@ -1178,7 +1258,7 @@ const CSS = `
 .ind{padding-left:30px !important;color:var(--ink-2)}
 
 .waterfall{display:grid;gap:8px;margin-top:22px}
-.wf{display:grid;grid-template-columns:minmax(160px,1.2fr) 2fr auto;gap:13px;align-items:center;font-size:14px}
+.wf{display:grid;grid-template-columns:minmax(180px,1.2fr) 2fr auto;gap:13px;align-items:center;font-size:14px}
 .wf-l{color:var(--ink-2)}
 .wf.moc .wf-l{color:var(--ink);font-weight:600}
 .wf.thieu .wf-l{color:var(--muted);font-style:italic}
@@ -1190,7 +1270,7 @@ const CSS = `
 
 .tip{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line-s);
   border-radius:4px;padding:8px 11px;font-size:12.5px;line-height:1.5;color:var(--ink);
-  box-shadow:0 4px 14px rgba(0,0,0,.16);pointer-events:none;max-width:260px}
+  box-shadow:0 4px 14px rgba(0,0,0,.16);pointer-events:none;max-width:280px}
 
 .note{margin-top:26px;padding:14px 16px;background:var(--surface-2);border:1px solid var(--line);
   border-left:2px solid var(--line-s);border-radius:3px;font-size:14px;color:var(--ink-2);line-height:1.6}
