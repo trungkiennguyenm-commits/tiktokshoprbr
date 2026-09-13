@@ -1,24 +1,38 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { BarChart, StackChart, DeltaChart, RowBars, type Pt, type Pt2 } from './charts'
+import { Fragment, useMemo, useState } from 'react'
+import {
+  BarChart, StackChart, DeltaChart, RowBars, ComboChart, MultiStack,
+  type Pt, type Pt2, type PtN,
+} from './charts'
 
 /* ============================ kiểu dữ liệu ============================ */
 
+/* GMV và NMV cùng công thức tiền: giá gốc − seller discount.
+   Khác nhau ở tập đơn: GMV lấy mọi trạng thái, NMV bỏ đơn đã huỷ.
+   Vì vậy GMV = NMV + gmv_mat_do_huy, và NMV xếp chồng được trong cột GMV. */
 export type Monthly = {
-  thang: string; category: string; so_luong: number; sl_hoan_tat: number
-  sl_huy: number; cancel_rate: number; gmv: number; nmv: number
+  thang: string; category: string; so_luong: number
+  sl_chua_huy: number; sl_hoan_tat: number; sl_huy: number; cancel_rate: number
+  gmv: number; nmv: number; nmv_hoan_tat: number; gmv_mat_do_huy: number; khach_tra: number
   gia_goc: number; seller_disc: number; platform_disc: number; gio_huy_tb: number
 }
 export type Daily = {
-  ngay: string; category: string; so_luong: number; sl_hoan_tat: number
-  sl_huy: number; cancel_rate: number; gmv: number; nmv: number
+  ngay: string; category: string; so_luong: number
+  sl_chua_huy: number; sl_hoan_tat: number; sl_huy: number; cancel_rate: number
+  gmv: number; nmv: number; nmv_hoan_tat: number; gmv_mat_do_huy: number; khach_tra: number
   seller_disc: number; platform_disc: number
+}
+/** Một model trong một kỳ. Dùng cho cột chồng theo model. */
+export type SkuPeriod = {
+  product_id: string; model: string; category: string; ky: string
+  so_luong: number; sl_huy: number; gmv: number; nmv: number
 }
 export type Sku = {
   product_id: string; model: string; category: string
-  so_luong: number; sl_hoan_tat: number; sl_huy: number; cancel_rate: number
-  gmv: number; nmv: number; gia_goc_tb: number; gia_ban_tb: number
+  so_luong: number; sl_chua_huy: number; sl_hoan_tat: number; sl_huy: number; cancel_rate: number
+  gmv: number; nmv: number; nmv_hoan_tat: number
+  gia_goc_tb: number; gia_ban_tb: number; gia_khach_tra_tb: number
   seller_disc_tb: number; platform_disc_tb: number
   pct_seller_disc: number; pct_platform_disc: number
   gio_huy_tb: number; gio_huy_trung_vi: number
@@ -33,7 +47,11 @@ export type Ship = {
   shop_tro_gia_ship: number; san_tro_gia_ship: number; ship_dot_cho_don_huy: number
 }
 
-type Props = { monthly: Monthly[]; daily: Daily[]; sku: Sku[]; lapse: Lapse[]; pnl: Pnl[]; ship: Ship[] }
+type Props = {
+  monthly: Monthly[]; daily: Daily[]; sku: Sku[]
+  skuMonthly: SkuPeriod[]; skuDaily: SkuPeriod[]
+  lapse: Lapse[]; pnl: Pnl[]; ship: Ship[]
+}
 
 /* ============================ tiện ích ============================ */
 
@@ -61,15 +79,24 @@ type Tab = (typeof TABS)[number]
  */
 type Rolled = {
   ky: string
-  so_luong: number; sl_hoan_tat: number; sl_huy: number
-  gmv: number; nmv: number; seller_disc: number; platform_disc: number
+  so_luong: number; sl_chua_huy: number; sl_hoan_tat: number; sl_huy: number
+  gmv: number; nmv: number; nmv_hoan_tat: number; gmv_mat_do_huy: number; khach_tra: number
+  seller_disc: number; platform_disc: number
   cancel_rate: number
 }
 
 const ZERO = (ky: string): Rolled => ({
-  ky, so_luong: 0, sl_hoan_tat: 0, sl_huy: 0,
-  gmv: 0, nmv: 0, seller_disc: 0, platform_disc: 0, cancel_rate: 0,
+  ky, so_luong: 0, sl_chua_huy: 0, sl_hoan_tat: 0, sl_huy: 0,
+  gmv: 0, nmv: 0, nmv_hoan_tat: 0, gmv_mat_do_huy: 0, khach_tra: 0,
+  seller_disc: 0, platform_disc: 0, cancel_rate: 0,
 })
+
+/** Bảng màu định tính cho cột chồng theo model. */
+const PALETTE = [
+  '#2563A8', '#C2620B', '#1F7A4D', '#8E44AD', '#B31B4A',
+  '#0E7490', '#8A6D1F', '#4A5568', '#166534', '#7C2D12',
+]
+const MAU_KHAC = '#A9A2AB'
 
 const keyOf = (r: Monthly | Daily) => ('thang' in r ? r.thang : r.ngay)
 
@@ -81,10 +108,14 @@ function rollup(rows: (Monthly | Daily)[], cat: CatKey): Rolled[] {
     const k = keyOf(r)
     const cur = map.get(k) ?? ZERO(k)
     cur.so_luong += Number(r.so_luong || 0)
+    cur.sl_chua_huy += Number(r.sl_chua_huy || 0)
     cur.sl_hoan_tat += Number(r.sl_hoan_tat || 0)
     cur.sl_huy += Number(r.sl_huy || 0)
     cur.gmv += Number(r.gmv || 0)
     cur.nmv += Number(r.nmv || 0)
+    cur.nmv_hoan_tat += Number(r.nmv_hoan_tat || 0)
+    cur.gmv_mat_do_huy += Number(r.gmv_mat_do_huy || 0)
+    cur.khach_tra += Number(r.khach_tra || 0)
     cur.seller_disc += Number(r.seller_disc || 0)
     cur.platform_disc += Number(r.platform_disc || 0)
     map.set(k, cur)
@@ -145,6 +176,10 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
             <th className="n">GMV</th>
             <th className="n">±GMV</th>
             <th className="n">NMV</th>
+            <th className="n">±NMV</th>
+            <th className="n">Mất do huỷ</th>
+            <th className="n">NMV hoàn tất</th>
+            <th className="n">Khách thực trả</th>
             <th className="n">Shop giảm</th>
             <th className="n">Sàn giảm</th>
           </tr></thead>
@@ -161,7 +196,11 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
                   <td className="n" style={{ color: r.cancel_rate > 40 ? 'var(--bad)' : 'inherit' }}>{pct(r.cancel_rate)}</td>
                   <td className="n">{ty(r.gmv)}</td>
                   <td className="n"><Dd a={r.gmv} b={p?.gmv} /></td>
-                  <td className="n">{ty(r.nmv)}</td>
+                  <td className="n"><b>{ty(r.nmv)}</b></td>
+                  <td className="n"><Dd a={r.nmv} b={p?.nmv} /></td>
+                  <td className="n" style={{ color: 'var(--bad)' }}>{ty(r.gmv_mat_do_huy)}</td>
+                  <td className="n muted">{ty(r.nmv_hoan_tat)}</td>
+                  <td className="n muted">{ty(r.khach_tra)}</td>
                   <td className="n">{ty(r.seller_disc)}</td>
                   <td className="n">{ty(r.platform_disc)}</td>
                 </tr>
@@ -191,11 +230,19 @@ function Dd({ a, b }: { a?: number; b?: number }) {
 
 /* ============================ trang ============================ */
 
-export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Props) {
+export default function Dashboard({ monthly, daily, sku, skuMonthly, skuDaily, lapse, pnl, ship }: Props) {
   const [tab, setTab] = useState<Tab>('Tổng quan')
   const [cat, setCat] = useState<CatKey>('all')
   const [mode, setMode] = useState<'mom' | 'd30'>('mom')
   const [sortKey, setSortKey] = useState<keyof Sku>('nmv')
+  const [skuMetric, setSkuMetric] = useState<'gmv' | 'so_luong'>('gmv')
+  const [dong, setDong] = useState<Set<string>>(new Set())
+  const toggleDong = (c: string) =>
+    setDong((p) => {
+      const n = new Set(p)
+      if (n.has(c)) n.delete(c); else n.add(c)
+      return n
+    })
 
   const src: (Monthly | Daily)[] = mode === 'mom' ? monthly : daily
 
@@ -221,6 +268,37 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
     [sku, cat, sortKey],
   )
 
+  /** Cột chồng theo model: giữ 8 model lớn nhất, phần còn lại gộp vào "Khác". */
+  const modelStack = useMemo(() => {
+    const rows = (mode === 'mom' ? skuMonthly : skuDaily)
+      .filter((r) => keys.has(r.ky))
+      .filter((r) => cat === 'all' || r.category === cat)
+    const val = (r: SkuPeriod) => Number((skuMetric === 'gmv' ? r.gmv : r.so_luong) || 0)
+
+    const tong = new Map<string, number>()
+    for (const r of rows) tong.set(r.model, (tong.get(r.model) ?? 0) + val(r))
+    const top = Array.from(tong.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8).map((e) => e[0])
+    const co_khac = tong.size > top.length
+
+    const series = [
+      ...top.map((m, i) => ({ ten: m, color: PALETTE[i % PALETTE.length] })),
+      ...(co_khac ? [{ ten: 'Khác', color: MAU_KHAC }] : []),
+    ]
+    const idx = new Map(top.map((m, i) => [m, i]))
+
+    const byKy = new Map<string, number[]>()
+    for (const r of rows) {
+      const arr = byKy.get(r.ky) ?? new Array(series.length).fill(0)
+      arr[idx.get(r.model) ?? top.length] += val(r)
+      byKy.set(r.ky, arr)
+    }
+    const data: PtN[] = Array.from(byKy.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([ky, parts]) => ({ ky, parts }))
+
+    return { series, data }
+  }, [mode, skuMonthly, skuDaily, keys, cat, skuMetric])
+
   const lbl = mode === 'mom' ? mmyy : ddmm
   const kyText = mode === 'mom' ? 'tháng' : 'ngày'
   const dodText = mode === 'mom' ? 'MoM' : 'DoD'
@@ -235,8 +313,9 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
           <p className="eyebrow">Roborock Official VN · TikTok Shop</p>
           <h1>Hiệu quả kinh doanh</h1>
           <p className="lede">
-            Robot và handheld, đã loại quà tặng và phụ kiện. NMV = giá gốc trừ seller discount,
-            chỉ tính đơn hoàn tất. Xếp kỳ theo ngày đặt đơn.
+            Robot và handheld, đã loại quà tặng và phụ kiện. GMV và NMV cùng tính bằng
+            <b> giá gốc trừ seller discount</b>, không trừ voucher sàn. GMV lấy mọi trạng thái đơn,
+            NMV bỏ đơn đã huỷ — nên GMV = NMV + phần mất do huỷ. Xếp kỳ theo ngày đặt đơn.
           </p>
         </header>
 
@@ -272,7 +351,7 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
                 sub={deltaText(delta(cur?.gmv, prev?.gmv), kyText)} />
               <Tile label="Số lượng bán" value={n0(cur?.so_luong ?? 0)} unit=" máy"
                 sub={deltaText(delta(cur?.so_luong, prev?.so_luong), kyText)} />
-              <Tile label="NMV (đơn hoàn tất)" value={ty(cur?.nmv ?? 0)} unit=" tỷ"
+              <Tile label="NMV (trừ đơn huỷ)" value={ty(cur?.nmv ?? 0)} unit=" tỷ"
                 sub={deltaText(delta(cur?.nmv, prev?.nmv), kyText)} />
               <Tile label="Cancel rate" value={pct(cur?.cancel_rate ?? 0)}
                 tone={(cur?.cancel_rate ?? 0) > 40 ? 'bad' : 'ok'}
@@ -280,11 +359,40 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
             </section>
 
             <section>
-              <h2>GMV theo {kyText} · {dodText}</h2>
+              <h2>GMV, NMV và tỷ lệ huỷ trong cùng một hình</h2>
               <p className="sub">
-                Toàn bộ đơn đặt, không phụ thuộc đơn đã hoàn tất hay chưa. Con số dưới mỗi cột
-                là biến động so với kỳ liền trước.
+                Chiều cao cả cột là GMV. Phần đậm dưới là NMV — phần còn sống. Phần nhạt trên
+                là tiền mất vì huỷ đơn. Hai phần cộng lại đúng bằng GMV, vì cả hai dùng chung
+                công thức giá gốc trừ seller discount, chỉ khác tập đơn. Đường xanh lá là phần
+                NMV đã thật sự hoàn tất. Đường đỏ là tỷ lệ huỷ, đọc ở trục phải, cố định 0–100%.
               </p>
+              <ComboChart
+                data={shown.map((r) => ({ ky: r.ky, a: r.nmv, b: r.gmv_mat_do_huy }))}
+                names={['NMV (đơn chưa huỷ)', 'Mất do huỷ đơn']}
+                colors={['var(--c1)', 'var(--c1-soft)']}
+                lines={[
+                  { ten: 'NMV đã hoàn tất', color: 'var(--ok)', truc: 'tien', vals: shown.map((r) => r.nmv_hoan_tat) },
+                  { ten: 'Tỷ lệ huỷ (trục phải)', color: 'var(--bad)', truc: 'pct', vals: shown.map((r) => r.cancel_rate) },
+                ]}
+                fmt={ty} label={lbl} unit="tỷ đồng"
+                tip={(d) => {
+                  const r = shown.find((x) => x.ky === d.ky)!
+                  return (
+                    <><b>{lbl(d.ky)}</b><br />
+                      GMV {ty(r.gmv)} tỷ<br />
+                      · NMV {ty(r.nmv)} tỷ<br />
+                      · mất do huỷ {ty(r.gmv_mat_do_huy)} tỷ<br />
+                      NMV đã hoàn tất {ty(r.nmv_hoan_tat)} tỷ<br />
+                      Khách thực trả {ty(r.khach_tra)} tỷ<br />
+                      Tỷ lệ huỷ {r.cancel_rate}%</>
+                  )
+                }}
+              />
+            </section>
+
+            <section>
+              <h2>GMV theo {kyText} · {dodText}</h2>
+              <p className="sub">Cùng số liệu, nhưng đọc biến động so với kỳ liền trước.</p>
               <DeltaChart
                 data={pt((r) => r.gmv)} color="var(--c1)" fmt={ty} label={lbl} unit="tỷ đồng"
                 tip={(d, dl) => (
@@ -322,14 +430,13 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
             </section>
 
             <section>
-              <h2>Hoàn tất và huỷ</h2>
+              <h2>Đơn còn sống và đơn huỷ</h2>
               <p className="sub">
-                Cột chồng: phần xanh là máy thật sự tới tay khách, phần đỏ là máy bị huỷ.
-                Khoảng cách GMV–NMV nằm ở đây.
+                Cột chồng: phần xanh là máy còn cơ hội ra tiền, phần đỏ là máy đã huỷ.
               </p>
               <StackChart
-                data={shown.map((r) => ({ ky: r.ky, a: r.sl_hoan_tat, b: r.sl_huy }))}
-                fmt={n0} label={lbl} names={['Hoàn tất', 'Huỷ']}
+                data={shown.map((r) => ({ ky: r.ky, a: r.sl_chua_huy, b: r.sl_huy }))}
+                fmt={n0} label={lbl} names={['Chưa huỷ', 'Huỷ']}
                 colors={['var(--ok)', 'var(--bad)']} unit="máy"
                 tip={(d) => (
                   <><b>{lbl(d.ky)}</b><br />Hoàn tất {n0(d.a)} · Huỷ {n0(d.b)}
@@ -345,9 +452,11 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
             </section>
 
             <div className="note warn">
-              <b>Kỳ gần nhất luôn trông tệ hơn thực tế.</b> NMV chỉ tính đơn đã COMPLETED,
-              mà đơn đặt trong kỳ đang chạy phần lớn còn đang giao. Vì vậy hãy đọc GMV và số lượng
-              trước, NMV sau. Đừng so kỳ đang chạy với kỳ đã đóng.
+              <b>NMV giờ đọc được theo thời gian thực, nhưng vẫn còn một độ trễ.</b> NMV đã bỏ
+              điều kiện COMPLETED và chỉ loại đơn đã huỷ, nên đơn đang trên đường giao vẫn được
+              tính ngay. Cái còn lại: đơn của kỳ đang chạy chưa kịp bị huỷ hết, nên tỷ lệ huỷ của
+              kỳ gần nhất sẽ còn tăng và NMV sẽ còn giảm trong vài ngày tới — phần lớn đơn bị huỷ
+              rơi vào mốc 3–7 ngày sau khi đặt.
             </div>
           </>
         )}
@@ -375,7 +484,7 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
                       <b style={{ color: huy / Math.max(1, sl) > 0.4 ? 'var(--bad)' : 'inherit' }}>
                         {Math.round((huy / Math.max(1, sl)) * 1000) / 10}%
                       </b></div>
-                    <div className="kv"><span>Giá bán TB</span><b>{n0(gmv / Math.max(1, sl))}đ</b></div>
+                    <div className="kv"><span>Giá sau giảm shop</span><b>{n0(gmv / Math.max(1, sl))}đ</b></div>
                   </div>
                 )
               })}
@@ -427,7 +536,7 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
                     <th>Kỳ</th><th>Ngành hàng</th>
                     <th className="n">SL bán</th><th className="n">Hoàn tất</th><th className="n">Huỷ</th>
                     <th className="n">Huỷ %</th><th className="n">GMV</th><th className="n">NMV</th>
-                    <th className="n">Giá bán TB</th>
+                    <th className="n">Giá sau giảm shop</th>
                   </tr></thead>
                   <tbody>
                     {srcShown
@@ -477,14 +586,40 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
             </section>
 
             <section>
-              <h2>Hoàn tất và huỷ theo SKU</h2>
+              <h2>Cơ cấu model theo {kyText}</h2>
+              <p className="sub">
+                Cột chồng theo model. Lấy 8 model lớn nhất, phần còn lại gộp vào &ldquo;Khác&rdquo;
+                để cột không vỡ vụn thành 28 mảnh không đọc được.
+              </p>
+              <div className="seg" style={{ marginTop: 14 }}>
+                {(['gmv', 'so_luong'] as const).map((k) => (
+                  <button key={k} className={skuMetric === k ? 'on' : ''} onClick={() => setSkuMetric(k)}>
+                    {k === 'gmv' ? 'Theo GMV' : 'Theo số lượng'}
+                  </button>
+                ))}
+              </div>
+              <MultiStack
+                data={modelStack.data} series={modelStack.series}
+                fmt={skuMetric === 'gmv' ? ty : n0} label={lbl}
+                unit={skuMetric === 'gmv' ? 'tỷ đồng' : 'máy'}
+                tip={(d) => (
+                  <><b>{lbl(d.ky)}</b><br />
+                    {modelStack.series.map((s, j) => (d.parts[j] > 0
+                      ? <span key={s.ten}>{s.ten}: {skuMetric === 'gmv' ? `${ty(d.parts[j])} tỷ` : `${n0(d.parts[j])} máy`}<br /></span>
+                      : null))}</>
+                )}
+              />
+            </section>
+
+            <section>
+              <h2>Đơn còn sống và đơn huỷ theo SKU</h2>
               <p className="sub">Cột chồng cho 14 SKU bán nhiều nhất. Phần đỏ là phần không ra tiền.</p>
               <StackChart
                 data={skuF.slice()
                   .sort((a, b) => b.so_luong - a.so_luong)
                   .slice(0, 14)
-                  .map((s) => ({ ky: s.model, a: s.sl_hoan_tat, b: s.sl_huy }))}
-                fmt={n0} label={(k) => k.split(' ').slice(-1)[0]} names={['Hoàn tất', 'Huỷ']}
+                  .map((s) => ({ ky: s.model, a: s.sl_chua_huy, b: s.sl_huy }))}
+                fmt={n0} label={(k) => k.split(' ').slice(-1)[0]} names={['Chưa huỷ', 'Huỷ']}
                 colors={['var(--ok)', 'var(--bad)']} unit="máy"
                 tip={(d) => (
                   <><b>{d.ky}</b><br />Hoàn tất {n0(d.a)} · Huỷ {n0(d.b)}
@@ -494,46 +629,83 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
             </section>
 
             <section>
-              <h2>Bảng đầy đủ từng SKU</h2>
-              <p className="sub">Bấm vào tiêu đề cột để sắp xếp lại. Đang sắp theo <b>{String(sortKey)}</b>.</p>
+              <h2>Bảng đầy đủ, gom theo ngành hàng</h2>
+              <p className="sub">
+                Dòng đậm là tổng của ngành hàng, bấm vào để thu gọn hoặc mở ra danh sách model bên trong.
+                Bấm tiêu đề cột để sắp xếp lại các model. Đang sắp theo <b>{String(sortKey)}</b>.
+              </p>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
                     <th>Model</th>
                     <Th k="so_luong" cur={sortKey} set={setSortKey}>Bán</Th>
-                    <Th k="sl_hoan_tat" cur={sortKey} set={setSortKey}>Hoàn tất</Th>
+                    <Th k="sl_chua_huy" cur={sortKey} set={setSortKey}>Chưa huỷ</Th>
                     <Th k="sl_huy" cur={sortKey} set={setSortKey}>Huỷ</Th>
                     <Th k="cancel_rate" cur={sortKey} set={setSortKey}>Huỷ %</Th>
                     <Th k="gmv" cur={sortKey} set={setSortKey}>GMV</Th>
                     <Th k="nmv" cur={sortKey} set={setSortKey}>NMV</Th>
                     <Th k="gia_goc_tb" cur={sortKey} set={setSortKey}>Giá niêm yết</Th>
-                    <Th k="gia_ban_tb" cur={sortKey} set={setSortKey}>Giá bán TB</Th>
+                    <Th k="gia_ban_tb" cur={sortKey} set={setSortKey}>Giá sau giảm shop</Th>
+                    <Th k="gia_khach_tra_tb" cur={sortKey} set={setSortKey}>Khách trả TB</Th>
                     <Th k="pct_seller_disc" cur={sortKey} set={setSortKey}>Shop giảm %</Th>
                     <Th k="pct_platform_disc" cur={sortKey} set={setSortKey}>Sàn giảm %</Th>
                     <Th k="gio_huy_trung_vi" cur={sortKey} set={setSortKey}>Huỷ sau (median)</Th>
                     <Th k="gio_huy_tb" cur={sortKey} set={setSortKey}>Huỷ sau (TB)</Th>
                   </tr></thead>
                   <tbody>
-                    {skuF.map((s) => (
-                      <tr key={s.product_id}>
-                        <td>
-                          <span className="sw sm" style={{ background: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
-                          {s.model}
-                        </td>
-                        <td className="n">{n0(s.so_luong)}</td>
-                        <td className="n">{n0(s.sl_hoan_tat)}</td>
-                        <td className="n">{n0(s.sl_huy)}</td>
-                        <td className="n" style={{ color: s.cancel_rate > 70 ? 'var(--bad)' : 'inherit' }}>{pct(s.cancel_rate)}</td>
-                        <td className="n">{tr(s.gmv)}tr</td>
-                        <td className="n"><b>{tr(s.nmv)}tr</b></td>
-                        <td className="n">{n0(s.gia_goc_tb)}</td>
-                        <td className="n">{n0(s.gia_ban_tb)}</td>
-                        <td className="n">{pct(s.pct_seller_disc)}</td>
-                        <td className="n muted">{pct(s.pct_platform_disc)}</td>
-                        <td className="n">{s.gio_huy_trung_vi != null ? `${Math.round(s.gio_huy_trung_vi)}h` : '—'}</td>
-                        <td className="n muted">{s.gio_huy_tb != null ? `${Math.round(s.gio_huy_tb)}h` : '—'}</td>
-                      </tr>
-                    ))}
+                    {(['robot', 'handheld'] as const)
+                      .filter((c) => cat === 'all' || cat === c)
+                      .map((c) => {
+                        const rows = skuF.filter((s) => s.category === c)
+                        if (!rows.length) return null
+                        const sum = (f: (s: Sku) => number) => rows.reduce((a, s) => a + Number(f(s) || 0), 0)
+                        const sl = sum((s) => s.so_luong)
+                        const huy = sum((s) => s.sl_huy)
+                        const mo = !dong.has(c)
+                        return (
+                          <Fragment key={c}>
+                            <tr className="grp" onClick={() => toggleDong(c)}>
+                              <td>
+                                <span className="car">{mo ? '▾' : '▸'}</span>{' '}
+                                <span className="sw sm" style={{ background: c === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
+                                <b>{c === 'robot' ? 'Robot hút bụi' : 'Máy hút bụi cầm tay'}</b>
+                                <span className="muted"> · {rows.length} model</span>
+                              </td>
+                              <td className="n"><b>{n0(sl)}</b></td>
+                              <td className="n"><b>{n0(sum((s) => s.sl_chua_huy))}</b></td>
+                              <td className="n"><b>{n0(huy)}</b></td>
+                              <td className="n"><b>{Math.round((huy / Math.max(1, sl)) * 1000) / 10}%</b></td>
+                              <td className="n"><b>{tr(sum((s) => s.gmv))}tr</b></td>
+                              <td className="n"><b>{tr(sum((s) => s.nmv))}tr</b></td>
+                              <td className="n muted">—</td>
+                              <td className="n"><b>{n0(sum((s) => s.gmv) / Math.max(1, sl))}</b></td>
+                              <td className="n muted">—</td>
+                              <td className="n muted">—</td>
+                              <td className="n muted">—</td>
+                              <td className="n muted">—</td>
+                              <td className="n muted">—</td>
+                            </tr>
+                            {mo && rows.map((s) => (
+                              <tr key={s.product_id}>
+                                <td className="ind">{s.model}</td>
+                                <td className="n">{n0(s.so_luong)}</td>
+                                <td className="n">{n0(s.sl_chua_huy)}</td>
+                                <td className="n">{n0(s.sl_huy)}</td>
+                                <td className="n" style={{ color: s.cancel_rate > 70 ? 'var(--bad)' : 'inherit' }}>{pct(s.cancel_rate)}</td>
+                                <td className="n">{tr(s.gmv)}tr</td>
+                                <td className="n"><b>{tr(s.nmv)}tr</b></td>
+                                <td className="n">{n0(s.gia_goc_tb)}</td>
+                                <td className="n">{n0(s.gia_ban_tb)}</td>
+                                <td className="n muted">{n0(s.gia_khach_tra_tb)}</td>
+                                <td className="n">{pct(s.pct_seller_disc)}</td>
+                                <td className="n muted">{pct(s.pct_platform_disc)}</td>
+                                <td className="n">{s.gio_huy_trung_vi != null ? `${Math.round(s.gio_huy_trung_vi)}h` : '—'}</td>
+                                <td className="n muted">{s.gio_huy_tb != null ? `${Math.round(s.gio_huy_tb)}h` : '—'}</td>
+                              </tr>
+                            ))}
+                          </Fragment>
+                        )
+                      })}
                   </tbody>
                 </table>
               </div>
@@ -605,7 +777,7 @@ export default function Dashboard({ monthly, daily, sku, lapse, pnl, ship }: Pro
               <div className="tablewrap">
                 <table>
                   <thead><tr>
-                    <th>Model</th><th className="n">Giá niêm yết</th><th className="n">Giá bán TB</th>
+                    <th>Model</th><th className="n">Giá niêm yết</th><th className="n">Giá sau giảm shop</th>
                     <th className="n">Shop giảm (đ)</th><th className="n">Shop giảm %</th>
                     <th className="n">Sàn giảm (đ)</th><th className="n">Sàn giảm %</th>
                     <th className="n">Tổng giảm %</th><th className="n">SL bán</th>
@@ -885,13 +1057,13 @@ function deltaText(d: number | null, ky: string) {
 const CSS = `
 .wrap{--ground:#FBFAFA;--surface:#fff;--surface-2:#F3F1F2;--ink:#17151A;--ink-2:#4A444C;
   --muted:#7C737D;--line:#E3DFE1;--line-s:#CFC8CB;
-  --c1:#2563A8;--c2:#C2620B;--c3:#5B4A9E;--ok:#1F7A4D;--bad:#C1121F;
+  --c1:#2563A8;--c1-soft:#A9C4E0;--c2:#C2620B;--c3:#5B4A9E;--ok:#1F7A4D;--bad:#C1121F;
   background:var(--ground);color:var(--ink);min-height:100vh;
   font-family:"Be Vietnam Pro",system-ui,-apple-system,sans-serif;
   max-width:1100px;margin:0 auto;padding:40px 20px 96px}
 @media (prefers-color-scheme:dark){.wrap{--ground:#131215;--surface:#1B191D;--surface-2:#232025;
   --ink:#F2EFF1;--ink-2:#C6BEC6;--muted:#8F8691;--line:#312D33;--line-s:#453F47;
-  --c1:#4E93DD;--c2:#C07E1E;--c3:#9B8AE0;--ok:#5FCB92;--bad:#FF6B7B}}
+  --c1:#4E93DD;--c1-soft:#2F4E6E;--c2:#C07E1E;--c3:#9B8AE0;--ok:#5FCB92;--bad:#FF6B7B}}
 .wrap *{box-sizing:border-box}
 .eyebrow{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 11px}
 .wrap h1{font-size:32px;font-weight:700;letter-spacing:-.02em;margin:0}
@@ -934,12 +1106,16 @@ const CSS = `
    chứ không định vị tuyệt đối. Đó là lý do không còn đè chữ. */
 .unit{font-size:12px;color:var(--muted);margin:14px 0 0}
 .unit-inline{color:var(--muted);font-size:12px}
-.cframe{position:relative;margin-top:14px;padding-top:8px}
-.gridline{position:absolute;left:0;right:0;top:8px;border-top:1px dashed var(--line);
+.cframe{position:relative;margin-top:14px;padding:8px 46px 0 50px}
+.gridline{position:absolute;left:50px;right:46px;top:8px;border-top:1px dashed var(--line);
   pointer-events:none;z-index:0}
 .gridline.half{top:133px}
-.gridline span{position:absolute;right:0;top:-8px;background:var(--ground);padding:0 4px;
-  font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.gridline .gl,.gridline .gr{position:absolute;top:-8px;font-size:10.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.gridline .gl{left:-50px;width:44px;text-align:right}
+.gridline .gr{right:-46px;width:40px;text-align:left}
+.lines{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3;overflow:visible}
+.swl{width:13px;height:3px;border-radius:2px;display:inline-block;flex:none}
 .plot{display:flex;align-items:flex-end;gap:6px;height:250px;position:relative;z-index:1;
   border-bottom:1px solid var(--line-s)}
 .plot .col{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;justify-content:flex-end;
@@ -996,6 +1172,10 @@ const CSS = `
 .wrap tbody tr:hover td{background:var(--surface-2)}
 .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .k{font-variant-numeric:tabular-nums}
+.wrap tbody tr.grp td{background:var(--surface-2);cursor:pointer;
+  border-top:1px solid var(--line-s);border-bottom:1px solid var(--line-s)}
+.wrap tbody tr.grp:hover td{background:var(--line)}
+.ind{padding-left:30px !important;color:var(--ink-2)}
 
 .waterfall{display:grid;gap:8px;margin-top:22px}
 .wf{display:grid;grid-template-columns:minmax(160px,1.2fr) 2fr auto;gap:13px;align-items:center;font-size:14px}
