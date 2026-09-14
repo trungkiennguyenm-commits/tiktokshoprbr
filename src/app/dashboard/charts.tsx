@@ -16,7 +16,12 @@ import { useState } from 'react'
 export type Pt = { ky: string; v: number }
 export type Pt2 = { ky: string; a: number; b: number }
 export type PtN = { ky: string; parts: number[] }
-export type Line = { ten: string; color: string; vals: (number | null)[]; truc: 'tien' | 'pct' }
+export type Line = {
+  ten: string; color: string; vals: (number | null)[]; truc: 'tien' | 'pct'
+  /** In số ngay trên đường. Nhiều điểm thì tự in thưa để khỏi đè nhau. */
+  showVals?: boolean
+  fmtVal?: (v: number) => string
+}
 
 const step = (n: number) => Math.max(1, Math.ceil(n / 13))
 
@@ -80,20 +85,38 @@ function Lines({ lines, max, n }: { lines: Line[]; max: number; n: number }) {
   const y = (v: number, truc: Line['truc']) =>
     100 - (truc === 'pct' ? Math.min(100, Math.max(0, v)) : (v / max) * 100)
 
+  /** Nhãn trên đường: in hết khi ít điểm, in thưa dần khi nhiều. */
+  const lblStep = n <= 14 ? 1 : Math.max(1, Math.ceil(n / 10))
+
   return (
-    <svg className="lines" viewBox="0 0 100 100" preserveAspectRatio="none">
-      {lines.map((ln) => (
-        <polyline
-          key={ln.ten}
-          points={ln.vals
-            .map((v, i) => (v == null ? null : `${x(i)},${y(v, ln.truc)}`))
-            .filter(Boolean)
-            .join(' ')}
-          fill="none" stroke={ln.color} strokeWidth={2}
-          vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round"
-        />
-      ))}
-    </svg>
+    <>
+      <svg className="lines" viewBox="0 0 100 100" preserveAspectRatio="none">
+        {lines.map((ln) => (
+          <polyline
+            key={ln.ten}
+            points={ln.vals
+              .map((v, i) => (v == null ? null : `${x(i)},${y(v, ln.truc)}`))
+              .filter(Boolean)
+              .join(' ')}
+            fill="none" stroke={ln.color} strokeWidth={2}
+            vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round"
+          />
+        ))}
+      </svg>
+      <div className="lvals">
+        {lines.filter((l) => l.showVals).map((ln) =>
+          ln.vals.map((v, i) => (v == null || i % lblStep !== 0 ? null : (
+            <span
+              key={`${ln.ten}-${i}`}
+              className="lval"
+              style={{ left: `${x(i)}%`, bottom: `${100 - y(v, ln.truc)}%`, color: ln.color }}
+            >
+              {ln.fmtVal ? ln.fmtVal(v) : String(v)}
+            </span>
+          ))),
+        )}
+      </div>
+    </>
   )
 }
 

@@ -1,16 +1,17 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import Dashboard, {
-  type Monthly, type Daily, type Sku, type SkuPeriod, type Lapse, type Pnl, type Ship,
+  type Monthly, type Daily, type Sku, type SkuPeriod,
+  type Segment, type LapseRow, type Ship,
 } from './Dashboard'
 
 export const dynamic = 'force-dynamic'
 
-/** PostgREST caps a single response (1000 rows by default), and v_sku_daily is
- *  already past that. Page through with range() until a short page comes back. */
+/** PostgREST caps a single response (1000 rows by default) and several of
+ *  these views are already past that. Page until a short page comes back. */
 async function fetchAll<T>(db: ReturnType<typeof supabaseAdmin>, view: string): Promise<T[]> {
   const SIZE = 1000
   const out: T[] = []
-  for (let page = 0; page < 20; page++) {
+  for (let page = 0; page < 25; page++) {
     const { data, error } = await db.from(view).select('*').range(page * SIZE, page * SIZE + SIZE - 1)
     if (error) throw new Error(`${view}: ${error.message}`)
     const rows = (data ?? []) as T[]
@@ -33,22 +34,22 @@ export default async function Page() {
   const db = supabaseAdmin()
 
   try {
-    const [m, d, s, sm, sd, l, p, sh] = await Promise.all([
+    const [m, d, s, sm, sd, seg, lap, ship] = await Promise.all([
       fetchAll<Monthly>(db, 'v_perf_monthly'),
       fetchAll<Daily>(db, 'v_perf_daily'),
       fetchAll<Sku>(db, 'v_sku_perf'),
       fetchAll<SkuPeriod>(db, 'v_sku_monthly'),
       fetchAll<SkuPeriod>(db, 'v_sku_daily'),
-      fetchAll<Lapse>(db, 'v_cancel_lapse'),
-      fetchAll<Pnl>(db, 'v_pnl_monthly'),
-      fetchAll<Ship>(db, 'v_shipping_monthly'),
+      fetchAll<Segment>(db, 'v_segment_monthly'),
+      fetchAll<LapseRow>(db, 'v_lapse_daily'),
+      fetchAll<Ship>(db, 'v_shipping_daily'),
     ])
 
     return (
       <Dashboard
         monthly={num(m)} daily={num(d)} sku={num(s)}
         skuMonthly={num(sm)} skuDaily={num(sd)}
-        lapse={num(l)} pnl={num(p)} ship={num(sh)}
+        segMonthly={num(seg)} lapseDaily={num(lap)} shipDaily={num(ship)}
       />
     )
   } catch (e) {
