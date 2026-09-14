@@ -958,6 +958,51 @@ export default function Dashboard({
         {/* =================== MoM SUMMARY =================== */}
         {tab === 'MoM Summary' && (
           <>
+            {(() => {
+              const c = momRows[momRows.length - 1]
+              const p = momRows[momRows.length - 2]
+              if (!c) return null
+              const capture = (r?: Rolled) => (r ? p1(r.platform_disc_chua_huy, r.platform_disc) : undefined)
+              const subShare = (r?: Rolled) => (r ? p1(r.platform_disc_chua_huy, r.nmv) : undefined)
+              return (
+                <>
+                  <section>
+                    <h2>{mmyy(c.ky)} at a glance</h2>
+                    <p className="sub">
+                      The latest month in view, against the month before it. Rates move in
+                      percentage points; everything else in percent.
+                    </p>
+                    <div className="tiles" style={{ marginTop: 20 }}>
+                      <Tile label="Seller NMV" value={bn(c.nmv)} unit=" bn"
+                        sub={deltaText(delta(c.nmv, p?.nmv), 'month')} />
+                      <Tile label="Net pcs" value={n0(c.sl_chua_huy)} unit=" pcs"
+                        sub={deltaText(delta(c.sl_chua_huy, p?.sl_chua_huy), 'month')} />
+                      <Tile label="Seller GMV" value={bn(c.gmv)} unit=" bn"
+                        sub={deltaText(delta(c.gmv, p?.gmv), 'month')} />
+                      <Tile label="Gross pcs" value={n0(c.so_luong)} unit=" pcs"
+                        sub={deltaText(delta(c.so_luong, p?.so_luong), 'month')} />
+                      <Tile label="Cancellation rate" value={pct(c.cancel_rate)}
+                        tone={c.cancel_rate > 40 ? 'bad' : 'ok'}
+                        sub={ppText(c.cancel_rate, p?.cancel_rate)} />
+                      <Tile label="Valid subsidy" value={bn(c.platform_disc_chua_huy)} unit=" bn"
+                        sub={deltaText(delta(c.platform_disc_chua_huy, p?.platform_disc_chua_huy), 'month')} />
+                      <Tile label="Capture rate" value={pct(capture(c) ?? 0)}
+                        tone={(capture(c) ?? 0) < 40 ? 'bad' : 'ok'}
+                        sub={ppText(capture(c), capture(p))} />
+                      <Tile label="Subsidy % of NMV" value={pct(subShare(c) ?? 0)}
+                        sub={ppText(subShare(c), subShare(p))} />
+                    </div>
+                    <div className="note warn">
+                      <b>{mmyy(c.ky)} is not finished settling.</b> Orders placed late in the month
+                      have not run their course, and the biggest cancellation cluster lands 3–7 days
+                      after the order. Expect the cancellation rate to rise and Seller NMV to drift
+                      down before this month closes.
+                    </div>
+                  </section>
+                </>
+              )
+            })()}
+
             <section>
               <h2>The month-over-month picture</h2>
               <p className="sub">
@@ -2342,6 +2387,15 @@ function Th({ k, cur, set, children }: {
       {children}{cur === k && <span className="car"> ▾</span>}
     </th>
   )
+}
+
+/** Chênh lệch giữa hai tỷ lệ phải đọc bằng điểm phần trăm, không phải phần trăm.
+ *  Huỷ đơn từ 80,1% xuống 48,2% là giảm 31,9 điểm — viết "giảm 39,8%" là gây hiểu nhầm. */
+function ppText(a?: number, b?: number) {
+  if (a == null || b == null) return undefined
+  const d = Math.round((a - b) * 10) / 10
+  const arrow = d > 0 ? '▲' : d < 0 ? '▼' : '·'
+  return `${arrow} ${Math.abs(d)} pp vs previous month`
 }
 
 function deltaText(d: number | null, periodWord: string) {
