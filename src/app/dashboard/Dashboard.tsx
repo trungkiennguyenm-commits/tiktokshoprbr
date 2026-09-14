@@ -85,10 +85,11 @@ type CatKey = (typeof CATS)[number]['key']
 
 const RANGES = [
   { key: 'mom', label: 'By month' },
+  { key: 'mdays', label: 'Days in picked months' },
   { key: 'd30', label: 'Last 30 days' },
   { key: 'd7', label: 'Last 7 days' },
 ] as const
-type RangeKey = 'mom' | 'd30' | 'd7' | 'month'
+type RangeKey = (typeof RANGES)[number]['key']
 
 const TABS = ['MoM Summary', 'Overview', 'Category', 'SKU', 'Discounts', 'Cancellations', 'P&L', 'Glossary'] as const
 type Tab = (typeof TABS)[number]
@@ -593,13 +594,19 @@ export default function Dashboard({
   const [tab, setTab] = useState<Tab>('MoM Summary')
   const [cat, setCat] = useState<CatKey>('all')
   const [range, setRange] = useState<RangeKey>('mom')
-  const [month, setMonth] = useState('')
+  /** Chọn nhiều tháng để so sánh. Rỗng nghĩa là lấy hết. */
+  const [selMonths, setSelMonths] = useState<Set<string>>(new Set())
+  const toggleMonth = (m: string) =>
+    setSelMonths((p) => {
+      const n = new Set(p)
+      if (n.has(m)) n.delete(m); else n.add(m)
+      return n
+    })
   const [sortKey, setSortKey] = useState<keyof SkuAgg>('nmv')
   const [mixMetric, setMixMetric] = useState<'gmv' | 'so_luong'>('gmv')
   const [modelSel, setModelSel] = useState('')
   const [closed, setClosed] = useState<Set<string>>(new Set())
   const [momMetric, setMomMetric] = useState<'net' | 'gross' | 'cancel'>('net')
-  const [subMetric, setSubMetric] = useState<'amount' | 'pct' | 'capture'>('amount')
 
   const toggleClosed = (c: string) =>
     setClosed((p) => {
@@ -613,21 +620,32 @@ export default function Dashboard({
 
   /** Months with real volume. Anything thinner is a sync-window artefact,
    *  not a slow month, and would read as a collapse if plotted. */
-  const goodMonths = useMemo(
+  const allMonths = useMemo(
     () => rollup(monthly, 'all').filter((r) => r.so_luong >= 20).map((r) => r.ky),
     [monthly],
   )
-  const months = useMemo(() => goodMonths.slice().reverse(), [goodMonths])
+
+  /** Các tháng đang được chọn. Không chọn gì thì lấy hết — đây là mốc mà
+   *  mọi bảng theo tháng dùng, kể cả tab MoM Summary. */
+  const goodMonths = useMemo(
+    () => (selMonths.size ? allMonths.filter((m) => selMonths.has(m)) : allMonths),
+    [allMonths, selMonths],
+  )
 
   const keys = useMemo(() => {
     const all = rollup(src, 'all')
     let picked: Rolled[]
-    if (range === 'mom') picked = all.filter((r) => r.so_luong >= 20)
+    if (range === 'mom') picked = all.filter((r) => goodMonths.includes(r.ky))
     else if (range === 'd30') picked = all.slice(-30)
     else if (range === 'd7') picked = all.slice(-7)
-    else picked = all.filter((r) => r.ky.slice(0, 7) === month.slice(0, 7))
+    else {
+      // Ngày nằm trong các tháng đã chọn. Chưa chọn gì thì lấy tháng mới nhất,
+      // vì đổ toàn bộ lịch sử theo ngày ra một trục là không đọc được.
+      const pre = new Set((selMonths.size ? goodMonths : allMonths.slice(-1)).map((m) => m.slice(0, 7)))
+      picked = all.filter((r) => pre.has(r.ky.slice(0, 7)))
+    }
     return new Set(picked.map((r) => r.ky))
-  }, [src, range, month])
+  }, [src, range, goodMonths, allMonths, selMonths])
 
   const srcShown = useMemo(() => src.filter((r) => keys.has(keyOf(r))), [src, keys])
   const shown = useMemo(() => rollup(srcShown, cat), [srcShown, cat])
@@ -812,9 +830,13 @@ export default function Dashboard({
   const periodWord = byMonth ? 'month' : 'day'
   const dod = byMonth ? 'MoM' : 'DoD'
   const scopeLabel = modelSel || (cat === 'all' ? 'all products' : cat)
-  const periodNote = range === 'mom' ? 'all months'
+  const monthNote = selMonths.size
+    ? goodMonths.map(mmyy).join(', ')
+    : 'all months'
+  const periodNote = range === 'mom' ? monthNote
     : range === 'd30' ? 'last 30 days'
-      : range === 'd7' ? 'last 7 days' : mmyy(month)
+      : range === 'd7' ? 'last 7 days'
+        : `days in ${selMonths.size ? monthNote : mmyy(allMonths[allMonths.length - 1] ?? '')}`
 
   const pt = (pick: (r: Rolled) => number): Pt[] => shown.map((r) => ({ ky: r.ky, v: pick(r) }))
   const cancelLine = (rows: { ky: string; cancel_rate: number }[]) => ({
@@ -860,25 +882,11 @@ export default function Dashboard({
         <div className="filters">
           <div className="seg">
             {RANGES.map((r) => (
-              <button key={r.key} className={range === r.key ? 'on' : ''}
-                onClick={() => { setRange(r.key); setMonth('') }}>
+              <button key={r.key} className={range === r.key ? 'on' : ''} onClick={() => setRange(r.key)}>
                 {r.label}
               </button>
             ))}
           </div>
-
-          <select
-            className="drop"
-            value={range === 'month' ? month : ''}
-            onChange={(e) => {
-              const v = e.target.value
-              if (!v) { setRange('mom'); setMonth('') }
-              else { setMonth(v); setRange('month') }
-            }}
-          >
-            <option value="">Pick a month…</option>
-            {months.map((m) => <option key={m} value={m}>{mmyy(m)}</option>)}
-          </select>
 
           <div className="seg">
             {CATS.map((c) => (
@@ -889,9 +897,22 @@ export default function Dashboard({
             ))}
           </div>
         </div>
+
+        <div className="chips">
+          <span className="chips-l">Months</span>
+          {allMonths.map((m) => (
+            <button key={m} className={`chip ${selMonths.has(m) ? 'on' : ''}`} onClick={() => toggleMonth(m)}>
+              {mmyy(m)}
+            </button>
+          ))}
+          {selMonths.size > 0
+            ? <button className="lnk" onClick={() => setSelMonths(new Set())}>Clear — show all months</button>
+            : <span className="muted" style={{ fontSize: 12.5 }}>none picked = all months</span>}
+        </div>
+
         <p className="foot">
           {tab === 'MoM Summary'
-            ? 'This tab is always monthly — the day filters do not apply to it. Category filter does.'
+            ? `Always monthly — the day ranges do not apply here. Showing ${monthNote}.`
             : `Showing: ${periodNote}. Every chart and table on this tab follows this filter.`}
         </p>
 
@@ -1819,39 +1840,49 @@ export default function Dashboard({
             </section>
 
             <section>
-              <h2>Valid subsidy by model, month by month</h2>
+              <h2>Monthly overview</h2>
               <p className="sub">
-                Always monthly. Switch between the amount TikTok actually paid on live orders,
-                that amount as a share of the model&rsquo;s Seller NMV, and how much of the booked
-                subsidy survived.
+                One row per month, totals only. The month-by-month breakdown by model and by price
+                band lives in the <b>MoM Summary</b> tab — this tab stays day-level.
               </p>
-              <div className="seg" style={{ marginTop: 14 }}>
-                {([['amount', 'Valid subsidy'], ['pct', '% of Seller NMV'], ['capture', 'Capture rate']] as const).map(([k, l]) => (
-                  <button key={k} className={subMetric === k ? 'on' : ''} onClick={() => setSubMetric(k)}>{l}</button>
-                ))}
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Month</th>
+                    <th className="n">Seller GMV</th>
+                    <th className="n">Subsidy booked</th>
+                    <th className="n">% of Seller GMV</th>
+                    <th className="n">Seller NMV</th>
+                    <th className="n">Valid subsidy</th>
+                    <th className="n">% of Seller NMV</th>
+                    <th className="n">Capture rate</th>
+                    <th className="n">Seller funded</th>
+                    <th className="n">Seller % of list</th>
+                  </tr></thead>
+                  <tbody>
+                    {momRows.map((r) => {
+                      const capture = p1(r.platform_disc_chua_huy, r.platform_disc)
+                      return (
+                        <tr key={r.ky}>
+                          <td className="k">{mmyy(r.ky)}</td>
+                          <td className="n">{bn(r.gmv)}</td>
+                          <td className="n">{bn(r.platform_disc)}</td>
+                          <td className="n">{pct(p1(r.platform_disc, r.gmv))}</td>
+                          <td className="n">{bn(r.nmv)}</td>
+                          <td className="n"><b>{bn(r.platform_disc_chua_huy)}</b></td>
+                          <td className="n"><b>{pct(p1(r.platform_disc_chua_huy, r.nmv))}</b></td>
+                          <td className="n" style={{ color: capture < 40 ? 'var(--bad)' : 'inherit' }}>
+                            {pct(capture)}
+                          </td>
+                          <td className="n muted">{bn(r.seller_disc_chua_huy)}</td>
+                          <td className="n muted">{pct(p1(r.seller_disc_chua_huy, r.gia_goc_chua_huy))}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
-              <Matrix
-                corner="Model"
-                cols={goodMonths.map(mmyy)}
-                heat={subMetric === 'capture' ? 'high-good' : undefined}
-                fmt={subMetric === 'amount' ? (v) => `${mn(v)}m` : (v) => `${v}%`}
-                rows={skuGrid.models
-                  .filter((m) => !modelSel || m === modelSel)
-                  .map((m) => ({
-                    label: m,
-                    sub: skuGrid.bandByModel.get(m),
-                    color: BAND_COLOR[skuGrid.bandByModel.get(m) ?? '<5M'],
-                    vals: goodMonths.map((mo) => {
-                      const rows = skuGrid.cell.get(`${m}|${mo}`)
-                      if (!rows?.length) return null
-                      const s = (f: keyof SkuPeriod) => rows.reduce((a, r) => a + Number(r[f] || 0), 0)
-                      const valid = s('platform_disc_chua_huy')
-                      if (subMetric === 'amount') return valid
-                      if (subMetric === 'pct') return p1(valid, s('nmv'))
-                      return p1(valid, s('platform_disc_tong'))
-                    }),
-                  }))}
-              />
+              <p className="foot">Money in VND bn. Follows the month chips, not the day range.</p>
             </section>
 
             <section>
@@ -2328,6 +2359,16 @@ const CSS = `
 .seg button.on{background:var(--surface);color:var(--ink);font-weight:500;
   box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .seg button:focus-visible{outline:2px solid var(--c1);outline-offset:1px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.chips-l{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  margin-right:4px}
+.chip{font:inherit;font-size:12.5px;padding:4px 11px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink-2);border-radius:999px;cursor:pointer;
+  font-variant-numeric:tabular-nums}
+.chip:hover{border-color:var(--line-s);color:var(--ink)}
+.chip.on{background:var(--c1);border-color:var(--c1);color:#fff;font-weight:500}
+.chip:focus-visible{outline:2px solid var(--c1);outline-offset:1px}
+
 .drop{font:inherit;font-size:13.5px;padding:7px 11px;border:1px solid var(--line);
   background:var(--surface);color:var(--ink);border-radius:5px;cursor:pointer;max-width:100%}
 .drop.wide{min-width:240px}
