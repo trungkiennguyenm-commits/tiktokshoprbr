@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/cron/refresh-tokens",
-      "schedule": "0 3 * * *"
+      "schedule": "0 19 * * *"
     },
     {
       "path": "/api/cron/sync?resource=orders",
