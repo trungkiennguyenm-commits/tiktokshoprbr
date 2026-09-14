@@ -713,11 +713,36 @@ export default function Dashboard({
     return { series, data }
   }, [skuRows, mixMetric])
 
-  /** Cột chồng trợ giá hợp lệ theo model. Cùng khuôn với mix, khác chỉ tiêu. */
+  /* ---- tab Discounts luôn ở mức NGÀY ----
+     Tab này sinh ra để soi DoD. Nếu để nó chạy theo nút kỳ chung thì chọn
+     "By month" là cả tab thành biểu đồ tháng, trùng với tab MoM Summary.
+     Nên nó tự ép về ngày; các nút kỳ chỉ quyết định lấy những ngày nào. */
+  const dayKeys = useMemo(() => {
+    const all = rollup(daily, 'all')
+    if (range === 'd30') return new Set(all.slice(-30).map((r) => r.ky))
+    if (range === 'd7') return new Set(all.slice(-7).map((r) => r.ky))
+    const pre = new Set((selMonths.size ? goodMonths : allMonths.slice(-1)).map((m) => m.slice(0, 7)))
+    return new Set(all.filter((r) => pre.has(r.ky.slice(0, 7))).map((r) => r.ky))
+  }, [daily, range, goodMonths, allMonths, selMonths])
+
+  const dayShown = useMemo(
+    () => rollup(daily.filter((r) => dayKeys.has(r.ngay)), cat),
+    [daily, dayKeys, cat],
+  )
+  const daySkuRows = useMemo(
+    () => skuDaily
+      .filter((r) => dayKeys.has(r.ky))
+      .filter((r) => cat === 'all' || r.category === cat)
+      .filter((r) => !modelSel || r.model === modelSel),
+    [skuDaily, dayKeys, cat, modelSel],
+  )
+  const daySkuF = useMemo(() => aggSku(daySkuRows), [daySkuRows])
+
+  /** Cột chồng trợ giá hợp lệ theo model, theo ngày. Cùng khuôn với mix. */
   const subMix = useMemo(() => {
     const val = (r: SkuPeriod) => Number(r.platform_disc_chua_huy || 0)
     const totals = new Map<string, number>()
-    for (const r of skuRows) totals.set(r.model, (totals.get(r.model) ?? 0) + val(r))
+    for (const r of daySkuRows) totals.set(r.model, (totals.get(r.model) ?? 0) + val(r))
     const top = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8).map((e) => e[0])
     const hasOther = totals.size > top.length
     const series = [
@@ -726,7 +751,7 @@ export default function Dashboard({
     ]
     const idx = new Map(top.map((m, i) => [m, i]))
     const byKy = new Map<string, number[]>()
-    for (const r of skuRows) {
+    for (const r of daySkuRows) {
       const arr = byKy.get(r.ky) ?? new Array(series.length).fill(0)
       arr[idx.get(r.model) ?? top.length] += val(r)
       byKy.set(r.ky, arr)
@@ -735,7 +760,7 @@ export default function Dashboard({
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([ky, parts]) => ({ ky, parts }))
     return { series, data }
-  }, [skuRows])
+  }, [daySkuRows])
 
   /* ---- cancellation lapse, filtered ---- */
 
@@ -833,6 +858,10 @@ export default function Dashboard({
   const monthNote = selMonths.size
     ? goodMonths.map(mmyy).join(', ')
     : 'all months'
+  /** Tab Discounts luôn theo ngày nên có ghi chú kỳ riêng. */
+  const dayNote = range === 'd30' ? 'last 30 days'
+    : range === 'd7' ? 'last 7 days'
+      : `days in ${selMonths.size ? monthNote : mmyy(allMonths[allMonths.length - 1] ?? '')}`
   const periodNote = range === 'mom' ? monthNote
     : range === 'd30' ? 'last 30 days'
       : range === 'd7' ? 'last 7 days'
@@ -913,7 +942,11 @@ export default function Dashboard({
         <p className="foot">
           {tab === 'MoM Summary'
             ? `Always monthly — the day ranges do not apply here. Showing ${monthNote}.`
-            : `Showing: ${periodNote}. Every chart and table on this tab follows this filter.`}
+            : tab === 'Discounts'
+              ? `Always day-level — this is the DoD tab. Showing ${dayNote}. The single monthly table at the bottom follows the month chips instead.`
+              : tab === 'Glossary'
+                ? 'Reference only — the filters above do not apply to this tab.'
+                : `Showing: ${periodNote}. Every chart and table on this tab follows this filter.`}
         </p>
 
         <nav className="tabs">
@@ -1715,15 +1748,15 @@ export default function Dashboard({
             </div>
 
             <section>
-              <h2>Subsidy booked and capture rate per {periodWord} · {dod}</h2>
+              <h2>Subsidy booked and capture rate per day · DoD</h2>
               <p className="sub">
-                Column height is the whole platform subsidy TikTok booked that {periodWord}. The
+                Column height is the whole platform subsidy TikTok booked that day. The
                 solid part landed on orders that survived — real money. The pale part was booked
                 against orders that later cancelled, so it evaporated. The green line is the
                 capture rate on the right axis: it traces exactly how much of each column is solid.
               </p>
               <ComboChart
-                data={shown.map((r) => ({
+                data={dayShown.map((r) => ({
                   ky: r.ky,
                   a: r.platform_disc_chua_huy,
                   b: Math.max(0, r.platform_disc - r.platform_disc_chua_huy),
@@ -1733,13 +1766,13 @@ export default function Dashboard({
                 lines={[{
                   ten: 'Capture rate (right axis)', color: 'var(--ok)', truc: 'pct',
                   showVals: true, fmtVal: (v) => `${v}%`,
-                  vals: shown.map((r) => p1(r.platform_disc_chua_huy, r.platform_disc)),
+                  vals: dayShown.map((r) => p1(r.platform_disc_chua_huy, r.platform_disc)),
                 }]}
-                fmt={bn} label={lbl} unit="VND bn"
+                fmt={bn} label={ddmm} unit="VND bn"
                 tip={(d) => {
-                  const r = shown.find((x) => x.ky === d.ky)!
+                  const r = dayShown.find((x) => x.ky === d.ky)!
                   return (
-                    <><b>{lbl(d.ky)}</b><br />
+                    <><b>{ddmm(d.ky)}</b><br />
                       Subsidy booked {bn(r.platform_disc)} bn · {p1(r.platform_disc, r.gmv)}% of Seller GMV<br />
                       · valid {bn(r.platform_disc_chua_huy)} bn · {p1(r.platform_disc_chua_huy, r.nmv)}% of Seller NMV<br />
                       · lost {bn(r.platform_disc - r.platform_disc_chua_huy)} bn<br />
@@ -1751,26 +1784,26 @@ export default function Dashboard({
             </section>
 
             <section>
-              <h2>Who paid for the revenue, per {periodWord}</h2>
+              <h2>Who paid for the revenue, per day</h2>
               <p className="sub">
                 Column height is Seller NMV, split into the cash the customer paid and the subsidy
                 TikTok reimbursed on those same live orders. The line is the subsidy share — how
-                dependent that {periodWord}&rsquo;s revenue was on the platform&rsquo;s money.
+                dependent that day&rsquo;s revenue was on the platform&rsquo;s money.
               </p>
               <ComboChart
-                data={shown.map((r) => ({ ky: r.ky, a: r.khach_tra, b: r.platform_disc_chua_huy }))}
+                data={dayShown.map((r) => ({ ky: r.ky, a: r.khach_tra, b: r.platform_disc_chua_huy }))}
                 names={['Customer-funded NMV', 'Platform-funded NMV']}
                 colors={['var(--c1)', 'var(--c2)']}
                 lines={[{
                   ten: 'Valid subsidy % of Seller NMV (right axis)', color: 'var(--ok)', truc: 'pct',
                   showVals: true, fmtVal: (v) => `${v}%`,
-                  vals: shown.map((r) => p1(r.platform_disc_chua_huy, r.nmv)),
+                  vals: dayShown.map((r) => p1(r.platform_disc_chua_huy, r.nmv)),
                 }]}
-                fmt={bn} label={lbl} unit="VND bn"
+                fmt={bn} label={ddmm} unit="VND bn"
                 tip={(d) => {
-                  const r = shown.find((x) => x.ky === d.ky)!
+                  const r = dayShown.find((x) => x.ky === d.ky)!
                   return (
-                    <><b>{lbl(d.ky)}</b><br />
+                    <><b>{ddmm(d.ky)}</b><br />
                       Seller NMV {bn(d.a + d.b)} bn<br />
                       · customer-funded {bn(d.a)} bn<br />
                       · platform-funded {bn(d.b)} bn<br />
@@ -1782,7 +1815,7 @@ export default function Dashboard({
             </section>
 
             <section>
-              <h2>Subsidy detail per {periodWord}</h2>
+              <h2>Subsidy detail per day</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -1799,14 +1832,14 @@ export default function Dashboard({
                     <th className="n">Customer-funded</th>
                   </tr></thead>
                   <tbody>
-                    {shown.slice().reverse().map((r, i, arr) => {
+                    {dayShown.slice().reverse().map((r, i, arr) => {
                       const capture = p1(r.platform_disc_chua_huy, r.platform_disc)
                       // arr đang xếp mới nhất trước, nên kỳ liền trước nằm ở i + 1.
                       const p = arr[i + 1]
                       const prevCapture = p ? p1(p.platform_disc_chua_huy, p.platform_disc) : undefined
                       return (
                         <tr key={r.ky}>
-                          <td className="k">{lbl(r.ky)}</td>
+                          <td className="k">{ddmm(r.ky)}</td>
                           <td className="n">{bn(r.gmv)}</td>
                           <td className="n">{bn(r.platform_disc)}</td>
                           <td className="n">{pct(p1(r.platform_disc, r.gmv))}</td>
@@ -1834,16 +1867,16 @@ export default function Dashboard({
             </section>
 
             <section>
-              <h2>Valid subsidy by model, per {periodWord}</h2>
+              <h2>Valid subsidy by model, per day</h2>
               <p className="sub">
                 Only the subsidy on live orders, split by model. Use the model filter above to
                 isolate one and compare it against the rest.
               </p>
               <MultiStack
                 data={subMix.data} series={subMix.series}
-                fmt={bn} label={lbl} unit="VND bn of valid subsidy"
+                fmt={bn} label={ddmm} unit="VND bn of valid subsidy"
                 tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />
+                  <><b>{ddmm(d.ky)}</b><br />
                     {subMix.series.map((s, j) => (d.parts[j] > 0
                       ? <span key={s.ten}>{s.ten}: {bn(d.parts[j])} bn<br /></span> : null))}</>
                 )}
@@ -1897,13 +1930,13 @@ export default function Dashboard({
             </section>
 
             <section>
-              <h2>Who funds the discount — {periodNote}</h2>
+              <h2>Who funds the discount — {dayNote}</h2>
               <p className="sub">
                 Percentage of list price. Blue is money the shop gives up, orange is funded by
                 TikTok. Only the blue part eats into your margin.
               </p>
               <RowBars
-                rows={skuF.slice().sort((a, b) => b.nmv - a.nmv).slice(0, 15).map((s) => ({
+                rows={daySkuF.slice().sort((a, b) => b.nmv - a.nmv).slice(0, 15).map((s) => ({
                   nhan: s.model,
                   segs: [
                     { v: s.pct_seller_disc, color: 'var(--c1)', ten: 'Seller funded (%)' },
@@ -1919,20 +1952,20 @@ export default function Dashboard({
             </section>
 
             <section>
-              <h2>Discount spend per {periodWord}</h2>
+              <h2>Discount spend per day</h2>
               <StackChart
-                data={shown.map((r) => ({ ky: r.ky, a: r.seller_disc, b: r.platform_disc }))}
-                fmt={bn} label={lbl} names={['Seller funded', 'Platform funded']}
+                data={dayShown.map((r) => ({ ky: r.ky, a: r.seller_disc, b: r.platform_disc }))}
+                fmt={bn} label={ddmm} names={['Seller funded', 'Platform funded']}
                 colors={['var(--c1)', 'var(--c2)']} unit="VND bn"
                 tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />Seller {bn(d.a)} bn · Platform {bn(d.b)} bn
+                  <><b>{ddmm(d.ky)}</b><br />Seller {bn(d.a)} bn · Platform {bn(d.b)} bn
                     <br />Seller carries {p1(d.a, d.a + d.b)}% of all discounting</>
                 )}
               />
             </section>
 
             <section>
-              <h2>Discount rates per {periodWord}</h2>
+              <h2>Discount rates per day</h2>
               <p className="sub">Both as a percentage of list price, so they are directly comparable.</p>
               <div className="tablewrap">
                 <table>
@@ -1943,9 +1976,9 @@ export default function Dashboard({
                     <th className="n">Total disc. %</th><th className="n">Seller share of disc.</th>
                   </tr></thead>
                   <tbody>
-                    {shown.map((r) => (
+                    {dayShown.map((r) => (
                       <tr key={r.ky}>
-                        <td className="k">{lbl(r.ky)}</td>
+                        <td className="k">{ddmm(r.ky)}</td>
                         <td className="n">{bn(r.gia_goc)}</td>
                         <td className="n">{bn(r.seller_disc)}</td>
                         <td className="n"><b>{pct(p1(r.seller_disc, r.gia_goc))}</b></td>
@@ -1962,7 +1995,7 @@ export default function Dashboard({
             </section>
 
             <section>
-              <h2>Discount detail by model — {periodNote}</h2>
+              <h2>Discount detail by model — {dayNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -1974,7 +2007,7 @@ export default function Dashboard({
                     <th className="n">Capture rate</th>
                   </tr></thead>
                   <tbody>
-                    {skuF.slice().sort((a, b) => b.so_luong - a.so_luong).map((s) => (
+                    {daySkuF.slice().sort((a, b) => b.so_luong - a.so_luong).map((s) => (
                       <tr key={s.model}>
                         <td>
                           <span className="sw sm" style={{ background: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
