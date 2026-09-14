@@ -1715,12 +1715,12 @@ export default function Dashboard({
             </div>
 
             <section>
-              <h2>How much subsidy TikTok books, and how much you actually keep</h2>
+              <h2>Subsidy booked and capture rate per {periodWord} · {dod}</h2>
               <p className="sub">
-                Column height is the whole platform subsidy booked in the period. The solid part
-                landed on orders that survived — that is real money from TikTok. The pale part was
-                booked against orders that later cancelled, so it evaporated. The lines are the
-                subsidy as a share of Seller GMV, and the valid subsidy as a share of Seller NMV.
+                Column height is the whole platform subsidy TikTok booked that {periodWord}. The
+                solid part landed on orders that survived — real money. The pale part was booked
+                against orders that later cancelled, so it evaporated. The green line is the
+                capture rate on the right axis: it traces exactly how much of each column is solid.
               </p>
               <ComboChart
                 data={shown.map((r) => ({
@@ -1730,17 +1730,11 @@ export default function Dashboard({
                 }))}
                 names={['Valid subsidy (live orders)', 'Subsidy lost with cancellations']}
                 colors={['var(--c2)', 'var(--c1-soft)']}
-                lines={[
-                  {
-                    ten: 'Valid subsidy % of Seller NMV', color: 'var(--ok)', truc: 'pct',
-                    showVals: true, fmtVal: (v) => `${v}%`,
-                    vals: shown.map((r) => p1(r.platform_disc_chua_huy, r.nmv)),
-                  },
-                  {
-                    ten: 'Total subsidy % of Seller GMV', color: 'var(--c3)', truc: 'pct',
-                    vals: shown.map((r) => p1(r.platform_disc, r.gmv)),
-                  },
-                ]}
+                lines={[{
+                  ten: 'Capture rate (right axis)', color: 'var(--ok)', truc: 'pct',
+                  showVals: true, fmtVal: (v) => `${v}%`,
+                  vals: shown.map((r) => p1(r.platform_disc_chua_huy, r.platform_disc)),
+                }]}
                 fmt={bn} label={lbl} unit="VND bn"
                 tip={(d) => {
                   const r = shown.find((x) => x.ky === d.ky)!
@@ -1757,19 +1751,31 @@ export default function Dashboard({
             </section>
 
             <section>
-              <h2>Subsidy capture rate per {periodWord} · {dod}</h2>
+              <h2>Who paid for the revenue, per {periodWord}</h2>
               <p className="sub">
-                Of every dong TikTok put behind your orders, how much survived to a live order.
-                This is the single number that says whether the subsidy budget is working.
+                Column height is Seller NMV, split into the cash the customer paid and the subsidy
+                TikTok reimbursed on those same live orders. The line is the subsidy share — how
+                dependent that {periodWord}&rsquo;s revenue was on the platform&rsquo;s money.
               </p>
-              <DeltaChart
-                data={shown.map((r) => ({ ky: r.ky, v: p1(r.platform_disc_chua_huy, r.platform_disc) }))}
-                color="var(--c2)" fmt={(v) => `${v}`} label={lbl} unit="% of booked subsidy kept"
+              <ComboChart
+                data={shown.map((r) => ({ ky: r.ky, a: r.khach_tra, b: r.platform_disc_chua_huy }))}
+                names={['Customer-funded NMV', 'Platform-funded NMV']}
+                colors={['var(--c1)', 'var(--c2)']}
+                lines={[{
+                  ten: 'Valid subsidy % of Seller NMV (right axis)', color: 'var(--ok)', truc: 'pct',
+                  showVals: true, fmtVal: (v) => `${v}%`,
+                  vals: shown.map((r) => p1(r.platform_disc_chua_huy, r.nmv)),
+                }]}
+                fmt={bn} label={lbl} unit="VND bn"
                 tip={(d) => {
                   const r = shown.find((x) => x.ky === d.ky)!
                   return (
-                    <><b>{lbl(d.ky)}</b><br />Kept {d.v}%<br />
-                      {bn(r.platform_disc_chua_huy)} of {bn(r.platform_disc)} bn</>
+                    <><b>{lbl(d.ky)}</b><br />
+                      Seller NMV {bn(d.a + d.b)} bn<br />
+                      · customer-funded {bn(d.a)} bn<br />
+                      · platform-funded {bn(d.b)} bn<br />
+                      Subsidy share {p1(d.b, d.a + d.b)}%<br />
+                      Subsidy % of Seller GMV {p1(r.platform_disc, r.gmv)}%</>
                   )
                 }}
               />
@@ -1789,11 +1795,15 @@ export default function Dashboard({
                     <th className="n">% of Seller NMV</th>
                     <th className="n">Lost subsidy</th>
                     <th className="n">Capture rate</th>
+                    <th className="n">± capture</th>
                     <th className="n">Customer-funded</th>
                   </tr></thead>
                   <tbody>
-                    {shown.slice().reverse().map((r) => {
+                    {shown.slice().reverse().map((r, i, arr) => {
                       const capture = p1(r.platform_disc_chua_huy, r.platform_disc)
+                      // arr đang xếp mới nhất trước, nên kỳ liền trước nằm ở i + 1.
+                      const p = arr[i + 1]
+                      const prevCapture = p ? p1(p.platform_disc_chua_huy, p.platform_disc) : undefined
                       return (
                         <tr key={r.ky}>
                           <td className="k">{lbl(r.ky)}</td>
@@ -1809,6 +1819,7 @@ export default function Dashboard({
                           <td className="n" style={{ color: capture < 40 ? 'var(--bad)' : 'inherit' }}>
                             {pct(capture)}
                           </td>
+                          <td className="n"><Dd a={capture} b={prevCapture} /></td>
                           <td className="n muted">{bn(r.khach_tra)}</td>
                         </tr>
                       )
