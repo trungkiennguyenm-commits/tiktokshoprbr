@@ -90,8 +90,221 @@ const RANGES = [
 ] as const
 type RangeKey = 'mom' | 'd30' | 'd7' | 'month'
 
-const TABS = ['MoM Summary', 'Overview', 'Category', 'SKU', 'Discounts', 'Cancellations', 'P&L'] as const
+const TABS = ['MoM Summary', 'Overview', 'Category', 'SKU', 'Discounts', 'Cancellations', 'P&L', 'Glossary'] as const
 type Tab = (typeof TABS)[number]
+
+/* ============================== glossary ==============================
+   One place where every term on this dashboard is pinned down. If a number
+   in a meeting does not match someone else's number, the disagreement is
+   almost always a definition, not an error — start here.
+   ====================================================================== */
+
+type Term = { ten: string; dinh_nghia: string; ct?: string; ghi_chu?: string; canh_bao?: boolean }
+type Nhom = { nhom: string; mo_ta: string; terms: Term[] }
+
+const GLOSSARY: Nhom[] = [
+  {
+    nhom: 'Money',
+    mo_ta: 'Every money figure below uses the same base: list price minus seller discount — the same line TikTok calls "Total Revenue" on its settlement statement. Platform vouchers are never deducted, because TikTok reimburses them. Every figure on this dashboard is before platform fees; fees belong to the P&L tab and appear nowhere else.',
+    terms: [
+      {
+        ten: 'Seller GMV',
+        dinh_nghia: 'Order value the shop booked, across every order status including cancelled ones.',
+        ct: 'Σ (list price − seller discount), all statuses',
+        ghi_chu: 'Measures demand generated, not money earned. A month can post a big Seller GMV and still bring in very little.',
+      },
+      {
+        ten: 'Seller NMV',
+        dinh_nghia: 'The part of Seller GMV that is still alive — cancelled orders removed. This is the revenue the shop recognises.',
+        ct: 'Σ (list price − seller discount), cancelled excluded',
+        ghi_chu: 'Matches TikTok’s own "Total Revenue" line on the settlement statement, to the dong. Seller GMV = Seller NMV + value lost to cancellations. Not restricted to COMPLETED, so it is readable the same day.',
+      },
+      {
+        ten: 'Customer-funded NMV',
+        dinh_nghia: 'The cash the buyer actually transferred, after both the seller discount and the platform voucher.',
+        ct: 'Σ sale price, cancelled excluded',
+        ghi_chu: 'TikTok Seller Centre calls this figure "GMV". Quote the full name when sharing numbers or the two reports will look wrong to each other.',
+        canh_bao: true,
+      },
+      {
+        ten: 'Platform-funded NMV',
+        dinh_nghia: 'The voucher TikTok reimbursed on those same live orders. Same money as "valid subsidy", seen from the revenue side.',
+        ct: 'Σ platform discount, cancelled excluded',
+        ghi_chu: 'Customer-funded NMV + Platform-funded NMV = Seller NMV, exactly.',
+      },
+      {
+        ten: 'Seller NMV completed',
+        dinh_nghia: 'The slice of Seller NMV whose orders reached COMPLETED — delivered and closed.',
+        ct: 'Σ (list price − seller discount), status = COMPLETED',
+        ghi_chu: 'Always lags. Use it to reconcile against finance, not to track the current period.',
+      },
+      {
+        ten: 'Value lost to cancellations',
+        dinh_nghia: 'Seller GMV that walked out with cancelled orders.',
+        ct: 'Seller GMV − Seller NMV',
+        ghi_chu: 'The single largest line on this dashboard, and the one nobody invoices for.',
+      },
+      {
+        ten: 'List price',
+        dinh_nghia: 'Price before any discount. Also the base for every discount percentage here, and the basis for price bands.',
+        ct: 'original_price from the order item',
+      },
+      {
+        ten: 'Price after seller discount',
+        dinh_nghia: 'Unit price once the shop’s own discount is taken off, before the platform voucher.',
+        ct: 'list price − seller discount',
+        ghi_chu: 'This is the per-unit version of Seller GMV.',
+      },
+    ],
+  },
+  {
+    nhom: 'Volume',
+    mo_ta: 'Counted in units, not orders: one order carrying two machines counts as two. Gifts and accessories are excluded everywhere — only robots and handhelds.',
+    terms: [
+      {
+        ten: 'Gross pcs',
+        dinh_nghia: 'Units ordered, including units later cancelled.',
+        ct: 'count of order items, all statuses',
+      },
+      {
+        ten: 'Net pcs',
+        dinh_nghia: 'Units still alive — cancelled units removed.',
+        ct: 'count of order items, cancelled excluded',
+        ghi_chu: 'The number to plan stock and targets against.',
+      },
+      {
+        ten: 'Cancelled',
+        dinh_nghia: 'Units on orders with status CANCELLED.',
+        ct: 'Gross pcs − Net pcs',
+      },
+    ],
+  },
+  {
+    nhom: 'Cancellations',
+    mo_ta: 'Cancellation is the dominant force in this account, so it gets its own vocabulary.',
+    terms: [
+      {
+        ten: 'Cancellation rate',
+        dinh_nghia: 'Share of ordered units that were cancelled.',
+        ct: 'Cancelled ÷ Gross pcs',
+        ghi_chu: 'The newest period always understates it: the biggest cancellation cluster lands 3–7 days after the order, so recent days keep climbing for a week.',
+        canh_bao: true,
+      },
+      {
+        ten: 'Cancel lapse',
+        dinh_nghia: 'Time between the order being placed and being cancelled.',
+        ct: 'cancel time − create time, in hours',
+        ghi_chu: 'Two clusters matter: under an hour (order-confirmation problem) and day 3–7 (delivery refusal).',
+      },
+      {
+        ten: 'Lapse (median)',
+        dinh_nghia: 'The middle cancel lapse for that model in that period.',
+        ghi_chu: 'Only shown when a single period is selected — medians cannot be combined across periods. More trustworthy than the average, which a few very late cancellations drag upward.',
+      },
+      {
+        ten: 'Lapse (avg)',
+        dinh_nghia: 'Mean cancel lapse, weighted by number of cancellations.',
+        ct: 'Σ lapse hours ÷ cancelled units with a lapse',
+      },
+    ],
+  },
+  {
+    nhom: 'Discounts and subsidy',
+    mo_ta: 'Two different wallets pay for a discount. Only one of them is yours.',
+    terms: [
+      {
+        ten: 'Seller discount',
+        dinh_nghia: 'Money the shop itself gives up. This is the part that hits your margin.',
+        ct: 'Σ seller discount',
+      },
+      {
+        ten: 'Seller discount %',
+        dinh_nghia: 'Seller discount as a share of list price.',
+        ct: 'Σ seller discount ÷ Σ list price',
+        ghi_chu: 'Weighted by quantity, so a high-volume model moves it more than a rarely sold one.',
+      },
+      {
+        ten: 'Subsidy booked',
+        dinh_nghia: 'Total platform voucher TikTok put behind your orders in the period, before anything cancelled.',
+        ct: 'Σ platform discount, all statuses',
+        ghi_chu: 'This is TikTok’s gross spend on your shop, not what you received.',
+      },
+      {
+        ten: 'Valid subsidy',
+        dinh_nghia: 'Subsidy that landed on orders which survived. Same money as Platform-funded NMV.',
+        ct: 'Σ platform discount, cancelled excluded',
+      },
+      {
+        ten: 'Lost subsidy',
+        dinh_nghia: 'Subsidy booked against orders that later cancelled — budget spent for nothing.',
+        ct: 'Subsidy booked − Valid subsidy',
+      },
+      {
+        ten: 'Capture rate',
+        dinh_nghia: 'Share of the booked subsidy that survived to a live order.',
+        ct: 'Valid subsidy ÷ Subsidy booked',
+        ghi_chu: 'How efficiently the platform’s money converts. A low capture rate is an argument TikTok will notice, and the lever is delivery, not price.',
+      },
+      {
+        ten: 'Subsidy % of Seller GMV',
+        dinh_nghia: 'How heavily TikTok is funding the shop overall.',
+        ct: 'Subsidy booked ÷ Seller GMV',
+      },
+      {
+        ten: 'Valid subsidy % of Seller NMV',
+        dinh_nghia: 'How much of the revenue you recognise is actually TikTok’s money rather than the customer’s.',
+        ct: 'Valid subsidy ÷ Seller NMV',
+      },
+    ],
+  },
+  {
+    nhom: 'Segmentation',
+    mo_ta: 'How rows are grouped.',
+    terms: [
+      {
+        ten: 'Price band',
+        dinh_nghia: 'Price tier a model sits in: 5–10M, 10–15M, 15–20M, 20–30M, 30M+.',
+        ct: 'from list price',
+        ghi_chu: 'Deliberately based on list price, not the discounted price, so a model stays in one band across months and the MoM tables stay readable.',
+      },
+      {
+        ten: 'Model',
+        dinh_nghia: 'Short product name, e.g. F25 Ultra. Several product IDs sharing a name are merged into one row.',
+      },
+      {
+        ten: 'Category',
+        dinh_nghia: 'Robot vacuums or handheld vacuums. Accessories and gifts are excluded from the whole dashboard.',
+      },
+    ],
+  },
+  {
+    nhom: 'Time and data',
+    mo_ta: 'What a "period" means here, and how current the numbers are.',
+    terms: [
+      {
+        ten: 'Period basis',
+        dinh_nghia: 'Everything is keyed on when the order was created, in Vietnam time (UTC+7).',
+        ghi_chu: 'Not on delivery or settlement date. An order placed in August and delivered in September belongs to August throughout.',
+      },
+      {
+        ten: 'MoM / DoD',
+        dinh_nghia: 'Change against the previous period — the month before, or the day before.',
+        ct: '(this − previous) ÷ previous',
+      },
+      {
+        ten: 'By month filter',
+        dinh_nghia: 'Only months with at least 20 units are shown.',
+        ghi_chu: 'Thinner months are artefacts of the initial sync window, not slow months. Plotting them would look like a collapse that never happened.',
+        canh_bao: true,
+      },
+      {
+        ten: 'Data freshness',
+        dinh_nghia: 'Orders sync once a day at 03:00 Vietnam time and keep running until caught up.',
+        ghi_chu: 'The sync re-reads the last two days on every run, so status changes on recent orders are picked up rather than frozen.',
+      },
+    ],
+  },
+]
 
 /** Price bands come from LIST price, so a model stays in one band across
  *  months and the MoM tables stay readable. */
@@ -639,7 +852,7 @@ export default function Dashboard({
             <div className="def warn-def">
               Careful: TikTok Seller Centre calls the <i>customer-funded</i> figure &ldquo;GMV&rdquo;.
               Its GMV and this Seller GMV differ by exactly the platform voucher — quote the full
-              name when you share these numbers.
+              name when you share these numbers. Full definitions are in the <b>Glossary</b> tab.
             </div>
           </div>
         </header>
@@ -1990,6 +2203,53 @@ export default function Dashboard({
           </>
         )}
 
+        {/* =================== GLOSSARY =================== */}
+        {tab === 'Glossary' && (
+          <>
+            <section>
+              <h2>What every term on this dashboard means</h2>
+              <p className="sub">
+                When a number here disagrees with a number somewhere else, the cause is almost
+                always a definition rather than an error. This is the reference to settle it.
+                The filters above do not apply to this tab.
+              </p>
+            </section>
+
+            {GLOSSARY.map((g) => (
+              <section key={g.nhom}>
+                <h2>{g.nhom}</h2>
+                <p className="sub">{g.mo_ta}</p>
+                <div className="tablewrap">
+                  <table className="gloss">
+                    <thead><tr>
+                      <th>Term</th>
+                      <th>What it is</th>
+                      <th>How it is computed</th>
+                      <th>Worth knowing</th>
+                    </tr></thead>
+                    <tbody>
+                      {g.terms.map((t) => (
+                        <tr key={t.ten}>
+                          <td className="gt"><b>{t.ten}</b></td>
+                          <td className="gw">{t.dinh_nghia}</td>
+                          <td className="gw">{t.ct ? <code className="fx">{t.ct}</code> : <span className="muted">—</span>}</td>
+                          <td className={`gw ${t.canh_bao ? 'gwarn' : 'muted'}`}>{t.ghi_chu ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
+
+            <div className="note hot">
+              <b>The one identity to remember.</b> Seller GMV = Seller NMV + value lost to
+              cancellations, and Seller NMV = Customer-funded NMV + Platform-funded NMV. Every money
+              chart on this dashboard is a view of one of those two splits.
+            </div>
+          </>
+        )}
+
         <div className="note">
           <b>Not in this dashboard yet:</b> Livestream, Advertising and Product Funnel. Each needs a
           new sync adapter — that data is not in the database.
@@ -2041,6 +2301,18 @@ const CSS = `
 .down{color:var(--bad)}
 .lnk{font:inherit;font-size:12.5px;background:none;border:0;padding:0;color:var(--c1);
   cursor:pointer;text-decoration:underline}
+
+/* Glossary: the only table here that wraps instead of scrolling sideways —
+   these are sentences, not figures. */
+.wrap table.gloss{min-width:760px;font-size:13.5px}
+.wrap table.gloss th,.wrap table.gloss td{white-space:normal;vertical-align:top;line-height:1.55}
+.gt{width:16%;min-width:150px}
+.gw{width:28%}
+.gwarn{color:var(--ink-2)}
+.gwarn::before{content:"⚠ ";color:var(--bad)}
+.fx{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:3px;
+  padding:1px 5px;display:inline-block;color:var(--ink-2)}
 
 .defs{margin-top:18px;display:grid;gap:7px;max-width:82ch;font-size:13.5px;
   color:var(--ink-2);line-height:1.55}
