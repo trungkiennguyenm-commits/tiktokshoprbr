@@ -73,18 +73,34 @@ export async function GET(request: Request) {
 
     const willChain = result.status === 'partial' && !noChain && chain < MAX_CHAIN
     if (willChain) {
+      // Gọi tiếp qua TÊN MIỀN PRODUCTION, không qua url.origin.
+      //
+      // Khi mở link bằng tay, url.origin là tiktokshoprbr.vercel.app — công khai,
+      // nên chuỗi chạy được. Nhưng khi Vercel Cron gọi, url.origin là địa chỉ riêng
+      // của từng bản deploy (tiktokshoprbr-<hash>-....vercel.app), và gói Hobby bật
+      // sẵn Deployment Protection cho các địa chỉ đó: lượt gọi tiếp bị chặn 401 ở
+      // tầng Vercel, không bao giờ tới được code của mình. Cron cứ thế dừng sau một
+      // lượt mỗi sáng mà không báo gì (15–21/09).
+      //
+      // VERCEL_PROJECT_PRODUCTION_URL là biến hệ thống Vercel tự cấp.
+      const host = process.env.VERCEL_PROJECT_PRODUCTION_URL
+      const base = host ? `https://${host}` : url.origin
+      const next = new URL(base + url.pathname)
       // Bỏ days đi, nếu không mỗi lượt lại reset cursor về đầu và chạy vòng vô tận.
-      const next = new URL(url.origin + url.pathname)
       next.searchParams.set('resource', requested)
       next.searchParams.set('chain', String(chain + 1))
       after(async () => {
         try {
-          await fetch(next.toString(), {
+          const res = await fetch(next.toString(), {
             headers: { authorization: `Bearer ${secret}` },
             cache: 'no-store',
           })
-        } catch {
+          if (!res.ok) {
+            console.error(`[sync] chain ${chain + 1} → ${next.host} returned HTTP ${res.status}`)
+          }
+        } catch (e) {
           // Lần sau cron chạy lại sẽ nối tiếp từ cursor, không mất dữ liệu.
+          console.error(`[sync] chain ${chain + 1} failed:`, e)
         }
       })
     }

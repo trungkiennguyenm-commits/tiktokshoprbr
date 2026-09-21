@@ -35,10 +35,14 @@ export type SyncResult = {
 
 /**
  * Trần thời gian của hàm serverless. Chạm ngưỡng thì lưu cursor và dừng êm,
- * lần cron sau chạy tiếp từ đúng chỗ đó. Đừng nâng số này lên sát giới hạn thật
- * của Vercel, phải chừa thời gian để ghi log.
+ * lần sau chạy tiếp từ đúng chỗ đó.
+ *
+ * Từng để 50s và thấy hai lượt bị Vercel giết giữa chừng (kẹt "running",
+ * 15/09 và 16/09): ngân sách chỉ được kiểm tra TRƯỚC mỗi trang, mà một trang
+ * lấy + ghi có thể mất vài giây, cộng thêm thời gian để after() bắn lượt nối
+ * tiếp. 40s chừa 20s đệm trên trần 60s.
  */
-const TIME_BUDGET_MS = 50_000
+const TIME_BUDGET_MS = 40_000
 
 export async function runSync<T>(
   adapter: SyncAdapter<T>,
