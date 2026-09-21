@@ -90,18 +90,29 @@ export async function GET(request: Request) {
       next.searchParams.set('resource', requested)
       next.searchParams.set('chain', String(chain + 1))
       after(async () => {
-        try {
-          const res = await fetch(next.toString(), {
-            headers: { authorization: `Bearer ${secret}` },
-            cache: 'no-store',
-          })
-          if (!res.ok) {
-            console.error(`[sync] chain ${chain + 1} → ${next.host} returned HTTP ${res.status}`)
+        // Một lượt con làm việc thật thì chạy ~40s, nên chỉ đợi tối đa 15s:
+        //  - quá 15s mà chưa trả lời  → con đang làm việc, bỏ đi, nó tự chạy tiếp
+        //    (lượt cha chết không kéo lượt con chết theo — đã kiểm chứng 21/09)
+        //  - trả lỗi nhanh trong 15s  → con gãy ngay từ đầu, thử lại tối đa 3 lần
+        // Trước đây chỉ gọi một lần: một lỗi thoáng qua là cả chuỗi dừng hẳn
+        // (21/09 dừng sau đúng 5 lượt giữa đợt kéo 12 tháng).
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const res = await fetch(next.toString(), {
+              headers: { authorization: `Bearer ${secret}` },
+              cache: 'no-store',
+              signal: AbortSignal.timeout(15_000),
+            })
+            if (res.ok) return
+            console.error(`[sync] chain ${chain + 1} attempt ${attempt} → HTTP ${res.status}`)
+          } catch (e) {
+            const name = e instanceof Error ? e.name : ''
+            if (name === 'TimeoutError' || name === 'AbortError') return
+            console.error(`[sync] chain ${chain + 1} attempt ${attempt} failed:`, e)
           }
-        } catch (e) {
-          // Lần sau cron chạy lại sẽ nối tiếp từ cursor, không mất dữ liệu.
-          console.error(`[sync] chain ${chain + 1} failed:`, e)
+          await new Promise((r) => setTimeout(r, 2_000 * attempt))
         }
+        // Hết 3 lần: cron sáng hôm sau vẫn chạy tiếp từ cursor, không mất dữ liệu.
       })
     }
 
