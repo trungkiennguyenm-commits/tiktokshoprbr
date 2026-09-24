@@ -308,6 +308,39 @@ const GLOSSARY: Nhom[] = [
     ],
   },
   {
+    nhom: 'Advertising',
+    mo_ta: 'Ad spend is money we paid, so it can sit beside Seller NMV. Anything TikTok attributes to its own ads cannot.',
+    terms: [
+      {
+        ten: 'ATR — ad take rate',
+        dinh_nghia: 'Share of recognised revenue eaten by advertising.',
+        ct: 'Total ad spend ÷ Seller NMV',
+        ghi_chu: 'Both sides are real money: spend we were billed for, revenue on orders that were not cancelled. This is the number to bring to a budget conversation. It is NOT ROAS — the denominator is all sales, including organic.',
+      },
+      {
+        ten: 'LGM / PGM',
+        dinh_nghia: 'The two GMV Max campaign types on TikTok Shop: LIVE GMV Max runs against a livestream, Product GMV Max against a product listing.',
+        ghi_chu: 'TikTok calls them LIVE_GMV_MAX and PRODUCT_GMV_MAX. They live in a separate reporting endpoint from ordinary auction ads, keyed on the shop rather than the ad account.',
+      },
+      {
+        ten: 'C-Ads',
+        dinh_nghia: 'Consideration and branding campaigns bought through the ordinary ad auction.',
+        ghi_chu: 'No sales attribution at all, by design — they are bought for reach, not orders. Small in money next to GMV Max.',
+      },
+      {
+        ten: 'TikTok ROAS',
+        dinh_nghia: "TikTok's own return figure: the revenue it attributes to a campaign divided by that campaign's spend.",
+        ghi_chu: 'Kept only in the campaign table, and only for ranking campaigns against each other. It counts accessories as orders, counts revenue before cancellations, and lets several campaigns claim the same order. In Sep 2026 it reported 4,703 orders against 2,350 machine orders in the shop.',
+        canh_bao: true,
+      },
+      {
+        ten: 'Ad spend in VND',
+        dinh_nghia: 'Spend from USD ad accounts converted at a single fixed rate.',
+        ghi_chu: 'The rate lives in app_settings.fx_usd_vnd so it can be changed without a deploy. The original currency is kept in the database for reconciling TikTok invoices. Comparisons across distant months carry whatever error the fixed rate introduces.',
+      },
+    ],
+  },
+  {
     nhom: 'Time and data',
     mo_ta: 'What a "period" means here, and how current the numbers are.',
     terms: [
@@ -2258,11 +2291,11 @@ export default function Dashboard({
                   sub={`${pct(p1(adsTotals.pgm, adsTotals.cost))} of spend`} />
                 <Tile label="C-Ads and branding" value={bn(adsTotals.cads)} unit=" bn"
                   sub={`${pct(p1(adsTotals.cads, adsTotals.cost))} of spend`} />
-                <Tile label="Spend as % of Seller NMV" value={pct(p1(adsTotals.cost, adsTotals.nmv))}
+                <Tile label="ATR — ad take rate" value={pct(p1(adsTotals.cost, adsTotals.nmv))}
                   tone={p1(adsTotals.cost, adsTotals.nmv) > 25 ? 'bad' : 'ok'}
-                  sub={`Seller NMV ${bn(adsTotals.nmv)} bn`} />
+                  sub={`ad spend ÷ Seller NMV ${bn(adsTotals.nmv)} bn`} />
                 <Tile label="Seller NMV per ad dong" value={adsTotals.cost ? (adsTotals.nmv / adsTotals.cost).toFixed(1) : '—'}
-                  sub="our own revenue, not TikTok's" />
+                  sub="inverse of ATR — all sales, not attributed" />
               </div>
               <div className="note warn">
                 <b>TikTok&rsquo;s own revenue and order counts are deliberately kept out of this tab.</b>{' '}
@@ -2277,15 +2310,15 @@ export default function Dashboard({
             <section>
               <h2>Spend per day, against Seller NMV · DoD</h2>
               <p className="sub">
-                Columns split LIVE GMV Max from Product GMV Max. The red line is total ad spend
-                (including C-Ads) as a share of that day&rsquo;s Seller NMV, on the right axis.
+                Columns split LIVE GMV Max from Product GMV Max. The red line is ATR &mdash; total
+                ad spend (including C-Ads) divided by that day&rsquo;s Seller NMV, on the right axis.
               </p>
               <ComboChart
                 data={adsDays.map((r) => ({ ky: r.ngay, a: Number(r.lgm_vnd || 0), b: Number(r.pgm_vnd || 0) }))}
                 names={['LIVE GMV Max', 'Product GMV Max']}
                 colors={['var(--c1)', 'var(--c2)']}
                 lines={[{
-                  ten: 'Spend as % of Seller NMV (right axis)',
+                  ten: 'ATR — ad spend ÷ Seller NMV (right axis)',
                   color: 'var(--bad)', truc: 'pct',
                   vals: adsDays.map((r) => (Number(r.nmv || 0) > 0 ? p1(Number(r.ads_cost_vnd || 0), Number(r.nmv)) : null)),
                   showVals: true,
@@ -2301,7 +2334,7 @@ export default function Dashboard({
                       C-Ads {mn(Number(r.cads_vnd))} mn<br />
                       Total spend {mn(Number(r.ads_cost_vnd))} mn<br />
                       Seller NMV {bn(Number(r.nmv))} bn<br />
-                      Spend {pct(p1(Number(r.ads_cost_vnd), Number(r.nmv)))} of Seller NMV</>
+                      ATR {pct(p1(Number(r.ads_cost_vnd), Number(r.nmv)))}</>
                   )
                 }}
               />
@@ -2315,7 +2348,7 @@ export default function Dashboard({
                     <th>Day</th>
                     <th className="n">LGM</th><th className="n">PGM</th><th className="n">C-Ads</th>
                     <th className="n">Total spend</th>
-                    <th className="n">Seller NMV</th><th className="n">% of NMV</th>
+                    <th className="n">Seller NMV</th><th className="n">ATR %</th>
                     <th className="n">Net pcs</th>
                   </tr></thead>
                   <tbody>
@@ -2372,7 +2405,7 @@ export default function Dashboard({
                     <th>Month</th>
                     <th className="n">LGM</th><th className="n">PGM</th><th className="n">C-Ads</th>
                     <th className="n">Total spend</th>
-                    <th className="n">Seller NMV</th><th className="n">% of NMV</th>
+                    <th className="n">Seller NMV</th><th className="n">ATR %</th>
                     <th className="n">LGM share</th>
                   </tr></thead>
                   <tbody>
