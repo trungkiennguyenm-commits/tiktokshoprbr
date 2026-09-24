@@ -604,6 +604,8 @@ export default function Dashboard({
     })
   const [sortKey, setSortKey] = useState<keyof SkuAgg>('nmv')
   const [mixMetric, setMixMetric] = useState<'gmv' | 'so_luong'>('gmv')
+  /** Bảng model mix: bật thì mỗi ô là % của cột ngày đó thay vì số tuyệt đối. */
+  const [mixShare, setMixShare] = useState(false)
   const [modelSel, setModelSel] = useState('')
   const [closed, setClosed] = useState<Set<string>>(new Set())
   const [momMetric, setMomMetric] = useState<'net' | 'gross' | 'cancel'>('net')
@@ -854,6 +856,36 @@ export default function Dashboard({
 
   const lbl = byMonth ? mmyy : ddmm
   const periodWord = byMonth ? 'month' : 'day'
+
+  /** Model mix dạng bảng: model xuống dòng, kỳ chạy ngang, thêm cột Total.
+   *  Bảng dễ đọc hơn cột chồng khi có 8 model và ~30 ngày — mắt không phải
+   *  ước lượng chiều cao từng khúc nữa. */
+  const mixTable = useMemo(() => {
+    const cols = [...mix.data.map((d) => lbl(d.ky)), 'Total']
+    const colTot = mix.data.map((d) => d.parts.reduce((x, y) => x + y, 0))
+    const grand = colTot.reduce((x, y) => x + y, 0)
+    const pct = (v: number, t: number) => (t ? Math.round((v / t) * 1000) / 10 : null)
+    const rows = [
+      ...mix.series.map((sr, j) => {
+        const vals = mix.data.map((d) => d.parts[j])
+        const tot = vals.reduce((x, y) => x + y, 0)
+        return {
+          label: sr.ten,
+          color: sr.color,
+          vals: mixShare
+            ? [...vals.map((v, i) => pct(v, colTot[i])), pct(tot, grand)]
+            : [...vals.map((v) => (v > 0 ? v : null)), tot],
+        }
+      }),
+      {
+        label: 'Total',
+        vals: mixShare
+          ? [...colTot.map((t) => (t ? 100 : null)), grand ? 100 : null]
+          : [...colTot.map((t) => (t > 0 ? t : null)), grand],
+      },
+    ]
+    return { cols, rows }
+  }, [mix, mixShare, lbl])
   const dod = byMonth ? 'MoM' : 'DoD'
   const scopeLabel = modelSel || (cat === 'all' ? 'all products' : cat)
   const monthNote = selMonths.size
@@ -1662,16 +1694,17 @@ export default function Dashboard({
                     </button>
                   ))}
                 </div>
-                <MultiStack
-                  data={mix.data} series={mix.series}
-                  fmt={mixMetric === 'gmv' ? bn : n0} label={lbl}
-                  unit={mixMetric === 'gmv' ? 'VND bn' : 'net pcs'}
-                  tip={(d) => (
-                    <><b>{lbl(d.ky)}</b><br />
-                      {mix.series.map((s, j) => (d.parts[j] > 0
-                        ? <span key={s.ten}>{s.ten}: {mixMetric === 'gmv' ? `${bn(d.parts[j])} bn` : `${n0(d.parts[j])} pcs`}<br /></span>
-                        : null))}</>
-                  )}
+                <div className="seg" style={{ marginTop: 8 }}>
+                  {([[false, 'Absolute'], [true, 'Share of period']] as const).map(([k, l]) => (
+                    <button key={l} className={mixShare === k ? 'on' : ''} onClick={() => setMixShare(k)}>{l}</button>
+                  ))}
+                </div>
+                <Matrix
+                  corner={`Model · ${mixShare ? '% of ' + periodWord : mixMetric === 'gmv' ? 'VND bn' : 'net pcs'}`}
+                  cols={mixTable.cols}
+                  rows={mixTable.rows}
+                  heat="high-good"
+                  fmt={mixShare ? (v) => `${v}%` : mixMetric === 'gmv' ? bn : n0}
                 />
               </section>
             )}
