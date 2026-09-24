@@ -119,6 +119,27 @@ export async function GET(request: Request) {
       })
     }
 
+    // Xong phần đơn hàng thì kéo luôn quảng cáo. Gói Hobby chỉ cho 2 cron job
+    // (đã dùng cho refresh-tokens và orders), nên ads đi nhờ chuỗi này thay vì
+    // có lịch riêng. Lỗi bên ads không được làm hỏng kết quả của orders.
+    if (result.status === 'success' && !noChain) {
+      const host = process.env.VERCEL_PROJECT_PRODUCTION_URL
+      const adsUrl = new URL((host ? `https://${host}` : url.origin) + '/api/cron/ads')
+      after(async () => {
+        try {
+          await fetch(adsUrl.toString(), {
+            headers: { authorization: `Bearer ${secret}` },
+            cache: 'no-store',
+            signal: AbortSignal.timeout(15_000),
+          })
+        } catch (e) {
+          const name = e instanceof Error ? e.name : ''
+          if (name === 'TimeoutError' || name === 'AbortError') return
+          console.error('[sync] gọi tiếp /api/cron/ads thất bại:', e)
+        }
+      })
+    }
+
     return NextResponse.json({
       shop: ctx.shopName,
       ...result,
