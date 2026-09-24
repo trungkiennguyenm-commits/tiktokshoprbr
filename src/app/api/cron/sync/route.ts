@@ -5,7 +5,9 @@ import { ordersAdapter } from '@/lib/sync/adapters/orders'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+// Fluid compute cho gói Hobby chạy tối đa 300s. Phải lớn hơn TIME_BUDGET_MS
+// trong runner.ts (270s) để lượt chạy dừng êm trước khi Vercel cắt.
+export const maxDuration = 300
 
 const ADAPTERS = {
   orders: ordersAdapter,
@@ -13,9 +15,10 @@ const ADAPTERS = {
 
 type ResourceName = keyof typeof ADAPTERS
 
-/** Số lần tự gọi tiếp tối đa trong một chuỗi. 25 lượt × ~700 đơn là thừa
- *  sức cho một ngày, và là cái phanh nếu có gì đó chạy loạn. */
-const MAX_CHAIN = 25
+/** Vercel chặn một function tự gọi chính nó từ tầng thứ 5 trở đi (21/09: ba
+ *  chuỗi đều dừng đúng lượt 5). Để 4 cho khỏi đụng trần. 5 lượt × 270s ≈ 22
+ *  phút, dư sức cho cả một đợt kéo 12 tháng. */
+const MAX_CHAIN = 4
 
 /**
  * Chạy đồng bộ.

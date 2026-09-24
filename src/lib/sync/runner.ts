@@ -26,7 +26,7 @@ export type SyncAdapter<T> = {
 
 export type SyncResult = {
   resource: string
-  status: 'success' | 'partial' | 'error'
+  status: 'success' | 'partial' | 'error' | 'skipped'
   recordsRead: number
   recordsWritten: number
   pageCount: number
@@ -34,15 +34,22 @@ export type SyncResult = {
 }
 
 /**
- * Trần thời gian của hàm serverless. Chạm ngưỡng thì lưu cursor và dừng êm,
- * lần sau chạy tiếp từ đúng chỗ đó.
+ * Trần thời gian mỗi lượt. Chạm ngưỡng thì lưu cursor và dừng êm, lần sau chạy
+ * tiếp từ đúng chỗ đó.
  *
- * Từng để 50s và thấy hai lượt bị Vercel giết giữa chừng (kẹt "running",
- * 15/09 và 16/09): ngân sách chỉ được kiểm tra TRƯỚC mỗi trang, mà một trang
- * lấy + ghi có thể mất vài giây, cộng thêm thời gian để after() bắn lượt nối
- * tiếp. 40s chừa 20s đệm trên trần 60s.
+ * Lịch sử:
+ *  - 50s: hai lượt bị Vercel giết giữa chừng (15/09, 16/09) vì sát trần 60s.
+ *  - 40s + tự gọi lại: Vercel chặn một function tự gọi chính nó ở tầng thứ 5
+ *    (coi là vòng lặp vô hạn) — 21/09 cả ba chuỗi đều dừng đúng lượt 5.
+ *  - 270s: bản hiện tại. Với Fluid compute, gói Hobby cho chạy tới 300s, nên một
+ *    lượt làm được gấp ~7 lần. Một ngày bình thường xong trong MỘT lượt, không
+ *    cần tự gọi lại nữa; tự gọi lại chỉ còn là dự phòng cho đợt kéo lớn.
+ *  PHẢI khớp với `export const maxDuration` trong route, chừa 30s đệm.
  */
-const TIME_BUDGET_MS = 40_000
+const TIME_BUDGET_MS = 270_000
+
+/** Một lượt khác bắt đầu trong khoảng này mà chưa xong thì coi là đang chạy. */
+const CONCURRENCY_WINDOW_MS = TIME_BUDGET_MS + 60_000
 
 export async function runSync<T>(
   adapter: SyncAdapter<T>,
@@ -51,6 +58,29 @@ export async function runSync<T>(
 ): Promise<SyncResult> {
   const db = supabaseAdmin()
   const startedAt = Date.now()
+
+  // Chặn hai lượt chạy song song. 21/09 có lúc hai chuỗi chạy cùng lúc, cùng đọc
+  // một con trỏ: không hỏng dữ liệu nhưng làm trùng việc, và chuỗi xong sau có
+  // thể ghi đè con trỏ đã hoàn tất bằng một vị trí cũ. Bỏ qua khi có resetCursor,
+  // vì đó là lệnh chủ động của người dùng.
+  if (!opts.resetCursor) {
+    const since = new Date(startedAt - CONCURRENCY_WINDOW_MS).toISOString()
+    const { data: busy } = await db
+      .from('sync_runs')
+      .select('id')
+      .eq('shop_id', ctx.shopId)
+      .eq('resource', adapter.name)
+      .eq('status', 'running')
+      .gte('started_at', since)
+      .limit(1)
+    if (busy && busy.length > 0) {
+      return {
+        resource: adapter.name, status: 'skipped',
+        recordsRead: 0, recordsWritten: 0, pageCount: 0,
+        error: `Another run (#${busy[0].id}) is already in progress`,
+      }
+    }
+  }
 
   const { data: run } = await db
     .from('sync_runs')
