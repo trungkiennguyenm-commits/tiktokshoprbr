@@ -60,28 +60,24 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Chưa có shop nào trong bảng shops' }, { status: 400 })
     }
 
-    // Không có advertiser_ids thì vẫn lưu một dòng để không mất token.
-    const rows = (advertiserIds.length ? advertiserIds : [null]).map((adv) => ({
-      shop_id: shop.id,
-      provider: 'tiktok_ads',
-      external_account_id: adv,
-      access_token_enc: encrypt(token),
-      refresh_token_enc: null,
-      access_expires_at: null,
-      refresh_expires_at: null,
-      scope,
-      status: 'active',
-      updated_at: new Date().toISOString(),
-    }))
-
-    // Uỷ quyền lại thì ghi đè dòng cũ của cùng advertiser thay vì nhân bản.
-    await db
-      .from('connections')
-      .delete()
-      .eq('shop_id', shop.id)
-      .eq('provider', 'tiktok_ads')
-
-    const { error } = await db.from('connections').insert(rows)
+    // Bảng connections có CHECK provider IN ('tts_shop','tts_ads') và UNIQUE
+    // (shop_id, provider) — tức MỘT dòng cho cả phần quảng cáo. Nên nhiều
+    // advertiser_id được gộp vào external_account_id, ngăn cách bằng dấu phẩy.
+    const { error } = await db.from('connections').upsert(
+      {
+        shop_id: shop.id,
+        provider: 'tts_ads',
+        external_account_id: advertiserIds.join(',') || null,
+        access_token_enc: encrypt(token),
+        refresh_token_enc: null,
+        access_expires_at: null,
+        refresh_expires_at: null,
+        scope,
+        status: 'active',
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'shop_id,provider' },
+    )
     if (error) {
       return NextResponse.json({ error: `Lưu token thất bại: ${error.message}` }, { status: 500 })
     }
