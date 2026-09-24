@@ -73,17 +73,22 @@ export type AdsVs = {
   tiktok_revenue_vnd: number; ads_orders: number
   gmv: number; nmv: number; net_pcs: number
   ads_pct_nmv: number | null; nmv_per_ad_dong: number | null
+  /** Quy đổi sẵn trong view theo app_settings.fx_usd_vnd — tab Advertising
+   *  hiển thị USD vì ngân sách quảng cáo được duyệt bằng USD. */
+  ads_cost_usd: number; lgm_usd: number; pgm_usd: number; cads_usd: number
+  gmv_usd: number; nmv_usd: number
 }
 export type AdsMonth = {
   thang: string; promotion_type: string
   cost_vnd: number; net_cost_vnd: number; gross_revenue_vnd: number
-  orders: number; campaigns: number
+  orders: number; campaigns: number; cost_usd: number
 }
 export type AdsCampaign = {
   thang: string; campaign_id: string; campaign_name: string
   promotion_type: string; advertiser_name: string | null
   koc_handle: string | null; model_hint: string | null; room_hint: string | null
   cost_vnd: number; gross_revenue_vnd: number; orders: number; roas: number | null
+  cost_usd: number
 }
 
 type Props = {
@@ -98,6 +103,11 @@ type Props = {
 const n0 = (v: number) => new Intl.NumberFormat('en-US').format(Math.round(v || 0))
 const bn = (v: number) => ((v || 0) / 1e9).toFixed(2)
 const mn = (v: number) => ((v || 0) / 1e6).toFixed(0)
+/** USD hai chữ số thập phân — tab Advertising chạy bằng đô, vì ngân sách
+ *  quảng cáo được duyệt và báo cáo bằng đô. */
+const usd = (v: number) =>
+  new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    .format(v || 0)
 const pct = (v: number | null) => (v == null ? '—' : `${v}%`)
 const p1 = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0)
 
@@ -833,17 +843,29 @@ export default function Dashboard({
     () => adsVs.filter((r) => dayKeys.has(r.ngay)).sort((a, b) => a.ngay.localeCompare(b.ngay)),
     [adsVs, dayKeys],
   )
+  /** Tỷ giá suy ngược từ chính dữ liệu view, thay vì nhét cứng vào code: đổi
+   *  app_settings.fx_usd_vnd trong database là mọi con số ở đây đổi theo. */
+  const FX = useMemo(() => {
+    for (const r of adsVs) {
+      const v = Number(r.ads_cost_vnd || 0)
+      const u = Number(r.ads_cost_usd || 0)
+      if (v > 0 && u > 0) return v / u
+    }
+    return 26500
+  }, [adsVs])
+
+  /** Toàn bộ tab Advertising tính bằng USD. ATR là tỷ lệ nên không đổi khi
+   *  đổi đơn vị — tử và mẫu cùng quy đổi bằng một tỷ giá. */
   const adsTotals = useMemo(() => {
-    const t = { cost: 0, lgm: 0, pgm: 0, cads: 0, rev: 0, orders: 0, gmv: 0, nmv: 0 }
+    const t = { cost: 0, lgm: 0, pgm: 0, cads: 0, orders: 0, gmv: 0, nmv: 0 }
     for (const r of adsDays) {
-      t.cost += Number(r.ads_cost_vnd || 0)
-      t.lgm += Number(r.lgm_vnd || 0)
-      t.pgm += Number(r.pgm_vnd || 0)
-      t.cads += Number(r.cads_vnd || 0)
-      t.rev += Number(r.tiktok_revenue_vnd || 0)
+      t.cost += Number(r.ads_cost_usd || 0)
+      t.lgm += Number(r.lgm_usd || 0)
+      t.pgm += Number(r.pgm_usd || 0)
+      t.cads += Number(r.cads_usd || 0)
       t.orders += Number(r.ads_orders || 0)
-      t.gmv += Number(r.gmv || 0)
-      t.nmv += Number(r.nmv || 0)
+      t.gmv += Number(r.gmv_usd || 0)
+      t.nmv += Number(r.nmv_usd || 0)
     }
     return t
   }, [adsDays])
@@ -855,7 +877,7 @@ export default function Dashboard({
       const k = String(r.thang).slice(0, 7)
       if (!keep.has(k)) continue
       const cur = map.get(k) ?? { ky: `${k}-01`, lgm: 0, pgm: 0, cads: 0, rev: 0, orders: 0 }
-      const c = Number(r.cost_vnd || 0)
+      const c = Number(r.cost_usd || 0)
       if (r.promotion_type === 'LIVE_GMV_MAX') cur.lgm += c
       else if (r.promotion_type === 'PRODUCT_GMV_MAX') cur.pgm += c
       else cur.cads += c
@@ -879,7 +901,7 @@ export default function Dashboard({
         id: r.campaign_id, ten: r.campaign_name, loai: r.promotion_type,
         koc: r.koc_handle, model: r.model_hint, cost: 0, rev: 0, orders: 0,
       }
-      cur.cost += Number(r.cost_vnd || 0)
+      cur.cost += Number(r.cost_usd || 0)
       cur.rev += Number(r.gross_revenue_vnd || 0)
       cur.orders += Number(r.orders || 0)
       map.set(r.campaign_id, cur)
@@ -2278,23 +2300,23 @@ export default function Dashboard({
             <section>
               <h2>{dayNote} — ad spend</h2>
               <p className="sub">
-                Spend is money we actually paid, so it is directly comparable with Seller NMV.
-                USD accounts are converted at a fixed rate held in the database; the original
-                currency is kept alongside for reconciling TikTok invoices.
+                This tab is in USD, the currency the ad budget is set in. VND accounts and VND
+                revenue are converted at one fixed rate held in the database, so ATR is unaffected
+                by the conversion. Original currencies stay in the database for reconciling TikTok
+                invoices.
               </p>
               <div className="tiles" style={{ marginTop: 20 }}>
-                <Tile label="Ad spend" value={bn(adsTotals.cost)} unit=" bn"
-                  sub={`${mn(adsTotals.cost)} mn total`} />
-                <Tile label="LIVE GMV Max" value={bn(adsTotals.lgm)} unit=" bn"
+                <Tile label="Ad spend" value={usd(adsTotals.cost)} unit=" USD" />
+                <Tile label="LIVE GMV Max" value={usd(adsTotals.lgm)} unit=" USD"
                   sub={`${pct(p1(adsTotals.lgm, adsTotals.cost))} of spend`} />
-                <Tile label="Product GMV Max" value={bn(adsTotals.pgm)} unit=" bn"
+                <Tile label="Product GMV Max" value={usd(adsTotals.pgm)} unit=" USD"
                   sub={`${pct(p1(adsTotals.pgm, adsTotals.cost))} of spend`} />
-                <Tile label="C-Ads and branding" value={bn(adsTotals.cads)} unit=" bn"
+                <Tile label="C-Ads and branding" value={usd(adsTotals.cads)} unit=" USD"
                   sub={`${pct(p1(adsTotals.cads, adsTotals.cost))} of spend`} />
                 <Tile label="ATR — ad take rate" value={pct(p1(adsTotals.cost, adsTotals.nmv))}
                   tone={p1(adsTotals.cost, adsTotals.nmv) > 25 ? 'bad' : 'ok'}
-                  sub={`ad spend ÷ Seller NMV ${bn(adsTotals.nmv)} bn`} />
-                <Tile label="Seller NMV per ad dong" value={adsTotals.cost ? (adsTotals.nmv / adsTotals.cost).toFixed(1) : '—'}
+                  sub={`ad spend ÷ Seller NMV ${usd(adsTotals.nmv)} USD`} />
+                <Tile label="Seller NMV per ad dollar" value={adsTotals.cost ? (adsTotals.nmv / adsTotals.cost).toFixed(2) : '—'}
                   sub="inverse of ATR — all sales, not attributed" />
               </div>
               <div className="note warn">
@@ -2324,17 +2346,17 @@ export default function Dashboard({
                   showVals: true,
                   fmtVal: (v) => `${v}%`,
                 }]}
-                fmt={bn} label={lbl} unit="VND bn"
+                fmt={usd} label={lbl} unit="USD"
                 tip={(d) => {
                   const r = adsDays.find((x) => x.ngay === d.ky)
                   if (!r) return null
                   return (
                     <><b>{lbl(d.ky)}</b><br />
-                      LGM {mn(Number(r.lgm_vnd))} mn · PGM {mn(Number(r.pgm_vnd))} mn<br />
-                      C-Ads {mn(Number(r.cads_vnd))} mn<br />
-                      Total spend {mn(Number(r.ads_cost_vnd))} mn<br />
-                      Seller NMV {bn(Number(r.nmv))} bn<br />
-                      ATR {pct(p1(Number(r.ads_cost_vnd), Number(r.nmv)))}</>
+                      LGM {usd(Number(r.lgm_usd))} · PGM {usd(Number(r.pgm_usd))}<br />
+                      C-Ads {usd(Number(r.cads_usd))}<br />
+                      Total spend {usd(Number(r.ads_cost_usd))}<br />
+                      Seller NMV {usd(Number(r.nmv_usd))}<br />
+                      ATR {pct(p1(Number(r.ads_cost_usd), Number(r.nmv_usd)))}</>
                   )
                 }}
               />
@@ -2353,16 +2375,16 @@ export default function Dashboard({
                   </tr></thead>
                   <tbody>
                     {adsDays.slice().reverse().map((r) => {
-                      const cost = Number(r.ads_cost_vnd || 0)
-                      const share = Number(r.nmv || 0) > 0 ? p1(cost, Number(r.nmv)) : null
+                      const cost = Number(r.ads_cost_usd || 0)
+                      const share = Number(r.nmv_usd || 0) > 0 ? p1(cost, Number(r.nmv_usd)) : null
                       return (
                         <tr key={r.ngay}>
                           <td>{lbl(r.ngay)}</td>
-                          <td className="n">{mn(Number(r.lgm_vnd))}</td>
-                          <td className="n">{mn(Number(r.pgm_vnd))}</td>
-                          <td className="n">{mn(Number(r.cads_vnd))}</td>
-                          <td className="n"><b>{mn(cost)}</b></td>
-                          <td className="n">{bn(Number(r.nmv))}</td>
+                          <td className="n">{usd(Number(r.lgm_usd))}</td>
+                          <td className="n">{usd(Number(r.pgm_usd))}</td>
+                          <td className="n">{usd(Number(r.cads_usd))}</td>
+                          <td className="n"><b>{usd(cost)}</b></td>
+                          <td className="n">{usd(Number(r.nmv_usd))}</td>
                           <td className="n">{pct(share)}</td>
                           <td className="n">{n0(Number(r.net_pcs))}</td>
                         </tr>
@@ -2372,8 +2394,8 @@ export default function Dashboard({
                 </table>
               </div>
               <p className="foot">
-                Spend in VND mn, Seller NMV in VND bn, net pcs after cancellations. Every column here
-                is ours &mdash; nothing on this table comes from TikTok&rsquo;s attribution.
+                Money in USD, net pcs after cancellations. Every column here is ours &mdash; nothing
+                on this table comes from TikTok&rsquo;s attribution.
               </p>
             </section>
 
@@ -2390,13 +2412,13 @@ export default function Dashboard({
                   { ten: 'Product GMV Max', color: 'var(--c2)' },
                   { ten: 'C-Ads and branding', color: GREY },
                 ]}
-                fmt={bn} label={mmyy} unit="VND bn"
+                fmt={usd} label={mmyy} unit="USD"
                 tip={(d) => (
                   <><b>{mmyy(d.ky)}</b><br />
-                    LGM {mn(d.parts[0])} mn<br />
-                    PGM {mn(d.parts[1])} mn<br />
-                    C-Ads {mn(d.parts[2])} mn<br />
-                    Total {mn(d.parts[0] + d.parts[1] + d.parts[2])} mn</>
+                    LGM {usd(d.parts[0])}<br />
+                    PGM {usd(d.parts[1])}<br />
+                    C-Ads {usd(d.parts[2])}<br />
+                    Total {usd(d.parts[0] + d.parts[1] + d.parts[2])}</>
                 )}
               />
               <div className="tablewrap" style={{ marginTop: 18 }}>
@@ -2415,12 +2437,12 @@ export default function Dashboard({
                       return (
                         <tr key={m.ky}>
                           <td>{mmyy(m.ky)}</td>
-                          <td className="n">{mn(m.lgm)}</td>
-                          <td className="n">{mn(m.pgm)}</td>
-                          <td className="n">{mn(m.cads)}</td>
-                          <td className="n"><b>{mn(total)}</b></td>
-                          <td className="n">{sale ? bn(sale.nmv) : '—'}</td>
-                          <td className="n">{sale && sale.nmv > 0 ? pct(p1(total, sale.nmv)) : '—'}</td>
+                          <td className="n">{usd(m.lgm)}</td>
+                          <td className="n">{usd(m.pgm)}</td>
+                          <td className="n">{usd(m.cads)}</td>
+                          <td className="n"><b>{usd(total)}</b></td>
+                          <td className="n">{sale ? usd(sale.nmv / FX) : '—'}</td>
+                          <td className="n">{sale && sale.nmv > 0 ? pct(p1(total, sale.nmv / FX)) : '—'}</td>
                           <td className="n">{total > 0 ? pct(p1(m.lgm, total)) : '—'}</td>
                         </tr>
                       )
@@ -2428,7 +2450,7 @@ export default function Dashboard({
                   </tbody>
                 </table>
               </div>
-              <p className="foot">Spend in VND mn, Seller NMV in VND bn.</p>
+              <p className="foot">All money in USD.</p>
             </section>
 
             <section>
@@ -2452,7 +2474,7 @@ export default function Dashboard({
                         <td>{c.loai === 'LIVE_GMV_MAX' ? 'LGM' : c.loai === 'PRODUCT_GMV_MAX' ? 'PGM' : 'C-Ads'}</td>
                         <td>{c.koc ?? <span className="muted">—</span>}</td>
                         <td>{c.model ?? <span className="muted">—</span>}</td>
-                        <td className="n"><b>{mn(c.cost)}</b></td>
+                        <td className="n"><b>{usd(c.cost)}</b></td>
                         <td className="n">{pct(p1(c.cost, adsTotals.cost))}</td>
                         <td className="n muted">{c.cost > 0 ? (c.rev / c.cost).toFixed(1) : '—'}</td>
                       </tr>
@@ -2461,7 +2483,7 @@ export default function Dashboard({
                 </table>
               </div>
               <p className="foot">
-                Spend in VND mn. Showing the top 60 of {n0(adsCamps.length)} campaigns. The last column
+                Spend in USD. Showing the top 60 of {n0(adsCamps.length)} campaigns. The last column
                 is TikTok&rsquo;s own ROAS, kept only because it is the one signal that exists per
                 campaign &mdash; our order data cannot be traced back to a campaign. Read it as a
                 ranking between campaigns, never as a return on our own revenue.
