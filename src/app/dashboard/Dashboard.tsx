@@ -2397,12 +2397,12 @@ export default function Dashboard({
                   showVals: true,
                   fmtVal: (v) => `${v}%`,
                 }]}
-                fmt={usd} label={lbl} unit="USD"
+                fmt={usd} label={ddmm} unit="USD"
                 tip={(d) => {
                   const r = adsDays.find((x) => x.ngay === d.ky)
                   if (!r) return null
                   return (
-                    <><b>{lbl(d.ky)}</b><br />
+                    <><b>{ddmm(d.ky)}</b><br />
                       LGM {usd(Number(r.lgm_usd))} · PGM {usd(Number(r.pgm_usd))}<br />
                       C-Ads {usd(Number(r.cads_usd))}<br />
                       Total spend {usd(Number(r.ads_cost_usd))}<br />
@@ -2430,7 +2430,7 @@ export default function Dashboard({
                       const share = Number(r.nmv_usd || 0) > 0 ? p1(cost, Number(r.nmv_usd)) : null
                       return (
                         <tr key={r.ngay}>
-                          <td>{lbl(r.ngay)}</td>
+                          <td>{ddmm(r.ngay)}</td>
                           <td className="n">{usd(Number(r.lgm_usd))}</td>
                           <td className="n">{usd(Number(r.pgm_usd))}</td>
                           <td className="n">{usd(Number(r.cads_usd))}</td>
