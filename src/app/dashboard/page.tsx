@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import Dashboard, {
   type Monthly, type Daily, type Sku, type SkuPeriod,
   type Segment, type LapseRow, type Ship,
+  type AdsVs, type AdsMonth, type AdsCampaign,
 } from './Dashboard'
 
 export const dynamic = 'force-dynamic'
@@ -34,7 +35,7 @@ export default async function Page() {
   const db = supabaseAdmin()
 
   try {
-    const [m, d, s, sm, sd, seg, lap, ship] = await Promise.all([
+    const [m, d, s, sm, sd, seg, lap, ship, av, am, ac] = await Promise.all([
       fetchAll<Monthly>(db, 'v_perf_monthly'),
       fetchAll<Daily>(db, 'v_perf_daily'),
       fetchAll<Sku>(db, 'v_sku_perf'),
@@ -43,6 +44,9 @@ export default async function Page() {
       fetchAll<Segment>(db, 'v_segment_monthly'),
       fetchAll<LapseRow>(db, 'v_lapse_daily'),
       fetchAll<Ship>(db, 'v_shipping_daily'),
+      fetchAll<AdsVs>(db, 'v_ads_vs_sales_daily'),
+      fetchAll<AdsMonth>(db, 'v_ads_perf_monthly'),
+      fetchAll<AdsCampaign>(db, 'v_ads_campaign_monthly'),
     ])
 
     return (
@@ -50,6 +54,7 @@ export default async function Page() {
         monthly={num(m)} daily={num(d)} sku={num(s)}
         skuMonthly={num(sm)} skuDaily={num(sd)}
         segMonthly={num(seg)} lapseDaily={num(lap)} shipDaily={num(ship)}
+        adsVs={num(av)} adsMonthly={num(am)} adsCampaigns={num(ac)}
       />
     )
   } catch (e) {

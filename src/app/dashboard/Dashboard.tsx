@@ -58,10 +58,39 @@ export type Ship = {
   shop_tro_gia_ship: number; san_tro_gia_ship: number; ship_dot_cho_don_huy: number
 }
 
+/* ---- quảng cáo ----
+   cost_vnd đã quy đổi theo tỷ giá trong app_settings (USD account), cột
+   nguyên tệ vẫn giữ trong database để đối chiếu hoá đơn TikTok.
+
+   gross_revenue và orders là CON SỐ CỦA TIKTOK, do TikTok tự quy kết cho
+   quảng cáo. Chúng KHÔNG so sánh trực tiếp được với Seller GMV/NMV: đây là
+   doanh thu gộp trước huỷ, và một đơn có thể được nhiều campaign cùng nhận
+   công. Tháng 9/2026: TikTok báo 4.703 đơn trong khi cả shop chỉ có 2.350 —
+   chênh lệch đó là do quy kết trùng, không phải dữ liệu sai. */
+export type AdsVs = {
+  ngay: string
+  ads_cost_vnd: number; lgm_vnd: number; pgm_vnd: number; cads_vnd: number
+  tiktok_revenue_vnd: number; ads_orders: number
+  gmv: number; nmv: number; net_pcs: number
+  ads_pct_nmv: number | null; nmv_per_ad_dong: number | null
+}
+export type AdsMonth = {
+  thang: string; promotion_type: string
+  cost_vnd: number; net_cost_vnd: number; gross_revenue_vnd: number
+  orders: number; campaigns: number
+}
+export type AdsCampaign = {
+  thang: string; campaign_id: string; campaign_name: string
+  promotion_type: string; advertiser_name: string | null
+  koc_handle: string | null; model_hint: string | null; room_hint: string | null
+  cost_vnd: number; gross_revenue_vnd: number; orders: number; roas: number | null
+}
+
 type Props = {
   monthly: Monthly[]; daily: Daily[]; sku: Sku[]
   skuMonthly: SkuPeriod[]; skuDaily: SkuPeriod[]
   segMonthly: Segment[]; lapseDaily: LapseRow[]; shipDaily: Ship[]
+  adsVs: AdsVs[]; adsMonthly: AdsMonth[]; adsCampaigns: AdsCampaign[]
 }
 
 /* ============================== helpers ============================== */
@@ -91,7 +120,7 @@ const RANGES = [
 ] as const
 type RangeKey = (typeof RANGES)[number]['key']
 
-const TABS = ['MoM Summary', 'Overview', 'Category', 'SKU', 'Discounts', 'Cancellations', 'P&L', 'Glossary'] as const
+const TABS = ['MoM Summary', 'Overview', 'Category', 'SKU', 'Discounts', 'Advertising', 'Cancellations', 'P&L', 'Glossary'] as const
 type Tab = (typeof TABS)[number]
 
 /* ============================== glossary ==============================
@@ -590,6 +619,7 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
 
 export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, lapseDaily, shipDaily,
+  adsVs, adsMonthly, adsCampaigns,
 }: Props) {
   const [tab, setTab] = useState<Tab>('MoM Summary')
   const [cat, setCat] = useState<CatKey>('all')
@@ -761,6 +791,68 @@ export default function Dashboard({
     [skuDaily, dayKeys, cat, modelSel],
   )
   const daySkuF = useMemo(() => aggSku(daySkuRows), [daySkuRows])
+
+  /* ---- quảng cáo ----
+     Ngày chạy theo cùng bộ lọc với tab Discounts; phần MoM chạy theo tháng
+     đã chọn. Chi tiêu là con số chắc chắn (mình trả tiền thật), còn doanh thu
+     và đơn là quy kết của TikTok — hai nhóm để riêng, không trộn. */
+  const adsDays = useMemo(
+    () => adsVs.filter((r) => dayKeys.has(r.ngay)).sort((a, b) => a.ngay.localeCompare(b.ngay)),
+    [adsVs, dayKeys],
+  )
+  const adsTotals = useMemo(() => {
+    const t = { cost: 0, lgm: 0, pgm: 0, cads: 0, rev: 0, orders: 0, gmv: 0, nmv: 0 }
+    for (const r of adsDays) {
+      t.cost += Number(r.ads_cost_vnd || 0)
+      t.lgm += Number(r.lgm_vnd || 0)
+      t.pgm += Number(r.pgm_vnd || 0)
+      t.cads += Number(r.cads_vnd || 0)
+      t.rev += Number(r.tiktok_revenue_vnd || 0)
+      t.orders += Number(r.ads_orders || 0)
+      t.gmv += Number(r.gmv || 0)
+      t.nmv += Number(r.nmv || 0)
+    }
+    return t
+  }, [adsDays])
+
+  const adsMonths = useMemo(() => {
+    const keep = new Set(goodMonths.map((m) => m.slice(0, 7)))
+    const map = new Map<string, { ky: string; lgm: number; pgm: number; cads: number; rev: number; orders: number }>()
+    for (const r of adsMonthly) {
+      const k = String(r.thang).slice(0, 7)
+      if (!keep.has(k)) continue
+      const cur = map.get(k) ?? { ky: `${k}-01`, lgm: 0, pgm: 0, cads: 0, rev: 0, orders: 0 }
+      const c = Number(r.cost_vnd || 0)
+      if (r.promotion_type === 'LIVE_GMV_MAX') cur.lgm += c
+      else if (r.promotion_type === 'PRODUCT_GMV_MAX') cur.pgm += c
+      else cur.cads += c
+      cur.rev += Number(r.gross_revenue_vnd || 0)
+      cur.orders += Number(r.orders || 0)
+      map.set(k, cur)
+    }
+    return Array.from(map.values()).sort((a, b) => a.ky.localeCompare(b.ky))
+  }, [adsMonthly, goodMonths])
+
+  /** Bảng xếp hạng campaign: gộp các tháng đang chọn, bỏ campaign không tiêu đồng nào. */
+  const adsCamps = useMemo(() => {
+    const keep = new Set(goodMonths.map((m) => m.slice(0, 7)))
+    const map = new Map<string, {
+      id: string; ten: string; loai: string; koc: string | null; model: string | null
+      cost: number; rev: number; orders: number
+    }>()
+    for (const r of adsCampaigns) {
+      if (!keep.has(String(r.thang).slice(0, 7))) continue
+      const cur = map.get(r.campaign_id) ?? {
+        id: r.campaign_id, ten: r.campaign_name, loai: r.promotion_type,
+        koc: r.koc_handle, model: r.model_hint, cost: 0, rev: 0, orders: 0,
+      }
+      cur.cost += Number(r.cost_vnd || 0)
+      cur.rev += Number(r.gross_revenue_vnd || 0)
+      cur.orders += Number(r.orders || 0)
+      map.set(r.campaign_id, cur)
+    }
+    return Array.from(map.values()).sort((a, b) => b.cost - a.cost)
+  }, [adsCampaigns, goodMonths])
 
   /** Cột chồng trợ giá hợp lệ theo model, theo ngày. Cùng khuôn với mix. */
   const subMix = useMemo(() => {
@@ -2147,6 +2239,203 @@ export default function Dashboard({
         )}
 
         {/* =================== CANCELLATIONS =================== */}
+        {/* =================== ADVERTISING =================== */}
+        {tab === 'Advertising' && (
+          <>
+            <section>
+              <h2>{dayNote} — ad spend</h2>
+              <p className="sub">
+                Spend is money we actually paid, so it is directly comparable with Seller NMV.
+                USD accounts are converted at a fixed rate held in the database; the original
+                currency is kept alongside for reconciling TikTok invoices.
+              </p>
+              <div className="tiles" style={{ marginTop: 20 }}>
+                <Tile label="Ad spend" value={bn(adsTotals.cost)} unit=" bn"
+                  sub={`${mn(adsTotals.cost)} mn total`} />
+                <Tile label="LIVE GMV Max" value={bn(adsTotals.lgm)} unit=" bn"
+                  sub={`${pct(p1(adsTotals.lgm, adsTotals.cost))} of spend`} />
+                <Tile label="Product GMV Max" value={bn(adsTotals.pgm)} unit=" bn"
+                  sub={`${pct(p1(adsTotals.pgm, adsTotals.cost))} of spend`} />
+                <Tile label="C-Ads and branding" value={bn(adsTotals.cads)} unit=" bn"
+                  sub={`${pct(p1(adsTotals.cads, adsTotals.cost))} of spend`} />
+                <Tile label="Spend as % of Seller NMV" value={pct(p1(adsTotals.cost, adsTotals.nmv))}
+                  tone={p1(adsTotals.cost, adsTotals.nmv) > 25 ? 'bad' : 'ok'}
+                  sub={`Seller NMV ${bn(adsTotals.nmv)} bn`} />
+                <Tile label="Seller NMV per ad dong" value={adsTotals.cost ? (adsTotals.nmv / adsTotals.cost).toFixed(1) : '—'}
+                  sub="our own revenue, not TikTok's" />
+                <Tile label="TikTok-reported revenue" value={bn(adsTotals.rev)} unit=" bn"
+                  sub="TikTok's own attribution" />
+                <Tile label="TikTok-reported ROAS" value={adsTotals.cost ? (adsTotals.rev / adsTotals.cost).toFixed(1) : '—'}
+                  sub={`on ${n0(adsTotals.orders)} attributed orders`} />
+              </div>
+              <div className="note warn">
+                <b>Do not add TikTok&rsquo;s numbers to ours.</b> The last two tiles are TikTok&rsquo;s own
+                attribution: revenue before cancellations, and orders that more than one campaign can
+                claim at once. In Sep 2026 TikTok reported 4,703 attributed orders while the whole shop
+                took 2,350. Use them to compare campaigns against each other, never as shop totals.
+              </div>
+            </section>
+
+            <section>
+              <h2>Spend per day, against Seller NMV · DoD</h2>
+              <p className="sub">
+                Columns split LIVE GMV Max from Product GMV Max. The red line is total ad spend
+                (including C-Ads) as a share of that day&rsquo;s Seller NMV, on the right axis.
+              </p>
+              <ComboChart
+                data={adsDays.map((r) => ({ ky: r.ngay, a: Number(r.lgm_vnd || 0), b: Number(r.pgm_vnd || 0) }))}
+                names={['LIVE GMV Max', 'Product GMV Max']}
+                colors={['var(--c1)', 'var(--c2)']}
+                lines={[{
+                  ten: 'Spend as % of Seller NMV (right axis)',
+                  color: 'var(--bad)', truc: 'pct',
+                  vals: adsDays.map((r) => (Number(r.nmv || 0) > 0 ? p1(Number(r.ads_cost_vnd || 0), Number(r.nmv)) : null)),
+                  showVals: true,
+                  fmtVal: (v) => `${v}%`,
+                }]}
+                fmt={bn} label={lbl} unit="VND bn"
+                tip={(d) => {
+                  const r = adsDays.find((x) => x.ngay === d.ky)
+                  if (!r) return null
+                  return (
+                    <><b>{lbl(d.ky)}</b><br />
+                      LGM {mn(Number(r.lgm_vnd))} mn · PGM {mn(Number(r.pgm_vnd))} mn<br />
+                      C-Ads {mn(Number(r.cads_vnd))} mn<br />
+                      Total spend {mn(Number(r.ads_cost_vnd))} mn<br />
+                      Seller NMV {bn(Number(r.nmv))} bn<br />
+                      Spend {pct(p1(Number(r.ads_cost_vnd), Number(r.nmv)))} of Seller NMV</>
+                  )
+                }}
+              />
+            </section>
+
+            <section>
+              <h2>Day by day</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Day</th>
+                    <th className="n">LGM</th><th className="n">PGM</th><th className="n">C-Ads</th>
+                    <th className="n">Total spend</th>
+                    <th className="n">Seller NMV</th><th className="n">% of NMV</th>
+                    <th className="n">TikTok revenue</th><th className="n">TikTok ROAS</th>
+                  </tr></thead>
+                  <tbody>
+                    {adsDays.slice().reverse().map((r) => {
+                      const cost = Number(r.ads_cost_vnd || 0)
+                      const share = Number(r.nmv || 0) > 0 ? p1(cost, Number(r.nmv)) : null
+                      return (
+                        <tr key={r.ngay}>
+                          <td>{lbl(r.ngay)}</td>
+                          <td className="n">{mn(Number(r.lgm_vnd))}</td>
+                          <td className="n">{mn(Number(r.pgm_vnd))}</td>
+                          <td className="n">{mn(Number(r.cads_vnd))}</td>
+                          <td className="n"><b>{mn(cost)}</b></td>
+                          <td className="n">{bn(Number(r.nmv))}</td>
+                          <td className="n">{pct(share)}</td>
+                          <td className="n muted">{bn(Number(r.tiktok_revenue_vnd))}</td>
+                          <td className="n muted">{cost > 0 ? (Number(r.tiktok_revenue_vnd) / cost).toFixed(1) : '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">Spend in VND mn, revenue in VND bn. The two grey columns are TikTok&rsquo;s attribution, not ours.</p>
+            </section>
+
+            <section>
+              <h2>LIVE vs Product GMV Max — {monthNote}</h2>
+              <p className="sub">
+                Always monthly, so the shift in budget mix is readable. C-Ads and branding sit on top
+                in grey — small in money, but they are the only spend with no direct sales attribution.
+              </p>
+              <MultiStack
+                data={adsMonths.map((m) => ({ ky: m.ky, parts: [m.lgm, m.pgm, m.cads] }))}
+                series={[
+                  { ten: 'LIVE GMV Max', color: 'var(--c1)' },
+                  { ten: 'Product GMV Max', color: 'var(--c2)' },
+                  { ten: 'C-Ads and branding', color: GREY },
+                ]}
+                fmt={bn} label={mmyy} unit="VND bn"
+                tip={(d) => (
+                  <><b>{mmyy(d.ky)}</b><br />
+                    LGM {mn(d.parts[0])} mn<br />
+                    PGM {mn(d.parts[1])} mn<br />
+                    C-Ads {mn(d.parts[2])} mn<br />
+                    Total {mn(d.parts[0] + d.parts[1] + d.parts[2])} mn</>
+                )}
+              />
+              <div className="tablewrap" style={{ marginTop: 18 }}>
+                <table>
+                  <thead><tr>
+                    <th>Month</th>
+                    <th className="n">LGM</th><th className="n">PGM</th><th className="n">C-Ads</th>
+                    <th className="n">Total spend</th>
+                    <th className="n">Seller NMV</th><th className="n">% of NMV</th>
+                    <th className="n">LGM share</th>
+                  </tr></thead>
+                  <tbody>
+                    {adsMonths.map((m) => {
+                      const total = m.lgm + m.pgm + m.cads
+                      const sale = momRows.find((r) => r.ky.slice(0, 7) === m.ky.slice(0, 7))
+                      return (
+                        <tr key={m.ky}>
+                          <td>{mmyy(m.ky)}</td>
+                          <td className="n">{mn(m.lgm)}</td>
+                          <td className="n">{mn(m.pgm)}</td>
+                          <td className="n">{mn(m.cads)}</td>
+                          <td className="n"><b>{mn(total)}</b></td>
+                          <td className="n">{sale ? bn(sale.nmv) : '—'}</td>
+                          <td className="n">{sale && sale.nmv > 0 ? pct(p1(total, sale.nmv)) : '—'}</td>
+                          <td className="n">{total > 0 ? pct(p1(m.lgm, total)) : '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">Spend in VND mn, Seller NMV in VND bn.</p>
+            </section>
+
+            <section>
+              <h2>Campaigns — {monthNote}</h2>
+              <p className="sub">
+                Every campaign that spent in the selected months, biggest first. KOC handle and model
+                are read off the campaign name, so they follow the team&rsquo;s naming convention — a
+                renamed campaign shows a dash rather than a guess.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Campaign</th><th>Type</th><th>KOC</th><th>Model</th>
+                    <th className="n">Spend</th><th className="n">TikTok revenue</th>
+                    <th className="n">ROAS</th><th className="n">Orders</th>
+                  </tr></thead>
+                  <tbody>
+                    {adsCamps.slice(0, 60).map((c) => (
+                      <tr key={c.id}>
+                        <td>{c.ten}</td>
+                        <td>{c.loai === 'LIVE_GMV_MAX' ? 'LGM' : c.loai === 'PRODUCT_GMV_MAX' ? 'PGM' : 'C-Ads'}</td>
+                        <td>{c.koc ?? <span className="muted">—</span>}</td>
+                        <td>{c.model ?? <span className="muted">—</span>}</td>
+                        <td className="n"><b>{mn(c.cost)}</b></td>
+                        <td className="n muted">{bn(c.rev)}</td>
+                        <td className="n">{c.cost > 0 ? (c.rev / c.cost).toFixed(1) : '—'}</td>
+                        <td className="n muted">{n0(c.orders)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Spend in VND mn, revenue in VND bn. Showing the top 60 of {n0(adsCamps.length)} campaigns.
+                ROAS here is TikTok&rsquo;s own, useful for ranking campaigns against each other.
+              </p>
+            </section>
+          </>
+        )}
+
         {tab === 'Cancellations' && (
           <>
             <section>
