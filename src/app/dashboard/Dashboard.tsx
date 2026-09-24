@@ -888,6 +888,28 @@ export default function Dashboard({
     return Array.from(map.values()).sort((a, b) => a.ky.localeCompare(b.ky))
   }, [adsMonthly, goodMonths])
 
+  /** Chi tiêu quảng cáo theo tháng (USD), để tab MoM Summary lấy ra một con số. */
+  const adsByMonth = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of adsMonthly) {
+      const k = String(r.thang).slice(0, 7)
+      m.set(k, (m.get(k) ?? 0) + Number(r.cost_usd || 0))
+    }
+    return m
+  }, [adsMonthly])
+
+  /** Chi tiêu quảng cáo trong đúng khoảng mà tab Overview đang lọc.
+   *  keys chứa khoá tháng ('2026-09-01') khi xem theo tháng, khoá ngày khi xem
+   *  theo ngày — nên phải so khớp theo đúng dạng đang dùng. */
+  const adsSpanUsd = useMemo(() => {
+    let cost = 0
+    for (const r of adsVs) {
+      const hit = byMonth ? keys.has(`${r.ngay.slice(0, 7)}-01`) : keys.has(r.ngay)
+      if (hit) cost += Number(r.ads_cost_usd || 0)
+    }
+    return cost
+  }, [adsVs, keys, byMonth])
+
   /** Bảng xếp hạng campaign: gộp các tháng đang chọn, bỏ campaign không tiêu đồng nào. */
   const adsCamps = useMemo(() => {
     const keep = new Set(goodMonths.map((m) => m.slice(0, 7)))
@@ -982,6 +1004,21 @@ export default function Dashboard({
       .filter((r) => cat === 'all' || r.category === cat),
     [segMonthly, goodMonths, cat],
   )
+  /** Doanh thu theo tháng quy sang USD, ghép với chi tiêu quảng cáo cùng tháng.
+   *  Cột là Seller GMV tách thành NMV (đặc) và phần mất vì huỷ (nhạt), đường là
+   *  ATR. Ba thứ này phải nằm chung một biểu đồ vì NMV vừa là phần đặc của cột
+   *  vừa là mẫu số của ATR — huỷ tăng thì ATR xấu đi dù chi tiêu không đổi. */
+  const adsRevMonths = useMemo(() => {
+    const keep = goodMonths.map((m) => m.slice(0, 7))
+    return keep.map((k) => {
+      const sale = momRows.find((r) => r.ky.slice(0, 7) === k)
+      const nmv = (sale?.nmv ?? 0) / FX
+      const lost = (sale?.gmv_mat_do_huy ?? 0) / FX
+      const cost = adsByMonth.get(k) ?? 0
+      return { ky: `${k}-01`, nmv, lost, cost, atr: nmv > 0 ? p1(cost, nmv) : null }
+    })
+  }, [goodMonths, momRows, adsByMonth, FX])
+
   const momSkus = useMemo(
     () => skuMonthly
       .filter((r) => goodMonths.includes(r.ky))
@@ -1192,6 +1229,15 @@ export default function Dashboard({
                         sub={ppText(capture(c), capture(p))} />
                       <Tile label="Subsidy % of NMV" value={pct(subShare(c) ?? 0)}
                         sub={ppText(subShare(c), subShare(p))} />
+                      <Tile label="Ad spend" value={usd(adsByMonth.get(c.ky.slice(0, 7)) ?? 0)} unit=" USD"
+                        sub={deltaText(delta(adsByMonth.get(c.ky.slice(0, 7)), p && adsByMonth.get(p.ky.slice(0, 7))), 'month')} />
+                      <Tile label="ATR — ad take rate"
+                        value={pct(p1(adsByMonth.get(c.ky.slice(0, 7)) ?? 0, c.nmv / FX))}
+                        tone={p1(adsByMonth.get(c.ky.slice(0, 7)) ?? 0, c.nmv / FX) > 25 ? 'bad' : 'ok'}
+                        sub={ppText(
+                          p1(adsByMonth.get(c.ky.slice(0, 7)) ?? 0, c.nmv / FX),
+                          p ? p1(adsByMonth.get(p.ky.slice(0, 7)) ?? 0, p.nmv / FX) : undefined,
+                        )} />
                     </div>
                     <div className="note warn">
                       <b>{mmyy(c.ky)} is not finished settling.</b> Orders placed late in the month
@@ -1592,6 +1638,11 @@ export default function Dashboard({
                 <Tile label="Cancellation rate" value={pct(span.cur.cancel_rate)}
                   tone={span.cur.cancel_rate > 40 ? 'bad' : 'ok'}
                   sub={`${n0(span.cur.sl_huy)} of ${n0(span.cur.so_luong)} pcs cancelled`} />
+                <Tile label="Ad spend" value={usd(adsSpanUsd)} unit=" USD"
+                  sub="all four Roborock ad accounts" />
+                <Tile label="ATR — ad take rate" value={pct(p1(adsSpanUsd, span.cur.nmv / FX))}
+                  tone={p1(adsSpanUsd, span.cur.nmv / FX) > 25 ? 'bad' : 'ok'}
+                  sub="ad spend ÷ Seller NMV" />
               </div>
             </section>
 
@@ -2397,6 +2448,41 @@ export default function Dashboard({
                 Money in USD, net pcs after cancellations. Every column here is ours &mdash; nothing
                 on this table comes from TikTok&rsquo;s attribution.
               </p>
+            </section>
+
+            <section>
+              <h2>Revenue and ATR by month — {monthNote}</h2>
+              <p className="sub">
+                Column height is Seller GMV: solid is Seller NMV, pale is what cancellations took
+                away. The red line is ATR on the right axis. Seller NMV is both the solid part of
+                the column and the denominator of ATR, so a month with heavy cancellations pushes
+                ATR up even when ad spend has not moved.
+              </p>
+              <ComboChart
+                data={adsRevMonths.map((m) => ({ ky: m.ky, a: m.nmv, b: m.lost }))}
+                names={['Seller NMV', 'Lost to cancellations']}
+                colors={['var(--c1)', 'var(--c1-soft)']}
+                lines={[{
+                  ten: 'ATR (right axis)',
+                  color: 'var(--bad)', truc: 'pct',
+                  vals: adsRevMonths.map((m) => m.atr),
+                  showVals: true,
+                  fmtVal: (v) => `${v}%`,
+                }]}
+                fmt={usd} label={mmyy} unit="USD"
+                tip={(d, i) => {
+                  const m = adsRevMonths[i]
+                  if (!m) return null
+                  return (
+                    <><b>{mmyy(d.ky)}</b><br />
+                      Seller GMV {usd(m.nmv + m.lost)}<br />
+                      · Seller NMV {usd(m.nmv)}<br />
+                      · lost to cancels {usd(m.lost)}<br />
+                      Ad spend {usd(m.cost)}<br />
+                      ATR {pct(m.atr)}</>
+                  )
+                }}
+              />
             </section>
 
             <section>
