@@ -5,52 +5,62 @@ import { adsGet, adsToken } from '@/lib/ads/client'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+export const maxDuration = 300
 
 /**
- * Bắn thử một báo cáo 7 ngày gần nhất để xem TikTok trả về đúng những chỉ số
- * nào cho tài khoản này. Nguyên phản hồi được ghi vào ads_debug để đọc bằng
- * SQL — nhanh hơn đọc tài liệu, và tài liệu hay lệch so với thực tế.
+ * Bắn thử báo cáo 30 ngày để xem account nào có chi tiêu thật và TikTok trả
+ * về đúng những chỉ số nào. Nguyên phản hồi ghi vào ads_debug để đọc bằng SQL
+ * — nhanh hơn đọc tài liệu, và tài liệu hay lệch so với thực tế.
  *
- * Gọi: /api/tiktok-ads/probe?advertiser_id=...
+ * Không truyền tham số  → quét toàn bộ account đã uỷ quyền.
+ * ?advertiser_id=...    → chỉ một account.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url)
-  const advertiserId = url.searchParams.get('advertiser_id')
-  if (!advertiserId) {
-    return NextResponse.json({ error: 'Thiếu ?advertiser_id=' }, { status: 400 })
-  }
+  const only = url.searchParams.get('advertiser_id')
 
-  const day = (back: number) => {
-    const d = new Date(Date.now() - back * 86_400_000)
-    return d.toISOString().slice(0, 10)
-  }
+  const day = (back: number) =>
+    new Date(Date.now() - back * 86_400_000).toISOString().slice(0, 10)
 
   try {
-    const { token } = await adsToken()
+    const { token, advertiserIds } = await adsToken()
+    const targets = only ? [only] : advertiserIds
     const db = supabaseAdmin()
+    const summary: Record<string, unknown>[] = []
 
-    const body = await adsGet(ADS.PATHS.integratedReport, token, {
-      advertiser_id: advertiserId,
-      report_type: 'BASIC',
-      data_level: 'AUCTION_CAMPAIGN',
-      dimensions: ['campaign_id', 'stat_time_day'],
-      metrics: [
-        'campaign_name', 'spend', 'impressions', 'clicks',
-        'conversion', 'cost_per_conversion', 'conversion_rate',
-      ],
-      start_date: day(7),
-      end_date: day(1),
-      page: '1',
-      page_size: '50',
-    })
+    for (const id of targets) {
+      const body = await adsGet(ADS.PATHS.integratedReport, token, {
+        advertiser_id: id,
+        report_type: 'BASIC',
+        data_level: 'AUCTION_CAMPAIGN',
+        dimensions: ['campaign_id', 'stat_time_day'],
+        metrics: ['campaign_name', 'spend', 'impressions', 'clicks', 'conversion'],
+        start_date: day(30),
+        end_date: day(1),
+        page: '1',
+        page_size: '100',
+      })
 
-    await db.from('ads_debug').insert({ note: `probe BASIC ${advertiserId}`, payload: body })
+      const list = Array.isArray(body.data?.list) ? (body.data.list as Record<string, unknown>[]) : []
+      const spend = list.reduce((a, r) => {
+        const m = (r.metrics ?? {}) as Record<string, unknown>
+        return a + Number(m.spend ?? 0)
+      }, 0)
+
+      await db.from('ads_debug').insert({
+        note: `probe BASIC ${id}`,
+        // Chỉ giữ 5 dòng đầu: đủ để đọc tên trường, khỏi phình bảng.
+        payload: { code: body.code, message: body.message, rows: list.length, sample: list.slice(0, 5) },
+      })
+
+      summary.push({ advertiser_id: id, code: body.code, message: body.message, rows: list.length, spend })
+    }
 
     return NextResponse.json({
-      code: body.code,
-      message: body.message,
-      rows: Array.isArray(body.data?.list) ? (body.data.list as unknown[]).length : 0,
-      hint: 'Phản hồi đầy đủ đã ghi vào bảng ads_debug.',
+      ok: true,
+      checked: targets.length,
+      summary,
+      hint: 'Chi tiết đã ghi vào bảng ads_debug.',
     })
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
