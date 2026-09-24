@@ -2263,16 +2263,14 @@ export default function Dashboard({
                   sub={`Seller NMV ${bn(adsTotals.nmv)} bn`} />
                 <Tile label="Seller NMV per ad dong" value={adsTotals.cost ? (adsTotals.nmv / adsTotals.cost).toFixed(1) : '—'}
                   sub="our own revenue, not TikTok's" />
-                <Tile label="TikTok-reported revenue" value={bn(adsTotals.rev)} unit=" bn"
-                  sub="TikTok's own attribution" />
-                <Tile label="TikTok-reported ROAS" value={adsTotals.cost ? (adsTotals.rev / adsTotals.cost).toFixed(1) : '—'}
-                  sub={`on ${n0(adsTotals.orders)} attributed orders`} />
               </div>
               <div className="note warn">
-                <b>Do not add TikTok&rsquo;s numbers to ours.</b> The last two tiles are TikTok&rsquo;s own
-                attribution: revenue before cancellations, and orders that more than one campaign can
-                claim at once. In Sep 2026 TikTok reported 4,703 attributed orders while the whole shop
-                took 2,350. Use them to compare campaigns against each other, never as shop totals.
+                <b>TikTok&rsquo;s own revenue and order counts are deliberately kept out of this tab.</b>{' '}
+                They do not measure the same thing we do. In Sep 2026 TikTok reported 4,703 attributed
+                orders against 2,350 machine orders in the shop &mdash; it counts accessories, and one
+                order can be claimed by several campaigns at once. Its revenue implies an average order
+                of 6.3 mn when our cheapest machine is around 6 mn and the bulk sell at 15&ndash;25 mn.
+                Everything above is money we actually paid, against revenue we actually recognised.
               </div>
             </section>
 
@@ -2318,7 +2316,7 @@ export default function Dashboard({
                     <th className="n">LGM</th><th className="n">PGM</th><th className="n">C-Ads</th>
                     <th className="n">Total spend</th>
                     <th className="n">Seller NMV</th><th className="n">% of NMV</th>
-                    <th className="n">TikTok revenue</th><th className="n">TikTok ROAS</th>
+                    <th className="n">Net pcs</th>
                   </tr></thead>
                   <tbody>
                     {adsDays.slice().reverse().map((r) => {
@@ -2333,15 +2331,17 @@ export default function Dashboard({
                           <td className="n"><b>{mn(cost)}</b></td>
                           <td className="n">{bn(Number(r.nmv))}</td>
                           <td className="n">{pct(share)}</td>
-                          <td className="n muted">{bn(Number(r.tiktok_revenue_vnd))}</td>
-                          <td className="n muted">{cost > 0 ? (Number(r.tiktok_revenue_vnd) / cost).toFixed(1) : '—'}</td>
+                          <td className="n">{n0(Number(r.net_pcs))}</td>
                         </tr>
                       )
                     })}
                   </tbody>
                 </table>
               </div>
-              <p className="foot">Spend in VND mn, revenue in VND bn. The two grey columns are TikTok&rsquo;s attribution, not ours.</p>
+              <p className="foot">
+                Spend in VND mn, Seller NMV in VND bn, net pcs after cancellations. Every column here
+                is ours &mdash; nothing on this table comes from TikTok&rsquo;s attribution.
+              </p>
             </section>
 
             <section>
@@ -2409,8 +2409,8 @@ export default function Dashboard({
                 <table>
                   <thead><tr>
                     <th>Campaign</th><th>Type</th><th>KOC</th><th>Model</th>
-                    <th className="n">Spend</th><th className="n">TikTok revenue</th>
-                    <th className="n">ROAS</th><th className="n">Orders</th>
+                    <th className="n">Spend</th><th className="n">Share of spend</th>
+                    <th className="n">TikTok ROAS</th>
                   </tr></thead>
                   <tbody>
                     {adsCamps.slice(0, 60).map((c) => (
@@ -2420,17 +2420,18 @@ export default function Dashboard({
                         <td>{c.koc ?? <span className="muted">—</span>}</td>
                         <td>{c.model ?? <span className="muted">—</span>}</td>
                         <td className="n"><b>{mn(c.cost)}</b></td>
-                        <td className="n muted">{bn(c.rev)}</td>
-                        <td className="n">{c.cost > 0 ? (c.rev / c.cost).toFixed(1) : '—'}</td>
-                        <td className="n muted">{n0(c.orders)}</td>
+                        <td className="n">{pct(p1(c.cost, adsTotals.cost))}</td>
+                        <td className="n muted">{c.cost > 0 ? (c.rev / c.cost).toFixed(1) : '—'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <p className="foot">
-                Spend in VND mn, revenue in VND bn. Showing the top 60 of {n0(adsCamps.length)} campaigns.
-                ROAS here is TikTok&rsquo;s own, useful for ranking campaigns against each other.
+                Spend in VND mn. Showing the top 60 of {n0(adsCamps.length)} campaigns. The last column
+                is TikTok&rsquo;s own ROAS, kept only because it is the one signal that exists per
+                campaign &mdash; our order data cannot be traced back to a campaign. Read it as a
+                ranking between campaigns, never as a return on our own revenue.
               </p>
             </section>
           </>
