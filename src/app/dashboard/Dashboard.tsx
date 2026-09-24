@@ -691,7 +691,8 @@ export default function Dashboard({
   }, [skuRows])
 
   const mix = useMemo(() => {
-    const val = (r: SkuPeriod) => Number((mixMetric === 'gmv' ? r.gmv : r.so_luong) || 0)
+    // Cột chồng đếm theo NET pcs (đã trừ đơn huỷ), khớp với bảng Net pcs bên dưới.
+    const val = (r: SkuPeriod) => Number((mixMetric === 'gmv' ? r.gmv : r.sl_chua_huy) || 0)
     const totals = new Map<string, number>()
     for (const r of skuRows) totals.set(r.model, (totals.get(r.model) ?? 0) + val(r))
     const top = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8).map((e) => e[0])
@@ -1657,14 +1658,14 @@ export default function Dashboard({
                 <div className="seg" style={{ marginTop: 14 }}>
                   {(['gmv', 'so_luong'] as const).map((k) => (
                     <button key={k} className={mixMetric === k ? 'on' : ''} onClick={() => setMixMetric(k)}>
-                      {k === 'gmv' ? 'By Seller GMV' : 'By quantity'}
+                      {k === 'gmv' ? 'By Seller GMV' : 'By net pcs'}
                     </button>
                   ))}
                 </div>
                 <MultiStack
                   data={mix.data} series={mix.series}
                   fmt={mixMetric === 'gmv' ? bn : n0} label={lbl}
-                  unit={mixMetric === 'gmv' ? 'VND bn' : 'gross pcs'}
+                  unit={mixMetric === 'gmv' ? 'VND bn' : 'net pcs'}
                   tip={(d) => (
                     <><b>{lbl(d.ky)}</b><br />
                       {mix.series.map((s, j) => (d.parts[j] > 0
