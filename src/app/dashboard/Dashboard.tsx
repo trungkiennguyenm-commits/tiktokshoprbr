@@ -652,8 +652,29 @@ export default function Dashboard({
   const srcShown = useMemo(() => src.filter((r) => keys.has(keyOf(r))), [src, keys])
   const shown = useMemo(() => rollup(srcShown, cat), [srcShown, cat])
 
-  const cur = shown[shown.length - 1]
-  const prev = shown[shown.length - 2]
+
+  /** Tổng của CẢ khoảng đang lọc, cộng khoảng liền trước cùng độ dài để so.
+   *  Bốn ô đầu tab Overview trước đây lấy kỳ cuối cùng, nên khi lọc theo ngày
+   *  chúng chỉ là số của MỘT ngày trong khi dòng "Showing:" nói cả tháng —
+   *  nhìn vào tưởng số sai. Giờ ô khớp đúng với bộ lọc. */
+  const allShown = useMemo(() => rollup(src, cat), [src, cat])
+  const span = useMemo(() => {
+    const sum = (rows: Rolled[], ky: string): Rolled => {
+      const a = ZERO(ky)
+      for (const r of rows) for (const f of SUM_FIELDS) a[f] += r[f]
+      a.cancel_rate = p1(a.sl_huy, a.so_luong)
+      return a
+    }
+    const first = shown[0]?.ky
+    const i = first ? allShown.findIndex((r) => r.ky === first) : -1
+    const before = i > 0 ? allShown.slice(Math.max(0, i - shown.length), i) : []
+    return {
+      cur: sum(shown, 'cur'),
+      prev: before.length ? sum(before, 'prev') : undefined,
+      n: shown.length,
+      nPrev: before.length,
+    }
+  }, [shown, allShown])
   const delta = (a?: number, b?: number) =>
     a == null || b == null || !b ? null : Math.round(((a - b) / b) * 1000) / 10
 
@@ -1405,16 +1426,26 @@ export default function Dashboard({
         {/* =================== OVERVIEW =================== */}
         {tab === 'Overview' && (
           <>
-            <section className="tiles">
-              <Tile label="Seller NMV" value={bn(cur?.nmv ?? 0)} unit=" bn"
-                sub={deltaText(delta(cur?.nmv, prev?.nmv), periodWord)} />
-              <Tile label="Net quantity" value={n0(cur?.sl_chua_huy ?? 0)} unit=" pcs"
-                sub={deltaText(delta(cur?.sl_chua_huy, prev?.sl_chua_huy), periodWord)} />
-              <Tile label="Seller GMV" value={bn(cur?.gmv ?? 0)} unit=" bn"
-                sub={deltaText(delta(cur?.gmv, prev?.gmv), periodWord)} />
-              <Tile label="Cancellation rate" value={pct(cur?.cancel_rate ?? 0)}
-                tone={(cur?.cancel_rate ?? 0) > 40 ? 'bad' : 'ok'}
-                sub={`${n0(cur?.sl_huy ?? 0)} pcs cancelled`} />
+            <section>
+              <h2>{periodNote} — totals</h2>
+              <p className="sub">
+                The whole filtered range added up ({span.n} {periodWord}{span.n === 1 ? '' : 's'}),
+                not just the latest one.{' '}
+                {span.nPrev
+                  ? `Compared with the ${span.nPrev} ${periodWord}${span.nPrev === 1 ? '' : 's'} immediately before it.`
+                  : 'No earlier range of the same length to compare against.'}
+              </p>
+              <div className="tiles" style={{ marginTop: 20 }}>
+                <Tile label="Seller NMV" value={bn(span.cur.nmv)} unit=" bn"
+                  sub={deltaText(delta(span.cur.nmv, span.prev?.nmv), 'range')} />
+                <Tile label="Net quantity" value={n0(span.cur.sl_chua_huy)} unit=" pcs"
+                  sub={deltaText(delta(span.cur.sl_chua_huy, span.prev?.sl_chua_huy), 'range')} />
+                <Tile label="Seller GMV" value={bn(span.cur.gmv)} unit=" bn"
+                  sub={deltaText(delta(span.cur.gmv, span.prev?.gmv), 'range')} />
+                <Tile label="Cancellation rate" value={pct(span.cur.cancel_rate)}
+                  tone={span.cur.cancel_rate > 40 ? 'bad' : 'ok'}
+                  sub={`${n0(span.cur.sl_huy)} of ${n0(span.cur.so_luong)} pcs cancelled`} />
+              </div>
             </section>
 
             <section>
