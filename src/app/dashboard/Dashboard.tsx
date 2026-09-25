@@ -142,47 +142,51 @@ type RangeKey = (typeof RANGES)[number]['key']
 const SECTIONS = [
   {
     id: 'Summary', ten: 'Summary',
-    subs: ['Month at a glance', 'GMV, NMV and cancellations',
-      'Seller NMV, ad spend and ATR', 'LIVE vs Product GMV Max', 'Headline numbers by month'],
+    groups: [{ ten: '', subs: ['At a glance', 'GMV, NMV, cancellations', 'NMV, ads and ATR', 'LGM vs PGM', 'Headline table'] }],
   },
   {
     id: 'Sales', ten: 'Sales',
-    subs: ['Range totals', 'GMV, NMV and cancellation rate', 'Seller NMV, ad spend and ATR',
-      'LIVE vs Product GMV Max', 'Seller NMV per period', 'Net quantity per period',
-      'Robot vs handheld', 'Detail by period'],
+    groups: [
+      { ten: 'Totals', subs: ['Range totals', 'GMV, NMV, cancellations'] },
+      { ten: 'Monthly', subs: ['NMV, ads and ATR', 'LGM vs PGM'] },
+      { ten: 'By period', subs: ['Seller NMV', 'Net quantity', 'Robot vs handheld', 'Detail table'] },
+    ],
   },
   {
     id: 'Products', ten: 'Products',
-    subs: ['Category cards', 'Seller NMV by category', 'Cancellation rate by category',
-      'Category detail', 'Net quantity by price band', 'Cancellation rate by price band',
-      'Gross vs net units', 'Model performance by month', 'Top models',
-      'Full table by category'],
+    groups: [
+      { ten: 'Category', subs: ['Cards', 'Seller NMV', 'Cancellation rate', 'Detail table'] },
+      { ten: 'Price band', subs: ['Net quantity', 'Cancellation rate'] },
+      { ten: 'Models', subs: ['Gross vs net', 'By month', 'Top models', 'Full table'] },
+    ],
   },
   {
     id: 'Advertising', ten: 'Advertising',
-    subs: ['Spend and ATR', 'Spend vs Seller NMV per day', 'Day by day',
-      'Seller NMV, ad spend and ATR by month', 'LIVE vs Product GMV Max',
-      'Ad spend by month', 'Campaigns'],
+    groups: [
+      { ten: 'Daily', subs: ['Spend and ATR', 'Spend vs Seller NMV', 'Day by day'] },
+      { ten: 'Monthly', subs: ['NMV, ads and ATR', 'LGM vs PGM', 'Spend by month'] },
+      { ten: 'Campaigns', subs: ['Ranking'] },
+    ],
   },
   {
     id: 'Discounts', ten: 'Discounts',
-    subs: ['Subsidy booked and capture per day', 'Who paid for the revenue', 'Subsidy detail per day',
-      'Valid subsidy by model', 'Who funds the discount', 'Discount spend per day',
-      'Discount rates per day', 'Discount detail by model', 'Monthly overview',
-      'Who funds the discount by month', 'What Seller NMV is made of',
-      'Subsidy booked vs kept by month', 'Valid subsidy by price band',
-      'Where the platform puts its voucher'],
+    groups: [
+      { ten: 'Daily', subs: ['Booked vs kept', 'Customer vs platform', 'Daily detail',
+        'Valid subsidy by model', 'Funding split by model', 'Discount spend', 'Discount rates',
+        'Detail by model'] },
+      { ten: 'Monthly', subs: ['Overview', 'Funding split', 'NMV composition', 'Booked vs kept'] },
+      { ten: 'Price band', subs: ['Valid subsidy', 'Voucher placement'] },
+    ],
   },
   {
     id: 'Cancellations', ten: 'Cancellations',
-    subs: ['Rate per period', 'Time to cancel', 'By model, by month', 'Worst models',
-      'Detail by model'],
+    groups: [{ ten: '', subs: ['Rate per period', 'Time to cancel', 'By model', 'Worst models', 'Detail table'] }],
   },
   {
     id: 'P&L', ten: 'P&L',
-    subs: ['List price to cash', 'What erodes Seller NMV', 'P&L by month'],
+    groups: [{ ten: '', subs: ['List price to cash', 'What erodes NMV', 'P&L by month'] }],
   },
-  { id: 'Glossary', ten: 'Glossary', subs: [] },
+  { id: 'Glossary', ten: 'Glossary', groups: [] },
 ] as const
 
 type Sec = (typeof SECTIONS)[number]['id']
@@ -1329,16 +1333,24 @@ export default function Dashboard({
                   {no && <span className="side-n">{no}</span>}
                   {sc.ten}
                 </button>
-                {on && sc.subs.length > 0 && (
-                  <ol className="side-subs">
-                    {sc.subs.map((t, i) => (
-                      <li key={t}>
-                        <a href={`#s${no}-${i + 1}`}>
-                          <span className="side-n2">{no}.{i + 1}</span>{t}
-                        </a>
-                      </li>
-                    ))}
-                  </ol>
+                {on && sc.groups.length > 0 && (
+                  <div className="side-subs">
+                    {sc.groups.map((g, gi) => {
+                      // Số hiệu chạy liền qua các nhóm: 5.1…5.14, không khởi động lại
+                      // ở mỗi nhóm — để gọi "mở 5.11" là ra đúng một chỗ duy nhất.
+                      const base = sc.groups.slice(0, gi).reduce((n, x) => n + x.subs.length, 0)
+                      return (
+                        <div key={g.ten || gi} className="side-grp">
+                          {g.ten && <div className="side-gl">{g.ten}</div>}
+                          {g.subs.map((t, i) => (
+                            <a key={t} href={`#s${no}-${base + i + 1}`}>
+                              <span className="side-n2">{no}.{base + i + 1}</span>{t}
+                            </a>
+                          ))}
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
               </div>
             )
@@ -3064,12 +3076,14 @@ const CSS = `
 .side-n{display:inline-block;min-width:14px;font-variant-numeric:tabular-nums;
   font-size:12px;color:var(--muted)}
 .side-g.on>.side-s .side-n{color:var(--c1)}
-.side-subs{list-style:none;margin:2px 0 8px;padding:0 0 0 9px}
-.side-subs li{margin:0}
+.side-subs{margin:2px 0 10px;padding:0 0 0 9px}
+.side-grp+.side-grp{margin-top:7px}
+.side-gl{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--line-s);
+  padding:3px 8px 2px}
 .side-subs a{display:flex;gap:7px;padding:4px 8px;border-radius:5px;font-size:12.5px;
   line-height:1.35;color:var(--muted);text-decoration:none}
 .side-subs a:hover{background:var(--surface-2);color:var(--ink-2)}
-.side-n2{font-variant-numeric:tabular-nums;color:var(--line-s);flex:none}
+.side-n2{font-variant-numeric:tabular-nums;color:var(--line-s);flex:none;min-width:22px}
 
 /* Số hiệu trước tiêu đề khối, để gọi "mở 4.4" trong họp là ai cũng tới đúng chỗ. */
 .hno{font-variant-numeric:tabular-nums;font-size:.72em;font-weight:600;color:var(--muted);
