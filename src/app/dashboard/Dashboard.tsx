@@ -171,6 +171,7 @@ const SECTIONS = [
   {
     id: 'Discounts', ten: 'Discounts',
     groups: [
+      { ten: '', subs: ['Key numbers'] },
       { ten: 'Daily', subs: ['Booked vs kept', 'Customer vs platform', 'Daily detail',
         'Valid subsidy by model', 'Funding split by model', 'Discount spend', 'Discount rates',
         'Detail by model'] },
@@ -180,7 +181,8 @@ const SECTIONS = [
   },
   {
     id: 'Cancellations', ten: 'Cancellations',
-    groups: [{ ten: '', subs: ['Rate per period', 'Time to cancel', 'By model', 'Worst models', 'Detail table'] }],
+    groups: [{ ten: '', subs: ['Key numbers', 'Rate per period', 'Time to cancel', 'By model',
+      'Worst models', 'Detail table'] }],
   },
   {
     id: 'P&L', ten: 'P&L',
@@ -1035,6 +1037,32 @@ export default function Dashboard({
     const tot = out.reduce((s, r) => s + r.so_luong, 0)
     return out.map((r) => ({ ...r, pct: p1(r.so_luong, tot) }))
   }, [lapseDaily, keys, byMonth, cat])
+
+  /** Ô số liệu đầu phần Discounts. Chạy theo bộ lọc NGÀY như cả phần đó. */
+  const discTotals = useMemo(() => {
+    const t = { booked: 0, valid: 0, seller: 0, list: 0, nmv: 0 }
+    for (const r of dayShown) {
+      t.booked += r.platform_disc
+      t.valid += r.platform_disc_chua_huy
+      t.seller += r.seller_disc
+      t.list += r.gia_goc
+      t.nmv += r.nmv
+    }
+    return t
+  }, [dayShown])
+
+  /** Ô số liệu đầu phần Cancellations. Chạy theo bộ lọc kỳ chung. */
+  const cancelTotals = useMemo(() => {
+    const t = { gross: 0, huy: 0, mat: 0, subMat: 0, nmv: 0 }
+    for (const r of shown) {
+      t.gross += r.so_luong
+      t.huy += r.sl_huy
+      t.mat += r.gmv_mat_do_huy
+      t.subMat += r.platform_disc - r.platform_disc_chua_huy
+      t.nmv += r.nmv
+    }
+    return t
+  }, [shown])
 
   /* ---- shipping, filtered ---- */
 
@@ -2178,7 +2206,33 @@ export default function Dashboard({
             </div>
 
             <section id="s5-1">
-              <h2><span className="hno">5.1</span>Subsidy booked and capture rate per day · DoD</h2>
+              <h2><span className="hno">5.1</span>{dayNote} — key numbers</h2>
+              <p className="sub">
+                Discount money for the filtered days. Booked is what was put behind the orders;
+                valid is what survived to an order that was not cancelled.
+              </p>
+              <div className="tiles" style={{ marginTop: 20 }}>
+                <Tile label="Subsidy booked" value={bn(discTotals.booked)} unit=" bn"
+                  sub="TikTok's voucher, every order status" />
+                <Tile label="Valid subsidy" value={bn(discTotals.valid)} unit=" bn"
+                  sub="on orders that survived" />
+                <Tile label="Capture rate" value={pct(p1(discTotals.valid, discTotals.booked))}
+                  tone={p1(discTotals.valid, discTotals.booked) < 40 ? 'bad' : 'ok'}
+                  sub="valid ÷ booked" />
+                <Tile label="Valid subsidy % of Seller NMV" value={pct(p1(discTotals.valid, discTotals.nmv))}
+                  sub={`Seller NMV ${bn(discTotals.nmv)} bn`} />
+                <Tile label="Seller-funded discount" value={bn(discTotals.seller)} unit=" bn"
+                  sub="our own money, hits margin" />
+                <Tile label="Seller discount % of list" value={pct(p1(discTotals.seller, discTotals.list))}
+                  sub={`list price ${bn(discTotals.list)} bn`} />
+                <Tile label="Total discount % of list"
+                  value={pct(p1(discTotals.seller + discTotals.booked, discTotals.list))}
+                  sub="seller + platform together" />
+              </div>
+            </section>
+
+            <section id="s5-2">
+              <h2><span className="hno">5.2</span>Subsidy booked and capture rate per day · DoD</h2>
               <p className="sub">
                 Column height is the whole platform subsidy TikTok booked that day. The
                 solid part landed on orders that survived — real money. The pale part was booked
@@ -2213,8 +2267,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-2">
-              <h2><span className="hno">5.2</span>Who paid for the revenue, per day</h2>
+            <section id="s5-3">
+              <h2><span className="hno">5.3</span>Who paid for the revenue, per day</h2>
               <p className="sub">
                 Column height is Seller NMV, split into the cash the customer paid and the subsidy
                 TikTok reimbursed on those same live orders. The line is the subsidy share — how
@@ -2244,8 +2298,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-3">
-              <h2><span className="hno">5.3</span>Subsidy detail per day</h2>
+            <section id="s5-4">
+              <h2><span className="hno">5.4</span>Subsidy detail per day</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -2296,8 +2350,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-4">
-              <h2><span className="hno">5.4</span>Valid subsidy by model, per day</h2>
+            <section id="s5-5">
+              <h2><span className="hno">5.5</span>Valid subsidy by model, per day</h2>
               <p className="sub">
                 Only the subsidy on live orders, split by model. Use the model filter above to
                 isolate one and compare it against the rest.
@@ -2313,8 +2367,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-5">
-              <h2><span className="hno">5.5</span>Who funds the discount — {dayNote}</h2>
+            <section id="s5-6">
+              <h2><span className="hno">5.6</span>Who funds the discount — {dayNote}</h2>
               <p className="sub">
                 Percentage of list price. Blue is money the shop gives up, orange is funded by
                 TikTok. Only the blue part eats into your margin.
@@ -2335,8 +2389,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-6">
-              <h2><span className="hno">5.6</span>Discount spend per day</h2>
+            <section id="s5-7">
+              <h2><span className="hno">5.7</span>Discount spend per day</h2>
               <StackChart
                 data={dayShown.map((r) => ({ ky: r.ky, a: r.seller_disc, b: r.platform_disc }))}
                 fmt={bn} label={ddmm} names={['Seller funded', 'Platform funded']}
@@ -2348,8 +2402,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-7">
-              <h2><span className="hno">5.7</span>Discount rates per day</h2>
+            <section id="s5-8">
+              <h2><span className="hno">5.8</span>Discount rates per day</h2>
               <p className="sub">Both as a percentage of list price, so they are directly comparable.</p>
               <div className="tablewrap">
                 <table>
@@ -2378,8 +2432,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn.</p>
             </section>
 
-            <section id="s5-8">
-              <h2><span className="hno">5.8</span>Discount detail by model — {dayNote}</h2>
+            <section id="s5-9">
+              <h2><span className="hno">5.9</span>Discount detail by model — {dayNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -2418,8 +2472,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-9">
-              <h2><span className="hno">5.9</span>Monthly overview</h2>
+            <section id="s5-10">
+              <h2><span className="hno">5.10</span>Monthly overview</h2>
               <p className="sub">
                 One row per month, totals only. The month-by-month breakdown by model and by price
                 band lives in the <b>MoM Summary</b> tab — this tab stays day-level.
@@ -2464,8 +2518,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn. Follows the month chips, not the day range.</p>
             </section>
 
-            <section id="s5-10">
-              <h2><span className="hno">5.10</span>Who funds the discount, month by month</h2>
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>Who funds the discount, month by month</h2>
               <p className="sub">
                 Stacked spend: blue is money you gave up, orange is money TikTok gave up.
                 Only the blue part hits your margin.
@@ -2481,8 +2535,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-11">
-              <h2><span className="hno">5.11</span>What Seller NMV is actually made of</h2>
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>What Seller NMV is actually made of</h2>
               <p className="sub">
                 Column height is Seller NMV, split into the cash the customer actually paid and the
                 subsidy TikTok funded on the same live orders. The two add up to Seller NMV exactly
@@ -2510,8 +2564,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-12">
-              <h2><span className="hno">5.12</span>Subsidy booked vs subsidy kept, by month</h2>
+            <section id="s5-13">
+              <h2><span className="hno">5.13</span>Subsidy booked vs subsidy kept, by month</h2>
               <p className="sub">
                 The whole column is what TikTok put behind your orders. Solid is what survived to
                 a live order; pale is what cancelled away. The green line is the share of Seller GMV
@@ -2580,8 +2634,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn.</p>
             </section>
 
-            <section id="s5-13">
-              <h2><span className="hno">5.13</span>Valid subsidy as a share of Seller NMV, by price band</h2>
+            <section id="s5-14">
+              <h2><span className="hno">5.14</span>Valid subsidy as a share of Seller NMV, by price band</h2>
               <p className="sub">
                 Greener means TikTok is carrying more of that band&rsquo;s revenue. A band warming
                 up month after month is where the platform is moving its voucher money.
@@ -2621,8 +2675,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-14">
-              <h2><span className="hno">5.14</span>Where the platform is putting its voucher money</h2>
+            <section id="s5-15">
+              <h2><span className="hno">5.15</span>Where the platform is putting its voucher money</h2>
               <p className="sub">
                 Platform discount as a percentage of list price, by band and month. If TikTok
                 shifts funding from one band to another — say from 5–10M up to 10–15M — it shows
@@ -2669,7 +2723,28 @@ export default function Dashboard({
         {sec === 'Cancellations' && (
           <>
             <section id="s6-1">
-              <h2><span className="hno">6.1</span>Cancellation rate per {periodWord} · {dod}</h2>
+              <h2><span className="hno">6.1</span>{periodNote} — key numbers</h2>
+              <p className="sub">
+                What cancellations cost over the filtered range, in money as well as in units.
+              </p>
+              <div className="tiles" style={{ marginTop: 20 }}>
+                <Tile label="Cancellation rate" value={pct(p1(cancelTotals.huy, cancelTotals.gross))}
+                  tone={p1(cancelTotals.huy, cancelTotals.gross) > 40 ? 'bad' : 'ok'}
+                  sub={`${n0(cancelTotals.huy)} of ${n0(cancelTotals.gross)} pcs`} />
+                <Tile label="Value lost to cancellations" value={bn(cancelTotals.mat)} unit=" bn"
+                  sub="Seller GMV that never became revenue" />
+                <Tile label="Seller NMV kept" value={bn(cancelTotals.nmv)} unit=" bn"
+                  sub="what survived" />
+                <Tile label="Subsidy lost with them" value={bn(cancelTotals.subMat)} unit=" bn"
+                  sub="TikTok voucher that died with the order" />
+                <Tile label={`Cancelled ${lapse[0]?.khoang ?? 'early'}`}
+                  value={pct(lapse[0]?.pct ?? 0)}
+                  sub="share of all cancellations" />
+              </div>
+            </section>
+
+            <section id="s6-2">
+              <h2><span className="hno">6.2</span>Cancellation rate per {periodWord} · {dod}</h2>
               <p className="sub">Internal target is 40% or below.</p>
               <DeltaChart
                 data={pt((r) => r.cancel_rate)} color="var(--bad)" fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
@@ -2680,8 +2755,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-2">
-              <h2><span className="hno">6.2</span>How long after ordering do orders die — {periodNote}</h2>
+            <section id="s6-3">
+              <h2><span className="hno">6.3</span>How long after ordering do orders die — {periodNote}</h2>
               <p className="sub">Two distinct clusters, and they are two different problems.</p>
               <BarChart
                 data={lapse.map((l) => ({ ky: l.khoang, v: l.so_luong }))}
@@ -2723,8 +2798,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s6-3">
-              <h2><span className="hno">6.3</span>Cancellation rate by model, month by month</h2>
+            <section id="s6-4">
+              <h2><span className="hno">6.4</span>Cancellation rate by model, month by month</h2>
               <p className="sub">Darker is worse. A row that heats up month after month is a product problem, not a seasonal one.</p>
               <Matrix
                 corner="Model"
@@ -2745,8 +2820,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-4">
-              <h2><span className="hno">6.4</span>Worst models — {periodNote}</h2>
+            <section id="s6-5">
+              <h2><span className="hno">6.5</span>Worst models — {periodNote}</h2>
               <p className="sub">Models with at least 30 gross units in the selected period.</p>
               <RowBars
                 rows={skuF.filter((s) => s.so_luong >= 30)
@@ -2761,8 +2836,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-5">
-              <h2><span className="hno">6.5</span>Cancellation detail by model — {periodNote}</h2>
+            <section id="s6-6">
+              <h2><span className="hno">6.6</span>Cancellation detail by model — {periodNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
