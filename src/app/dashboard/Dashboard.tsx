@@ -205,9 +205,9 @@ const SECTIONS = [
   {
     id: 'Livestream', ten: 'Livestream',
     groups: [
-      { ten: '', subs: ['Key numbers'] },
+      { ten: '', subs: ['Key numbers', 'Daily overview'] },
       { ten: 'By room', subs: ['Sales', 'Traffic and engagement', 'Funnel'] },
-      { ten: 'Day by day', subs: ['GMV by room', 'Room by day', 'Daily totals', 'Audience',
+      { ten: 'Day by day', subs: ['Room by day', 'Daily totals', 'Audience',
         'Conversion', 'Engagement vs CTR'] },
       { ten: 'Monthly', subs: ['By month, by room'] },
       { ten: 'Detail', subs: ['Top sessions', 'Creator rooms'] },
@@ -712,6 +712,122 @@ function Dd({ a, b }: { a?: number; b?: number }) {
 
 /** Pivot: rows down the side, periods across the top. `heat` shades cells
  *  so a bad column jumps out without reading every number. */
+/* ------------------- biểu đồ tổng quan đầu sheet Livestream ------------------- */
+
+/**
+ * Ba đại lượng, ba thang đo, một trục ngày.
+ *
+ *   cột chồng  = GMV từng phòng, cộng lại là GMV ngày đó   (trục trái, tỷ)
+ *   đường      = GMV trên 1.000 lượt xem                    (trục phải, triệu)
+ *   dải dưới   = chi tiêu LIVE GMV Max                      (thang riêng, triệu)
+ *
+ * Tiền ads KHÔNG vẽ chung khung với GMV. Nó chỉ bằng 4–6% GMV nên vẽ cùng
+ * trục sẽ thành một đường dính đáy, còn nhét thành một tầng trong cột chồng
+ * thì sai nghĩa — chi phí không phải một phần của doanh thu. Tách xuống dải
+ * riêng, dùng chung trục ngày, đọc dọc vẫn thẳng hàng.
+ *
+ * Đường GMV/1k views có thang riêng vì nó vài triệu còn cột vài tỷ; nhãn
+ * trục phải in đúng đơn vị của nó để không ai đọc nhầm sang trục trái.
+ */
+function LiveHead({ rows, series, fmtCot, fmtDuong, fmtAds }: {
+  rows: {
+    ngay: string; parts: number[]; tong: number; gpm: number; lgm: number
+    views: number; phien: number
+  }[]
+  series: { ten: string; color: string }[]
+  fmtCot: (v: number) => string
+  fmtDuong: (v: number) => string
+  fmtAds: (v: number) => string
+}) {
+  const [t, setT] = useState<{ on: boolean; x: number; y: number; body: React.ReactNode }>({
+    on: false, x: 0, y: 0, body: null,
+  })
+  if (!rows.length) return null
+
+  const maxCot = Math.max(1, ...rows.map((r) => r.tong))
+  const maxGpm = Math.max(1, ...rows.map((r) => r.gpm))
+  const maxAds = Math.max(1, ...rows.map((r) => r.lgm))
+  const n = rows.length
+  const sk = Math.max(1, Math.ceil(n / 13))
+  const x = (i: number) => ((i + 0.5) / n) * 100
+  const y = (v: number) => 100 - Math.min(100, (v / maxGpm) * 100)
+
+  const tip = (r: typeof rows[number]) => (
+    <><b>{r.ngay.slice(8, 10)}/{r.ngay.slice(5, 7)}</b><br />
+      {series.map((sv, j) => (r.parts[j] > 0
+        ? <span key={sv.ten}>{sv.ten}: {fmtCot(r.parts[j])}<br /></span> : null))}
+      <b>Total {fmtCot(r.tong)}</b><br />
+      GMV per 1k views {fmtDuong(r.gpm)}<br />
+      LGM spend {fmtAds(r.lgm)}<br />
+      {new Intl.NumberFormat('en-US').format(Math.round(r.views))} views · {r.phien} sessions</>
+  )
+  const hover = (r: typeof rows[number]) => ({
+    onMouseMove: (e: React.MouseEvent) =>
+      setT({ on: true, x: e.clientX + 14, y: e.clientY - 8, body: tip(r) }),
+    onMouseLeave: () => setT((q) => ({ ...q, on: false })),
+  })
+
+  return (
+    <>
+      <div className="legend">
+        {series.map((sv) => (
+          <span key={sv.ten}><i className="sw" style={{ background: sv.color }} />{sv.ten}</span>
+        ))}
+        <span><i className="swl" style={{ background: 'var(--bad)' }} />GMV per 1k views (right)</span>
+        <span><i className="sw" style={{ background: 'var(--c2)' }} />LGM spend (strip below)</span>
+      </div>
+
+      <div className="lh">
+        <div className="lh-plot">
+          <span className="lh-l lh-t">{fmtCot(maxCot)}</span>
+          <span className="lh-l lh-m">{fmtCot(maxCot / 2)}</span>
+          <span className="lh-r lh-t">{fmtDuong(maxGpm)}</span>
+          <span className="lh-r lh-m">{fmtDuong(maxGpm / 2)}</span>
+          <div className="lh-cols">
+            {rows.map((r) => (
+              <div className="lh-col" key={r.ngay} {...hover(r)}>
+                <div className="lh-stack" style={{ height: `${(r.tong / maxCot) * 100}%` }}>
+                  {series.map((sv, j) => ({ sv, v: r.parts[j] || 0 }))
+                    .filter((z) => z.v > 0)
+                    .reverse()
+                    .map((z) => (
+                      <div key={z.sv.ten} style={{ flexGrow: z.v, background: z.sv.color }} />
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <svg className="lh-line" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <polyline
+              points={rows.map((r, i) => `${x(i)},${y(r.gpm)}`).join(' ')}
+              fill="none" stroke="var(--bad)" strokeWidth={2}
+              vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round"
+            />
+          </svg>
+        </div>
+
+        <div className="lh-ads">
+          {rows.map((r) => (
+            <div className="lh-col" key={r.ngay} {...hover(r)}>
+              <div className="lh-abar" style={{ height: `${(r.lgm / maxAds) * 100}%` }} />
+            </div>
+          ))}
+          <span className="lh-l lh-t">{fmtAds(maxAds)}</span>
+        </div>
+
+        <div className="lh-x">
+          {rows.map((r, i) => (
+            <div className="lh-col" key={r.ngay}>
+              {i % sk === 0 ? `${r.ngay.slice(8, 10)}/${r.ngay.slice(5, 7)}` : ''}
+            </div>
+          ))}
+        </div>
+      </div>
+      {t.on && <div className="tip" style={{ left: t.x, top: t.y }}>{t.body}</div>}
+    </>
+  )
+}
+
 /* ----------------------------- bubble scatter ----------------------------- */
 
 /**
@@ -1788,6 +1904,23 @@ export default function Dashboard({
   )
   /** GMV thu về trên mỗi đồng LGM. */
   const lgmLai = (gmv: number, lgm: number) => (lgm > 0 ? `${(gmv / lgm).toFixed(1)}×` : '—')
+
+  /** Dữ liệu cho biểu đồ tổng quan đầu sheet: GMV chồng theo phòng, GMV/1k
+   *  views và tiền LGM, cùng một trục ngày. Chỉ tính ba phòng nhà. */
+  const headRows = useMemo(() => {
+    const names = liveOwnRooms.map((r) => r.ten)
+    return liveGrid.days.map((d) => {
+      const parts = names.map((nm) => liveGrid.ngay.get(nm)?.get(d)?.gmv ?? 0)
+      let views = 0; let lgm = 0; let phien = 0
+      for (const nm of names) {
+        const ag = liveGrid.ngay.get(nm)?.get(d)
+        if (!ag) continue
+        views += ag.views; lgm += ag.lgm; phien += ag.phien
+      }
+      const tong = parts.reduce((m, n) => m + n, 0)
+      return { ngay: d, parts, tong, views, lgm, phien, gpm: views > 0 ? (tong / views) * 1000 : 0 }
+    }).filter((r) => r.tong > 0)
+  }, [liveGrid, liveOwnRooms])
 
   const mDef = useMemo(
     () => ROOM_METRICS.find((m) => m.id === roomMetric) ?? ROOM_METRICS[0],
@@ -2875,7 +3008,32 @@ export default function Dashboard({
             </section>
 
             <section id="s5-2">
-              <h2><span className="hno">5.2</span>Rooms side by side</h2>
+              <h2><span className="hno">5.2</span>Daily overview · DoD</h2>
+              <p className="sub">
+                Column height is that day&rsquo;s live GMV, split by room. The red line is GMV per
+                1.000 views on its own right-hand scale. The strip underneath is LIVE GMV Max spend
+                on the same days.
+              </p>
+              <LiveHead
+                rows={headRows}
+                series={liveOwnRooms.map((r, i2) => ({
+                  ten: r.ten, color: PALETTE[i2 % PALETTE.length],
+                }))}
+                fmtCot={(v) => `${bn(v)} bn`}
+                fmtDuong={(v) => `${mn1(v)} mn`}
+                fmtAds={(v) => `${mn1(v)} mn`}
+              />
+              <p className="foot">
+                Ad spend is drawn as a separate strip rather than a fourth stack segment or a second
+                line, on purpose. LGM runs at 4&ndash;6% of live GMV, so on the same axis it would
+                be a flat line along the bottom; stacked into the column it would read as part of
+                the revenue, which it is not. Three quantities, three honest scales, one row of
+                days. Only our own rooms are counted here.
+              </p>
+            </section>
+
+            <section id="s5-3">
+              <h2><span className="hno">5.3</span>Rooms side by side</h2>
               <p className="sub">
                 The rooms differ enough in scale that totals alone mislead. GMV per 1k views is the
                 column to read across &mdash; it puts a big room with cheap traffic next to a small
@@ -2956,8 +3114,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-3">
-              <h2><span className="hno">5.3</span>Traffic and engagement by room</h2>
+            <section id="s5-4">
+              <h2><span className="hno">5.4</span>Traffic and engagement by room</h2>
               <p className="sub">
                 Everything here is per 1.000 views rather than a total, because the three rooms pull
                 very different volumes and raw counts only restate that. Views counts every entry
@@ -3131,8 +3289,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-4">
-              <h2><span className="hno">5.4</span>Funnel by room</h2>
+            <section id="s5-5">
+              <h2><span className="hno">5.5</span>Funnel by room</h2>
               <p className="sub">
                 From a view to a paid order. Each percentage is against the step immediately above
                 it, so a weak room shows exactly where it loses people rather than only that it
@@ -3221,31 +3379,6 @@ export default function Dashboard({
                 itself. It is not the shop cancellation rate on the Cancellations tab &mdash; that
                 one is measured much later, after delivery falls through, and runs far lower.
               </p>
-            </section>
-
-            <section id="s5-5">
-              <h2><span className="hno">5.5</span>GMV per day, by room</h2>
-              <p className="sub">
-                Each column is one day, split by the room that booked it. Days with no session are
-                absent rather than drawn as zero.
-              </p>
-              <MultiStack
-                data={liveDayRoom.data}
-                series={liveDayRoom.series}
-                fmt={bn} label={ddmm} unit="VND bn"
-                tip={(d) => {
-                  const tot = d.parts.reduce((a, b) => a + b, 0)
-                  return (
-                    <><b>{ddmm(d.ky)}</b><br />
-                      {liveDayRoom.series.map((sv, i) => (
-                        d.parts[i] > 0
-                          ? <span key={sv.ten}>{sv.ten}: {bn(d.parts[i])}<br /></span>
-                          : null
-                      ))}
-                      Total {bn(tot)}</>
-                  )
-                }}
-              />
             </section>
 
             <section id="s5-6">
@@ -4685,6 +4818,30 @@ const CSS = `
 .car{font-size:9px}
 .wrap tbody tr:last-child td{border-bottom:0}
 .wrap .uhint{font-weight:400;font-size:.8em;color:var(--muted)}
+.wrap .lh{margin-top:14px}
+.wrap .lh-plot{position:relative;height:270px;padding:0 46px;
+  border-bottom:1px solid var(--line-s);
+  background:linear-gradient(var(--line),var(--line)) 0 50%/100% 1px no-repeat}
+.wrap .lh-cols,.wrap .lh-x{display:flex;gap:1px;height:100%;padding:0 46px;
+  position:absolute;inset:0}
+.wrap .lh-cols{align-items:flex-end}
+.wrap .lh-col{flex:1;min-width:0;height:100%;display:flex;align-items:flex-end;justify-content:center}
+.wrap .lh-stack{width:100%;display:flex;flex-direction:column-reverse;border-radius:2px 2px 0 0;
+  overflow:hidden;min-height:1px}
+.wrap .lh-line{position:absolute;inset:0 46px;width:calc(100% - 92px);height:100%;
+  pointer-events:none;overflow:visible}
+.wrap .lh-l,.wrap .lh-r{position:absolute;font-size:10.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.wrap .lh-l{left:4px}
+.wrap .lh-r{right:4px;color:var(--bad)}
+.wrap .lh-t{top:-2px}
+.wrap .lh-m{top:calc(50% - 7px)}
+.wrap .lh-ads{position:relative;height:52px;margin-top:6px;padding:0 46px;
+  display:flex;gap:1px;align-items:flex-end;border-bottom:1px solid var(--line-s)}
+.wrap .lh-abar{width:100%;background:var(--c2);border-radius:2px 2px 0 0;min-height:1px}
+.wrap .lh-x{position:static;display:flex;gap:1px;padding:5px 46px 0;height:auto}
+.wrap .lh-x .lh-col{height:auto;font-size:10.5px;color:var(--muted);white-space:nowrap;
+  font-variant-numeric:tabular-nums;align-items:center}
 .wrap .bub{display:flex;gap:8px;margin-top:16px}
 .wrap .bub-yl{writing-mode:vertical-rl;transform:rotate(180deg);font-size:11px;
   color:var(--muted);text-align:center;padding:6px 0;letter-spacing:.04em}
