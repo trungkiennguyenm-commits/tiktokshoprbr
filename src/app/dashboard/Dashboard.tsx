@@ -103,6 +103,13 @@ export type LiveMonth = LiveBase & { thang: string; nhom: string; so_phong: numb
 export type LiveRoomMonth = LiveBase & {
   thang: string; username: string; ten: string; nhom: string
 }
+/** Chi tiêu LIVE GMV Max quy về từng phòng, theo ngày. Phòng được suỹ ra từ
+ *  tên campaign — RV/Robovac/Official VN → Official, HV/Handvac/Shop VN → Máy
+ *  lau sàn, HE/Lifestyle → Lifestyle. Quy ước này do Kiên xác nhận, nó phụ
+ *  thuộc vào cách đặt tên campaign: đổi quy ước đặt tên là phải sửa view
+ *  v_live_lgm_daily. */
+export type LiveLgm = { ten: string; ngay: string; lgm_vnd: number }
+
 export type LiveSession = {
   session_id: string; ngay: string; username: string; ten: string; nhom: string
   title: string | null; duration_phut: number; gmv: number; items_sold: number
@@ -118,7 +125,7 @@ type Props = {
   segMonthly: Segment[]; lapseDaily: LapseRow[]; shipDaily: Ship[]
   adsVs: AdsVs[]; adsMonthly: AdsMonth[]; adsCampaigns: AdsCampaign[]
   liveDaily: LiveDaily[]; liveMonthly: LiveMonth[]
-  liveRooms: LiveRoomMonth[]; liveSessions: LiveSession[]
+  liveRooms: LiveRoomMonth[]; liveSessions: LiveSession[]; liveLgm: LiveLgm[]
 }
 
 /* ============================== helpers ============================== */
@@ -499,18 +506,29 @@ const GREY = '#A9A2AB'
 /** Các chỉ số so sánh được giữa ba phòng live. Một nơi khai báo, hai lưới dùng
  *  chung — thêm một dòng ở đây là cả hai lưới có thêm lựa chọn. */
 type LiveAgg = {
-  gmv: number; pcs: number; don: number; donTao: number; khach: number
+  lgm: number; gmv: number; pcs: number; don: number; donTao: number; khach: number
   views: number; viewers: number; likes: number; comments: number; shares: number
   followers: number; imp: number; clicks: number; gio: number; xemW: number; phien: number
 }
 type RoomMetric = 'gmv' | 'gpm' | 'views' | 'ctr' | 'gio' | 'watch' | 'pcs' | 'engage'
+  | 'lgm' | 'roas' | 'atr'
 const ROOM_METRICS: {
   id: RoomMetric; ten: string; don_vi: string
+  /** Cao là xấu — ATR càng cao càng tốn, tô nhiệt ngược lại. */
+  xau_cao?: boolean
   lay: (a: LiveAgg) => number | null
   fmt: (v: number) => string
 }[] = [
   { id: 'gmv', ten: 'GMV', don_vi: 'VND bn',
     lay: (a) => a.gmv || null, fmt: (v) => ((v || 0) / 1e9).toFixed(2) },
+  { id: 'lgm', ten: 'LGM spend', don_vi: 'VND mn',
+    lay: (a) => a.lgm || null, fmt: (v) => ((v || 0) / 1e6).toFixed(1) },
+  { id: 'roas', ten: 'GMV per LGM \u20ab', don_vi: '\u00d7',
+    lay: (a) => (a.lgm > 0 ? Math.round((a.gmv / a.lgm) * 10) / 10 : null),
+    fmt: (v) => `${v.toFixed(1)}\u00d7` },
+  { id: 'atr', ten: 'ATR', don_vi: '%', xau_cao: true,
+    lay: (a) => (a.gmv > 0 && a.lgm > 0 ? Math.round((a.lgm / a.gmv) * 1000) / 10 : null),
+    fmt: (v) => `${v}%` },
   { id: 'gpm', ten: 'GMV / 1k views', don_vi: 'VND mn',
     lay: (a) => (a.views > 0 ? (a.gmv / a.views) * 1000 : null),
     fmt: (v) => ((v || 0) / 1e6).toFixed(1) },
@@ -978,7 +996,7 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
 export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, lapseDaily, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
-  liveDaily, liveMonthly, liveRooms, liveSessions,
+  liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm,
 }: Props) {
   const [sec, setSec] = useState<Sec>('Summary')
   const [cat, setCat] = useState<CatKey>('all')
@@ -1660,7 +1678,7 @@ export default function Dashboard({
    *  v_live_daily chỉ gộp theo nhóm own/koc. Hai lưới so sánh dùng chung. */
   const liveGrid = useMemo(() => {
     const z = (): LiveAgg => ({
-      gmv: 0, pcs: 0, don: 0, donTao: 0, khach: 0, views: 0, viewers: 0,
+      lgm: 0, gmv: 0, pcs: 0, don: 0, donTao: 0, khach: 0, views: 0, viewers: 0,
       likes: 0, comments: 0, shares: 0, followers: 0, imp: 0, clicks: 0,
       gio: 0, xemW: 0, phien: 0,
     })
@@ -1691,13 +1709,27 @@ export default function Dashboard({
       const mm = thang.get(who) ?? new Map<string, LiveAgg>()
       const ma = mm.get(m) ?? z(); cong(ma, r); mm.set(m, ma); thang.set(who, mm)
     }
+    // Tiền LGM đổ vào sau, chỉ cộng cho ngày thực sự có phiên live: ngày có
+    // chi mà không live thì không có mẫu số nào để so, đưa vào chỉ làm nhiễu.
+    for (const r of liveLgm) {
+      const d = String(r.ngay)
+      const m = d.slice(0, 7)
+      if (!liveKeep.has(m)) continue
+      const v = Number(r.lgm_vnd || 0)
+      if (!v) continue
+      const da = ngay.get(r.ten)?.get(d)
+      if (da) da.lgm += v
+      const ma = thang.get(r.ten)?.get(m)
+      if (ma) ma.lgm += v
+    }
+
     return {
       days: Array.from(days).sort(),
       months: Array.from(months).sort(),
       ngay, thang,
       hang: [...liveOwnRooms.map((r) => r.ten), 'KOC'],
     }
-  }, [liveSessions, liveKeep, liveOwnRooms])
+  }, [liveSessions, liveLgm, liveKeep, liveOwnRooms])
 
   /** Mỗi ngày của mỗi phòng nhà thành một bong bóng: engagement × CTR × GMV. */
   const bubblePts = useMemo(() => {
@@ -1738,6 +1770,24 @@ export default function Dashboard({
       }
     })
   }, [bubblePts, liveOwnRooms])
+
+  /** Tổng LGM từng phòng trong khoảng đang lọc, chỉ tính ngày có live. */
+  const lgmTong = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const [who, dm] of liveGrid.ngay) {
+      let t = 0
+      for (const ag of dm.values()) t += ag.lgm
+      m.set(who, t)
+    }
+    return m
+  }, [liveGrid])
+
+  const lgmOwn = useMemo(
+    () => liveOwnRooms.reduce((t, r) => t + (lgmTong.get(r.ten) ?? 0), 0),
+    [liveOwnRooms, lgmTong],
+  )
+  /** GMV thu về trên mỗi đồng LGM. */
+  const lgmLai = (gmv: number, lgm: number) => (lgm > 0 ? `${(gmv / lgm).toFixed(1)}×` : '—')
 
   const mDef = useMemo(
     () => ROOM_METRICS.find((m) => m.id === roomMetric) ?? ROOM_METRICS[0],
@@ -2843,6 +2893,9 @@ export default function Dashboard({
                     <th className="n">GMV / 1k views<div className="uhint">mn</div></th>
                     <th className="n">CTR</th><th className="n">Click to order</th>
                     <th className="n">Watch</th><th className="n">Units</th>
+                    <th className="n">LGM spend<div className="uhint">mn</div></th>
+                    <th className="n">GMV per ₫</th>
+                    <th className="n">ATR</th>
                   </tr></thead>
                   <tbody>
                     {liveOwnRooms.map((r) => (
@@ -2859,6 +2912,12 @@ export default function Dashboard({
                         <td className="n">{pct(p1(r.don, r.clicks))}</td>
                         <td className="n">{r.gio > 0 ? `${Math.round(r.xemW / r.gio)}s` : '—'}</td>
                         <td className="n">{n0(r.pcs)}</td>
+                        <td className="n">{mn1(lgmTong.get(r.ten) ?? 0)}</td>
+                        <td className="n"><b>{lgmLai(r.gmv, lgmTong.get(r.ten) ?? 0)}</b></td>
+                        <td className="n"
+                          style={{ color: p1(lgmTong.get(r.ten) ?? 0, r.gmv) > 6 ? 'var(--bad)' : 'inherit' }}>
+                          {pct(p1(lgmTong.get(r.ten) ?? 0, r.gmv))}
+                        </td>
                       </tr>
                     ))}
                     <tr className="tot">
@@ -2874,6 +2933,9 @@ export default function Dashboard({
                       <td className="n">{pct(p1(liveTot.own.don, liveTot.own.clicks))}</td>
                       <td className="n muted">—</td>
                       <td className="n">{n0(liveTot.own.pcs)}</td>
+                      <td className="n">{mn1(lgmOwn)}</td>
+                      <td className="n"><b>{lgmLai(liveTot.own.gmv, lgmOwn)}</b></td>
+                      <td className="n">{pct(p1(lgmOwn, liveTot.own.gmv))}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -2882,6 +2944,15 @@ export default function Dashboard({
                 GMV in VND bn, gross &mdash; what TikTok books for the session, before cancellations.
                 It will not tie to Seller NMV elsewhere in this dashboard. Watch is the average
                 viewing duration per session.
+              </p>
+              <p className="foot">
+                LGM spend is assigned to a room from the campaign name &mdash; RV / Robovac /
+                &ldquo;Official VN&rdquo; to Official, HV / Handvac / &ldquo;Shop VN&rdquo; to Máy
+                lau sàn, HE / Lifestyle to Lifestyle. Every LGM campaign matches one of those, so
+                nothing is left unassigned, but the mapping is only as good as the naming
+                convention: a campaign named some other way would land in the wrong room silently.
+                ATR here is LGM ÷ gross live GMV of that room, which is not the shop-wide ATR on the
+                Advertising tab &mdash; that one is all ad spend over Seller NMV.
               </p>
             </section>
 
@@ -3195,7 +3266,7 @@ export default function Dashboard({
                 corner={`Room · ${mDef.ten}`}
                 cols={gridDays.map(ddmm)}
                 fmt={mDef.fmt}
-                heat="high-good"
+                heat={mDef.xau_cao ? 'high-bad' : 'high-good'}
                 rows={gridRows(liveGrid.ngay, gridDays)}
               />
               <p className="foot">
@@ -3401,7 +3472,7 @@ export default function Dashboard({
                 corner={`Room · ${mDef.ten}`}
                 cols={liveGrid.months.map((m) => mmyy(`${m}-01`))}
                 fmt={mDef.fmt}
-                heat="high-good"
+                heat={mDef.xau_cao ? 'high-bad' : 'high-good'}
                 rows={gridRows(liveGrid.thang, liveGrid.months)}
               />
               <p className="foot">
