@@ -93,19 +93,21 @@ export type AdsCampaign = {
 
 /* ---- livestream ---- */
 type LiveBase = {
-  phien: number; gio_live: number; gmv: number; pcs: number; don: number; khach: number
+  phien: number; gio_live: number; gmv: number; pcs: number
+  don: number; don_tao: number; khach: number; sp_len: number; sp_ban: number
   views: number; viewers: number; likes: number; comments: number; shares: number
-  followers: number; impressions: number; clicks: number
+  followers: number; impressions: number; clicks: number; xem_tb_giay: number
 }
 export type LiveDaily = LiveBase & { ngay: string; nhom: string; so_phong: number }
 export type LiveMonth = LiveBase & { thang: string; nhom: string; so_phong: number; so_ngay: number }
-export type LiveRoomMonth = Omit<LiveBase, 'likes'> & {
-  thang: string; username: string; ten: string; nhom: string; xem_tb_giay: number
+export type LiveRoomMonth = LiveBase & {
+  thang: string; username: string; ten: string; nhom: string
 }
 export type LiveSession = {
   session_id: string; ngay: string; username: string; ten: string; nhom: string
   title: string | null; duration_phut: number; gmv: number; items_sold: number
-  sku_orders: number; customers: number; views: number; viewers: number
+  sku_orders: number; created_sku_orders: number; customers: number
+  views: number; viewers: number; likes: number
   comments: number; shares: number; new_followers: number
   product_impressions: number; product_clicks: number; avg_viewing_duration: number
 }
@@ -197,9 +199,10 @@ const SECTIONS = [
     id: 'Livestream', ten: 'Livestream',
     groups: [
       { ten: '', subs: ['Key numbers'] },
-      { ten: 'Rooms', subs: ['Side by side', 'GMV by month', 'Traffic and conversion'] },
-      { ten: 'Sessions', subs: ['Day by day', 'Top sessions'] },
-      { ten: 'Creators', subs: ['KOC rooms'] },
+      { ten: 'By room', subs: ['Sales', 'Traffic and engagement', 'Funnel'] },
+      { ten: 'Day by day', subs: ['GMV by room', 'Room by day', 'Daily totals', 'Audience', 'Conversion'] },
+      { ten: 'Monthly', subs: ['By month'] },
+      { ten: 'Detail', subs: ['Top sessions', 'Creator rooms'] },
     ],
   },
   {
@@ -1257,20 +1260,25 @@ export default function Dashboard({
 
   const liveTot = useMemo(() => {
     const z = () => ({
-      phien: 0, gio: 0, gmv: 0, pcs: 0, don: 0, khach: 0, views: 0, viewers: 0,
-      comments: 0, shares: 0, followers: 0, imp: 0, clicks: 0,
+      phien: 0, gio: 0, gmv: 0, pcs: 0, don: 0, donTao: 0, khach: 0, views: 0, viewers: 0,
+      likes: 0, comments: 0, shares: 0, followers: 0, imp: 0, clicks: 0, xemW: 0,
     })
     const own = z(); const koc = z()
     for (const r of liveMonthly) {
       if (!liveKeep.has(String(r.thang).slice(0, 7))) continue
       const t = r.nhom === 'own' ? own : koc
-      t.phien += Number(r.phien || 0); t.gio += Number(r.gio_live || 0)
+      const gio = Number(r.gio_live || 0)
+      t.phien += Number(r.phien || 0); t.gio += gio
       t.gmv += Number(r.gmv || 0); t.pcs += Number(r.pcs || 0)
-      t.don += Number(r.don || 0); t.khach += Number(r.khach || 0)
+      t.don += Number(r.don || 0); t.donTao += Number(r.don_tao || 0)
+      t.khach += Number(r.khach || 0)
       t.views += Number(r.views || 0); t.viewers += Number(r.viewers || 0)
+      t.likes += Number(r.likes || 0)
       t.comments += Number(r.comments || 0); t.shares += Number(r.shares || 0)
       t.followers += Number(r.followers || 0)
       t.imp += Number(r.impressions || 0); t.clicks += Number(r.clicks || 0)
+      // Thời lượng xem TB bình quân theo số giờ live, không phải theo tháng.
+      t.xemW += Number(r.xem_tb_giay || 0) * gio
     }
     return { own, koc, gmv: own.gmv + koc.gmv, phien: own.phien + koc.phien }
   }, [liveMonthly, liveKeep])
@@ -1279,28 +1287,35 @@ export default function Dashboard({
   const liveRoomAgg = useMemo(() => {
     const map = new Map<string, {
       username: string; ten: string; nhom: string
-      phien: number; gio: number; gmv: number; pcs: number; don: number; khach: number
-      views: number; viewers: number; comments: number; shares: number; followers: number
+      phien: number; gio: number; gmv: number; pcs: number
+      don: number; donTao: number; khach: number; spLen: number; spBan: number
+      views: number; viewers: number; likes: number; comments: number
+      shares: number; followers: number
       imp: number; clicks: number; xemW: number
     }>()
     for (const r of liveRooms) {
       if (!liveKeep.has(String(r.thang).slice(0, 7))) continue
       const cur = map.get(r.username) ?? {
         username: r.username, ten: r.ten, nhom: r.nhom,
-        phien: 0, gio: 0, gmv: 0, pcs: 0, don: 0, khach: 0,
-        views: 0, viewers: 0, comments: 0, shares: 0, followers: 0,
+        phien: 0, gio: 0, gmv: 0, pcs: 0, don: 0, donTao: 0, khach: 0,
+        spLen: 0, spBan: 0,
+        views: 0, viewers: 0, likes: 0, comments: 0, shares: 0, followers: 0,
         imp: 0, clicks: 0, xemW: 0,
       }
-      const ph = Number(r.phien || 0)
-      cur.phien += ph; cur.gio += Number(r.gio_live || 0)
+      const gio = Number(r.gio_live || 0)
+      cur.phien += Number(r.phien || 0); cur.gio += gio
       cur.gmv += Number(r.gmv || 0); cur.pcs += Number(r.pcs || 0)
-      cur.don += Number(r.don || 0); cur.khach += Number(r.khach || 0)
+      cur.don += Number(r.don || 0); cur.donTao += Number(r.don_tao || 0)
+      cur.khach += Number(r.khach || 0)
+      cur.spLen += Number(r.sp_len || 0); cur.spBan += Number(r.sp_ban || 0)
       cur.views += Number(r.views || 0); cur.viewers += Number(r.viewers || 0)
+      cur.likes += Number(r.likes || 0)
       cur.comments += Number(r.comments || 0); cur.shares += Number(r.shares || 0)
       cur.followers += Number(r.followers || 0)
       cur.imp += Number(r.impressions || 0); cur.clicks += Number(r.clicks || 0)
-      // Thời lượng xem TB phải bình quân theo số phiên, không cộng dồn.
-      cur.xemW += Number(r.xem_tb_giay || 0) * ph
+      // Thời lượng xem TB bình quân theo số GIỜ live: một phiên 12 tiếng không
+      // thể cân bằng điểm với một phiên 2 tiếng.
+      cur.xemW += Number(r.xem_tb_giay || 0) * gio
       map.set(r.username, cur)
     }
     return Array.from(map.values()).sort((a, b) => b.gmv - a.gmv)
@@ -1319,42 +1334,19 @@ export default function Dashboard({
     return Array.from(set).sort()
   }, [liveMonthly, liveKeep])
 
-  /** GMV từng phòng nhà theo tháng, cho biểu đồ cột chồng. KOC gộp một cột. */
-  const liveMix = useMemo(() => {
-    const names = liveOwnRooms.map((r) => r.ten)
-    const series = [
-      ...liveOwnRooms.map((r, i) => ({ ten: r.ten, color: PALETTE[i % PALETTE.length] })),
-      { ten: 'KOC', color: GREY },
-    ]
-    const byRoom = new Map<string, Map<string, number>>()
-    let kocRow = new Map<string, number>()
-    for (const r of liveRooms) {
-      const k = String(r.thang).slice(0, 7)
-      if (!liveKeep.has(k)) continue
-      const g = Number(r.gmv || 0)
-      if (r.nhom === 'own') {
-        const m = byRoom.get(r.ten) ?? new Map<string, number>()
-        m.set(k, (m.get(k) ?? 0) + g)
-        byRoom.set(r.ten, m)
-      } else {
-        kocRow.set(k, (kocRow.get(k) ?? 0) + g)
-      }
-    }
-    const data = liveMonthKeys.map((k) => ({
-      ky: `${k}-01`,
-      parts: [...names.map((n) => byRoom.get(n)?.get(k) ?? 0), kocRow.get(k) ?? 0],
-    }))
-    return { series, data, names }
-  }, [liveRooms, liveOwnRooms, liveMonthKeys, liveKeep])
-
   /** Theo tháng: cột GMV own vs KOC, đường CTR sản phẩm của ba phòng nhà. */
   const liveMonthRows = useMemo(() => {
     const m = new Map<string, {
-      ky: string; own: number; koc: number; views: number; imp: number
-      clicks: number; don: number; gio: number; phien: number
+      ky: string; own: number; koc: number; views: number; viewers: number; imp: number
+      clicks: number; don: number; donTao: number; gio: number; gioOwn: number; phien: number
+      likes: number; comments: number; shares: number; followers: number; xemW: number
     }>()
     for (const k of liveMonthKeys) {
-      m.set(k, { ky: `${k}-01`, own: 0, koc: 0, views: 0, imp: 0, clicks: 0, don: 0, gio: 0, phien: 0 })
+      m.set(k, {
+        ky: `${k}-01`, own: 0, koc: 0, views: 0, viewers: 0, imp: 0, clicks: 0,
+        don: 0, donTao: 0, gio: 0, gioOwn: 0, phien: 0,
+        likes: 0, comments: 0, shares: 0, followers: 0, xemW: 0,
+      })
     }
     for (const r of liveMonthly) {
       const k = String(r.thang).slice(0, 7)
@@ -1362,12 +1354,21 @@ export default function Dashboard({
       if (!cur) continue
       const g = Number(r.gmv || 0)
       if (r.nhom === 'own') {
+        const gio = Number(r.gio_live || 0)
         cur.own += g
+        cur.gioOwn += gio
         cur.views += Number(r.views || 0)
+        cur.viewers += Number(r.viewers || 0)
         cur.imp += Number(r.impressions || 0)
         cur.clicks += Number(r.clicks || 0)
+        cur.likes += Number(r.likes || 0)
+        cur.comments += Number(r.comments || 0)
+        cur.shares += Number(r.shares || 0)
+        cur.followers += Number(r.followers || 0)
+        cur.xemW += Number(r.xem_tb_giay || 0) * gio
       } else cur.koc += g
       cur.don += Number(r.don || 0)
+      cur.donTao += Number(r.don_tao || 0)
       cur.gio += Number(r.gio_live || 0)
       cur.phien += Number(r.phien || 0)
     }
@@ -1376,19 +1377,86 @@ export default function Dashboard({
 
   /** Theo ngày, gộp own + KOC. Chỉ lấy ngày thuộc các tháng đang chọn. */
   const liveDays = useMemo(() => {
-    const m = new Map<string, { ngay: string; own: number; koc: number; views: number; gio: number; phien: number }>()
+    const m = new Map<string, {
+      ngay: string; own: number; koc: number; views: number; viewers: number
+      gio: number; gioOwn: number; phien: number
+      imp: number; clicks: number; don: number; donTao: number; pcs: number
+      likes: number; comments: number; shares: number; followers: number; xemW: number
+    }>()
     for (const r of liveDaily) {
       const k = String(r.ngay)
       if (!liveKeep.has(k.slice(0, 7))) continue
-      const cur = m.get(k) ?? { ngay: k, own: 0, koc: 0, views: 0, gio: 0, phien: 0 }
-      if (r.nhom === 'own') { cur.own += Number(r.gmv || 0); cur.views += Number(r.views || 0) }
-      else cur.koc += Number(r.gmv || 0)
+      const cur = m.get(k) ?? {
+        ngay: k, own: 0, koc: 0, views: 0, viewers: 0, gio: 0, gioOwn: 0, phien: 0,
+        imp: 0, clicks: 0, don: 0, donTao: 0, pcs: 0,
+        likes: 0, comments: 0, shares: 0, followers: 0, xemW: 0,
+      }
+      if (r.nhom === 'own') {
+        const gio = Number(r.gio_live || 0)
+        cur.own += Number(r.gmv || 0)
+        cur.gioOwn += gio
+        cur.views += Number(r.views || 0)
+        cur.viewers += Number(r.viewers || 0)
+        cur.imp += Number(r.impressions || 0)
+        cur.clicks += Number(r.clicks || 0)
+        cur.likes += Number(r.likes || 0)
+        cur.comments += Number(r.comments || 0)
+        cur.shares += Number(r.shares || 0)
+        cur.followers += Number(r.followers || 0)
+        cur.xemW += Number(r.xem_tb_giay || 0) * gio
+      } else cur.koc += Number(r.gmv || 0)
       cur.gio += Number(r.gio_live || 0)
       cur.phien += Number(r.phien || 0)
+      cur.don += Number(r.don || 0)
+      cur.donTao += Number(r.don_tao || 0)
+      cur.pcs += Number(r.pcs || 0)
       m.set(k, cur)
     }
     return Array.from(m.values()).sort((a, b) => a.ngay.localeCompare(b.ngay))
   }, [liveDaily, liveKeep])
+
+  /** GMV từng phòng theo NGÀY. v_live_daily chỉ gộp theo nhóm nên phần này
+   *  phải dựng từ chính bảng phiên — mỗi phiên tính vào ngày bắt đầu. */
+  const liveDayRoom = useMemo(() => {
+    const names = liveOwnRooms.map((r) => r.ten)
+    const idx = new Map(names.map((n, i) => [n, i]))
+    const byDay = new Map<string, number[]>()
+    for (const r of liveSessions) {
+      const k = String(r.ngay)
+      if (!liveKeep.has(k.slice(0, 7))) continue
+      const row = byDay.get(k) ?? new Array(names.length + 1).fill(0)
+      const at = r.nhom === 'own' ? idx.get(r.ten) : names.length
+      if (at == null) continue
+      row[at] += Number(r.gmv || 0)
+      byDay.set(k, row)
+    }
+    const days = Array.from(byDay.keys()).sort()
+    const series = [
+      ...names.map((n, i) => ({ ten: n, color: PALETTE[i % PALETTE.length] })),
+      { ten: 'KOC', color: GREY },
+    ]
+    return {
+      names, series, days,
+      data: days.map((d) => ({ ky: d, parts: byDay.get(d) ?? [] })),
+      get: (d: string, i: number) => byDay.get(d)?.[i] ?? 0,
+    }
+  }, [liveSessions, liveOwnRooms, liveKeep])
+
+  /** Vài mốc theo ngày cho hàng ô đầu sheet: ngày mạnh nhất, ngày gần nhất
+   *  và mức tăng giảm so với ngày liền trước. */
+  const liveDayStats = useMemo(() => {
+    const tot = liveDays.map((d) => ({ ngay: d.ngay, v: d.own + d.koc }))
+    if (!tot.length) return null
+    const best = tot.reduce((a2, b) => (b.v > a2.v ? b : a2))
+    const last = tot[tot.length - 1]
+    const prev = tot.length > 1 ? tot[tot.length - 2] : null
+    const sum = tot.reduce((a2, b) => a2 + b.v, 0)
+    return { n: tot.length, avg: sum / tot.length, best, last, prev }
+  }, [liveDays])
+
+  /** Lưới phòng × ngày chỉ vẽ nổi vài chục cột; chọn cả 6 tháng là 175 ngày
+   *  nên cắt còn 45 ngày gần nhất, phần còn lại đọc ở bảng bên dưới. */
+  const gridDays = useMemo(() => liveDayRoom.days.slice(-45), [liveDayRoom])
 
   const liveTop = useMemo(
     () => liveSessions
@@ -1400,6 +1468,8 @@ export default function Dashboard({
   /** GMV trên 1.000 lượt xem — thước đo hiệu quả duy nhất so sánh được giữa
       ba phòng, vì quy mô traffic của chúng chênh nhau nhiều. */
   const per1k = (gmv: number, views: number) => (views > 0 ? (gmv / views) * 1000 : 0)
+  /** Số lần trên 1.000 lượt xem — dùng cho comment, share, follow. */
+  const k1 = (v: number, views: number) => (views > 0 ? Math.round((v / views) * 1000 * 10) / 10 : 0)
 
   /* ---- hai biểu đồ dùng chung cho MoM Summary, Overview và Advertising ----
      Cùng một biểu đồ đặt ở ba chỗ thì phải là MỘT đoạn mã, không phải ba bản
@@ -2395,26 +2465,32 @@ export default function Dashboard({
             <section id="s5-1">
               <h2><span className="hno">5.1</span>Livestream — {monthNote}</h2>
               <p className="sub">
-                Session-level data straight from TikTok Shop, not from our order table. It covers
-                Apr 2026 onward only: the API refuses any window older than about 180 days. This
-                tab follows the month chips above; the 7- and 30-day buttons do not apply, because
-                a live session is a discrete event and a sliding window cuts months in half.
+                Session data straight from TikTok Shop, not from our order table. It starts in
+                Apr 2026: the API refuses any window older than about 180 days. The sheet follows
+                the month chips above and then reads day by day inside them &mdash; the 7- and
+                30-day buttons do not apply, because a session is a discrete event and a sliding
+                window cuts months in half.
               </p>
               <div className="tiles" style={{ marginTop: 20 }}>
                 <Tile label="Live GMV" value={bn(liveTot.gmv)} unit=" bn"
                   sub={`${pct(p1(liveTot.own.gmv, liveTot.gmv))} from our own rooms`} />
+                <Tile label="Per day" value={liveDayStats ? bn(liveDayStats.avg) : '—'} unit=" bn"
+                  sub={liveDayStats ? `average across ${liveDayStats.n} days with a session` : ''} />
+                <Tile label="Best day" value={liveDayStats ? bn(liveDayStats.best.v) : '—'} unit=" bn"
+                  sub={liveDayStats ? ddmm(liveDayStats.best.ngay) : ''} />
+                <Tile label="Latest day" value={liveDayStats ? bn(liveDayStats.last.v) : '—'} unit=" bn"
+                  sub={liveDayStats
+                    ? `${ddmm(liveDayStats.last.ngay)} · ${liveDayStats.prev
+                      ? `${liveDayStats.last.v >= liveDayStats.prev.v ? '+' : ''}${Math.round(
+                        ((liveDayStats.last.v - liveDayStats.prev.v) / (liveDayStats.prev.v || 1)) * 100)}% DoD`
+                      : 'no prior day'}`
+                    : ''} />
                 <Tile label="Sessions" value={n0(liveTot.phien)}
                   sub={`${n0(liveTot.own.gio)} hours live in our rooms`} />
-                <Tile label="Views" value={n0(liveTot.own.views)}
-                  sub={`${n0(liveTot.own.viewers)} viewers · our rooms only`} />
                 <Tile label="GMV per 1k views" value={mn1(per1k(liveTot.own.gmv, liveTot.own.views))}
-                  unit=" mn" sub="our rooms — the one comparable efficiency figure" />
+                  unit=" mn" sub={`${n0(liveTot.own.views)} views · our rooms only`} />
                 <Tile label="Product CTR" value={pct(p1(liveTot.own.clicks, liveTot.own.imp))}
-                  sub={`${n0(liveTot.own.clicks)} clicks on ${n0(liveTot.own.imp)} impressions`} />
-                <Tile label="Units sold" value={n0(liveTot.own.pcs + liveTot.koc.pcs)}
-                  sub={`${n0(liveTot.own.don + liveTot.koc.don)} SKU orders`} />
-                <Tile label="New followers" value={n0(liveTot.own.followers)}
-                  sub={`${n0(liveTot.own.comments)} comments · ${n0(liveTot.own.shares)} shares`} />
+                  sub={`click to order ${pct(p1(liveTot.own.don, liveTot.own.clicks))}`} />
                 <Tile label="GMV from creator rooms" value={bn(liveTot.koc.gmv)} unit=" bn"
                   tone={p1(liveTot.koc.gmv, liveTot.gmv) < 5 ? 'bad' : undefined}
                   sub={`${pct(p1(liveTot.koc.gmv, liveTot.gmv))} of live GMV · ${n0(liveTot.koc.phien)} sessions`} />
@@ -2422,29 +2498,30 @@ export default function Dashboard({
               <div className="note warn">
                 <b>Creator rooms report no engagement at all.</b> TikTok only releases views,
                 comments, shares and product impressions for the shop&rsquo;s own official accounts,
-                so every KOC row below shows zero on those columns. That is a permission boundary,
-                not a quiet room — reading it as low engagement would be wrong. Their GMV, units and
-                orders are real and are counted.
+                so every KOC row shows zero on those columns. That is a permission boundary, not a
+                quiet room. Their GMV, units and orders are real and are counted.
               </div>
             </section>
 
             <section id="s5-2">
-              <h2><span className="hno">5.2</span>Our rooms side by side</h2>
+              <h2><span className="hno">5.2</span>Rooms side by side</h2>
               <p className="sub">
                 The rooms differ enough in scale that totals alone mislead. GMV per 1k views is the
-                column to read across — it puts a big room with cheap traffic next to a small room
-                with expensive traffic on the same footing.
+                column to read across &mdash; it puts a big room with cheap traffic next to a small
+                room with expensive traffic on the same footing.
               </p>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
                     <th>Room</th>
                     <th className="n">Sessions</th><th className="n">Hours</th>
-                    <th className="n">GMV<div className="uhint">bn</div></th><th className="n">GMV / hour<div className="uhint">mn</div></th>
-                    <th className="n">Views</th><th className="n">GMV / 1k views<div className="uhint">mn</div></th>
+                    <th className="n">GMV<div className="uhint">bn</div></th>
+                    <th className="n">GMV / day<div className="uhint">bn</div></th>
+                    <th className="n">GMV / hour<div className="uhint">mn</div></th>
+                    <th className="n">Views</th>
+                    <th className="n">GMV / 1k views<div className="uhint">mn</div></th>
                     <th className="n">CTR</th><th className="n">Click to order</th>
-                    <th className="n">Watch time</th>
-                    <th className="n">Units</th><th className="n">Followers</th>
+                    <th className="n">Watch</th><th className="n">Units</th>
                   </tr></thead>
                   <tbody>
                     {liveOwnRooms.map((r) => (
@@ -2453,14 +2530,14 @@ export default function Dashboard({
                         <td className="n">{n0(r.phien)}</td>
                         <td className="n">{n0(r.gio)}</td>
                         <td className="n"><b>{bn(r.gmv)}</b></td>
+                        <td className="n">{liveDayStats ? bn(r.gmv / liveDayStats.n) : '—'}</td>
                         <td className="n">{r.gio > 0 ? mn1(r.gmv / r.gio) : '—'}</td>
                         <td className="n">{n0(r.views)}</td>
                         <td className="n"><b>{mn1(per1k(r.gmv, r.views))}</b></td>
                         <td className="n">{pct(p1(r.clicks, r.imp))}</td>
                         <td className="n">{pct(p1(r.don, r.clicks))}</td>
-                        <td className="n">{r.phien > 0 ? `${Math.round(r.xemW / r.phien)}s` : '—'}</td>
+                        <td className="n">{r.gio > 0 ? `${Math.round(r.xemW / r.gio)}s` : '—'}</td>
                         <td className="n">{n0(r.pcs)}</td>
-                        <td className="n">{n0(r.followers)}</td>
                       </tr>
                     ))}
                     <tr className="tot">
@@ -2468,6 +2545,7 @@ export default function Dashboard({
                       <td className="n">{n0(liveTot.own.phien)}</td>
                       <td className="n">{n0(liveTot.own.gio)}</td>
                       <td className="n"><b>{bn(liveTot.own.gmv)}</b></td>
+                      <td className="n">{liveDayStats ? bn(liveTot.own.gmv / liveDayStats.n) : '—'}</td>
                       <td className="n">{liveTot.own.gio > 0 ? mn1(liveTot.own.gmv / liveTot.own.gio) : '—'}</td>
                       <td className="n">{n0(liveTot.own.views)}</td>
                       <td className="n"><b>{mn1(per1k(liveTot.own.gmv, liveTot.own.views))}</b></td>
@@ -2475,30 +2553,171 @@ export default function Dashboard({
                       <td className="n">{pct(p1(liveTot.own.don, liveTot.own.clicks))}</td>
                       <td className="n muted">—</td>
                       <td className="n">{n0(liveTot.own.pcs)}</td>
-                      <td className="n">{n0(liveTot.own.followers)}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
               <p className="foot">
-                GMV in VND bn, gross — this is what TikTok books for the session, before
-                cancellations. It will not tie to Seller NMV elsewhere in this dashboard.
-                Watch time is the average viewing duration per session.
+                GMV in VND bn, gross &mdash; what TikTok books for the session, before cancellations.
+                It will not tie to Seller NMV elsewhere in this dashboard. Watch is the average
+                viewing duration per session.
               </p>
             </section>
 
             <section id="s5-3">
-              <h2><span className="hno">5.3</span>Live GMV by month, by room</h2>
+              <h2><span className="hno">5.3</span>Traffic and engagement by room</h2>
+              <p className="sub">
+                Everything here is per 1.000 views rather than a total, because the three rooms pull
+                very different volumes and raw counts only restate that. Views counts every entry
+                into the room; viewers counts people, so views ÷ viewers is how often the same
+                person came back during a stream.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Room</th>
+                    <th className="n">Views</th><th className="n">Viewers</th>
+                    <th className="n">Views / viewer</th>
+                    <th className="n">Views / hour</th>
+                    <th className="n">Watch</th>
+                    <th className="n">Like rate</th>
+                    <th className="n">Comments<div className="uhint">per 1k views</div></th>
+                    <th className="n">Shares<div className="uhint">per 1k views</div></th>
+                    <th className="n">New followers</th>
+                    <th className="n">Follows<div className="uhint">per 1k views</div></th>
+                  </tr></thead>
+                  <tbody>
+                    {liveOwnRooms.map((r) => (
+                      <tr key={r.username}>
+                        <td>{r.ten}</td>
+                        <td className="n">{n0(r.views)}</td>
+                        <td className="n">{n0(r.viewers)}</td>
+                        <td className="n">{r.viewers > 0 ? (r.views / r.viewers).toFixed(2) : '—'}</td>
+                        <td className="n">{r.gio > 0 ? n0(r.views / r.gio) : '—'}</td>
+                        <td className="n">{r.gio > 0 ? `${Math.round(r.xemW / r.gio)}s` : '—'}</td>
+                        <td className="n">{pct(p1(r.likes, r.views))}</td>
+                        <td className="n">{k1(r.comments, r.views)}</td>
+                        <td className="n">{k1(r.shares, r.views)}</td>
+                        <td className="n">{n0(r.followers)}</td>
+                        <td className="n">{k1(r.followers, r.views)}</td>
+                      </tr>
+                    ))}
+                    <tr className="tot">
+                      <td><b>All three</b></td>
+                      <td className="n">{n0(liveTot.own.views)}</td>
+                      <td className="n">{n0(liveTot.own.viewers)}</td>
+                      <td className="n">
+                        {liveTot.own.viewers > 0 ? (liveTot.own.views / liveTot.own.viewers).toFixed(2) : '—'}
+                      </td>
+                      <td className="n">{liveTot.own.gio > 0 ? n0(liveTot.own.views / liveTot.own.gio) : '—'}</td>
+                      <td className="n">{liveTot.own.gio > 0 ? `${Math.round(liveTot.own.xemW / liveTot.own.gio)}s` : '—'}</td>
+                      <td className="n">{pct(p1(liveTot.own.likes, liveTot.own.views))}</td>
+                      <td className="n">{k1(liveTot.own.comments, liveTot.own.views)}</td>
+                      <td className="n">{k1(liveTot.own.shares, liveTot.own.views)}</td>
+                      <td className="n">{n0(liveTot.own.followers)}</td>
+                      <td className="n">{k1(liveTot.own.followers, liveTot.own.views)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Like rate is likes ÷ views, so it can pass 100% &mdash; one viewer taps the heart
+                many times. Read it as enthusiasm per view, not as a share of the audience. Watch is
+                the average viewing duration, weighted by hours streamed so a 12-hour session does
+                not count the same as a 2-hour one.
+              </p>
+            </section>
+
+            <section id="s5-4">
+              <h2><span className="hno">5.4</span>Funnel by room</h2>
+              <p className="sub">
+                From a view to a paid order. Each percentage is against the step immediately above
+                it, so a weak room shows exactly where it loses people rather than only that it
+                sells less.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Room</th>
+                    <th className="n">Views</th>
+                    <th className="n">Impressions</th><th className="n">per view</th>
+                    <th className="n">Clicks</th><th className="n">CTR</th>
+                    <th className="n">Orders created</th><th className="n">click to order</th>
+                    <th className="n">Paid orders</th><th className="n">paid</th>
+                    <th className="n">Customers</th><th className="n">Units</th>
+                    <th className="n">Units / customer</th>
+                    <th className="n">SKUs listed / sold</th>
+                  </tr></thead>
+                  <tbody>
+                    {liveOwnRooms.map((r) => (
+                      <tr key={r.username}>
+                        <td>{r.ten}</td>
+                        <td className="n">{n0(r.views)}</td>
+                        <td className="n">{n0(r.imp)}</td>
+                        <td className="n muted">{r.views > 0 ? (r.imp / r.views).toFixed(2) : '—'}</td>
+                        <td className="n">{n0(r.clicks)}</td>
+                        <td className="n muted">{pct(p1(r.clicks, r.imp))}</td>
+                        <td className="n">{n0(r.donTao)}</td>
+                        <td className="n muted">{pct(p1(r.donTao, r.clicks))}</td>
+                        <td className="n"><b>{n0(r.don)}</b></td>
+                        <td className="n muted"
+                          style={{ color: p1(r.don, r.donTao) < 90 ? 'var(--bad)' : 'inherit' }}>
+                          {pct(p1(r.don, r.donTao))}
+                        </td>
+                        <td className="n">{n0(r.khach)}</td>
+                        <td className="n">{n0(r.pcs)}</td>
+                        <td className="n">{r.khach > 0 ? (r.pcs / r.khach).toFixed(2) : '—'}</td>
+                        <td className="n muted">{n0(r.spLen)} / {n0(r.spBan)}</td>
+                      </tr>
+                    ))}
+                    <tr className="tot">
+                      <td><b>All three</b></td>
+                      <td className="n">{n0(liveTot.own.views)}</td>
+                      <td className="n">{n0(liveTot.own.imp)}</td>
+                      <td className="n muted">
+                        {liveTot.own.views > 0 ? (liveTot.own.imp / liveTot.own.views).toFixed(2) : '—'}
+                      </td>
+                      <td className="n">{n0(liveTot.own.clicks)}</td>
+                      <td className="n muted">{pct(p1(liveTot.own.clicks, liveTot.own.imp))}</td>
+                      <td className="n">{n0(liveTot.own.donTao)}</td>
+                      <td className="n muted">{pct(p1(liveTot.own.donTao, liveTot.own.clicks))}</td>
+                      <td className="n"><b>{n0(liveTot.own.don)}</b></td>
+                      <td className="n muted">{pct(p1(liveTot.own.don, liveTot.own.donTao))}</td>
+                      <td className="n">{n0(liveTot.own.khach)}</td>
+                      <td className="n">{n0(liveTot.own.pcs)}</td>
+                      <td className="n">
+                        {liveTot.own.khach > 0 ? (liveTot.own.pcs / liveTot.own.khach).toFixed(2) : '—'}
+                      </td>
+                      <td className="n muted">—</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                &ldquo;Paid&rdquo; is paid SKU orders ÷ orders created, inside the live session
+                itself. It is not the shop cancellation rate on the Cancellations tab &mdash; that
+                one is measured much later, after delivery falls through, and runs far lower.
+              </p>
+            </section>
+
+            <section id="s5-5">
+              <h2><span className="hno">5.5</span>GMV per day, by room</h2>
+              <p className="sub">
+                Each column is one day, split by the room that booked it. Days with no session are
+                absent rather than drawn as zero.
+              </p>
               <MultiStack
-                data={liveMix.data}
-                series={liveMix.series}
-                fmt={bn} label={mmyy} unit="VND bn"
+                data={liveDayRoom.data}
+                series={liveDayRoom.series}
+                fmt={bn} label={ddmm} unit="VND bn"
                 tip={(d) => {
                   const tot = d.parts.reduce((a, b) => a + b, 0)
                   return (
-                    <><b>{mmyy(d.ky)}</b><br />
-                      {liveMix.series.map((sv, i) => (
-                        <span key={sv.ten}>{sv.ten}: {bn(d.parts[i] || 0)}<br /></span>
+                    <><b>{ddmm(d.ky)}</b><br />
+                      {liveDayRoom.series.map((sv, i) => (
+                        d.parts[i] > 0
+                          ? <span key={sv.ten}>{sv.ten}: {bn(d.parts[i])}<br /></span>
+                          : null
                       ))}
                       Total {bn(tot)}</>
                   )
@@ -2506,84 +2725,230 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-4">
-              <h2><span className="hno">5.4</span>Traffic and conversion by month</h2>
+            <section id="s5-6">
+              <h2><span className="hno">5.6</span>Room by day</h2>
               <p className="sub">
-                Columns are live GMV split between our rooms and creator rooms. The red line is the
-                product click-through rate in our rooms — impressions that turned into a tap on the
-                product card.
+                The same numbers as a grid. Reading along a row shows how steady a room is; reading
+                down a column shows which room carried a given day. Shading is relative to the
+                largest cell.
+              </p>
+              <Matrix
+                corner="Room"
+                cols={gridDays.map(ddmm)}
+                fmt={bn}
+                heat="high-good"
+                rows={[
+                  ...liveDayRoom.names.map((nm, i) => ({
+                    label: nm,
+                    color: PALETTE[i % PALETTE.length],
+                    vals: gridDays.map((d) => liveDayRoom.get(d, i) || null),
+                  })),
+                  {
+                    label: 'KOC', color: GREY,
+                    vals: gridDays.map((d) => liveDayRoom.get(d, liveDayRoom.names.length) || null),
+                  },
+                ]}
+              />
+              <p className="foot">
+                VND bn per room per day. An empty cell means no session that day.
+                {liveDayRoom.days.length > gridDays.length &&
+                  ` Showing the most recent ${gridDays.length} of ${liveDayRoom.days.length} days — the full history is in the table below.`}
+              </p>
+            </section>
+
+            <section id="s5-7">
+              <h2><span className="hno">5.7</span>Daily totals · DoD</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Day</th>
+                    <th className="n">Sessions</th><th className="n">Hours</th>
+                    {liveDayRoom.names.map((nm) => (
+                      <th className="n" key={nm}>{nm}<div className="uhint">bn</div></th>
+                    ))}
+                    <th className="n">KOC<div className="uhint">bn</div></th>
+                    <th className="n">Total<div className="uhint">bn</div></th>
+                    <th className="n">DoD</th>
+                    <th className="n">Views</th>
+                    <th className="n">GMV / 1k views<div className="uhint">mn</div></th>
+                    <th className="n">CTR</th><th className="n">Units</th>
+                  </tr></thead>
+                  <tbody>
+                    {liveDays.slice().reverse().map((d, i, arr) => {
+                      const tot = d.own + d.koc
+                      const prev = arr[i + 1]
+                      const prevTot = prev ? prev.own + prev.koc : undefined
+                      return (
+                        <tr key={d.ngay}>
+                          <td>{ddmm(d.ngay)}</td>
+                          <td className="n">{n0(d.phien)}</td>
+                          <td className="n">{n0(d.gio)}</td>
+                          {liveDayRoom.names.map((nm, k) => (
+                            <td className="n" key={nm}>{bn(liveDayRoom.get(d.ngay, k))}</td>
+                          ))}
+                          <td className="n muted">{bn(d.koc)}</td>
+                          <td className="n"><b>{bn(tot)}</b></td>
+                          <td className="n"><Dd a={tot} b={prevTot} /></td>
+                          <td className="n">{n0(d.views)}</td>
+                          <td className="n">{mn1(per1k(d.own, d.views))}</td>
+                          <td className="n">{pct(d.imp > 0 ? p1(d.clicks, d.imp) : null)}</td>
+                          <td className="n">{n0(d.pcs)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Newest day first. DoD compares each day with the previous day that had a session,
+                which on a Monday means the weekend, not last Friday &mdash; check the dates before
+                reading a swing as a trend.
+              </p>
+            </section>
+
+            <section id="s5-8">
+              <h2><span className="hno">5.8</span>Audience per day</h2>
+              <p className="sub">
+                Columns split each day&rsquo;s views into people seen for the first time that day
+                and the views they came back for. The red line is the engagement rate &mdash; likes,
+                comments and shares together, against views.
               </p>
               <ComboChart
-                data={liveMonthRows.map((m) => ({ ky: m.ky, a: m.own, b: m.koc }))}
+                data={liveDays.map((d) => ({ ky: d.ngay, a: d.viewers, b: Math.max(0, d.views - d.viewers) }))}
+                names={['Viewers', 'Repeat views']}
+                colors={['var(--c1)', 'var(--c1-soft)']}
+                lines={[{
+                  ten: 'Engagement rate — likes, comments and shares ÷ views (right axis)',
+                  color: 'var(--bad)', truc: 'pct',
+                  vals: liveDays.map((d) => (d.views > 0 ? p1(d.likes + d.comments + d.shares, d.views) : null)),
+                  showVals: true,
+                  fmtVal: (v) => `${v}%`,
+                }]}
+                fmt={n0} label={ddmm} unit="views"
+                tip={(d, i) => {
+                  const r = liveDays[i]
+                  if (!r) return null
+                  return (
+                    <><b>{ddmm(d.ky)}</b><br />
+                      Views {n0(r.views)} from {n0(r.viewers)} viewers<br />
+                      {r.viewers > 0 ? (r.views / r.viewers).toFixed(2) : '—'} views per viewer<br />
+                      Watch {r.gioOwn > 0 ? `${Math.round(r.xemW / r.gioOwn)}s` : '—'}<br />
+                      Likes {n0(r.likes)} · comments {n0(r.comments)} · shares {n0(r.shares)}<br />
+                      New followers {n0(r.followers)}</>
+                  )
+                }}
+              />
+              <p className="foot">Our own rooms only — creator rooms report no engagement data.</p>
+            </section>
+
+            <section id="s5-9">
+              <h2><span className="hno">5.9</span>Traffic and conversion per day</h2>
+              <p className="sub">
+                Columns are live GMV split between our rooms and creator rooms. The red line is the
+                product click-through rate in our rooms &mdash; impressions that turned into a tap
+                on the product card.
+              </p>
+              <ComboChart
+                data={liveDays.map((d) => ({ ky: d.ngay, a: d.own, b: d.koc }))}
                 names={['Our rooms', 'Creator rooms']}
                 colors={['var(--c1)', GREY]}
                 lines={[{
                   ten: 'Product CTR, our rooms (right axis)',
                   color: 'var(--bad)', truc: 'pct',
-                  vals: liveMonthRows.map((m) => (m.imp > 0 ? p1(m.clicks, m.imp) : null)),
+                  vals: liveDays.map((d) => (d.imp > 0 ? p1(d.clicks, d.imp) : null)),
                   showVals: true,
                   fmtVal: (v) => `${v}%`,
                 }]}
-                fmt={bn} label={mmyy} unit="VND bn"
+                fmt={bn} label={ddmm} unit="VND bn"
                 tip={(d, i) => {
-                  const m = liveMonthRows[i]
-                  if (!m) return null
-                  return (
-                    <><b>{mmyy(d.ky)}</b><br />
-                      Our rooms {bn(m.own)}<br />
-                      Creator rooms {bn(m.koc)}<br />
-                      {n0(m.phien)} sessions · {n0(m.gio)} hours<br />
-                      Views {n0(m.views)}<br />
-                      GMV per 1k views {mn1(per1k(m.own, m.views))} mn<br />
-                      CTR {pct(m.imp > 0 ? p1(m.clicks, m.imp) : null)}</>
-                  )
-                }}
-              />
-            </section>
-
-            <section id="s5-5">
-              <h2><span className="hno">5.5</span>Day by day</h2>
-              <BarChart
-                data={liveDays.map((d) => ({ ky: d.ngay, v: d.own + d.koc }))}
-                color="var(--c1)" fmt={bn} label={ddmm} unit="VND bn"
-                tip={(d) => {
-                  const r = liveDays.find((x) => x.ngay === d.ky)
+                  const r = liveDays[i]
                   if (!r) return null
                   return (
                     <><b>{ddmm(d.ky)}</b><br />
-                      Total {bn(r.own + r.koc)}<br />
                       Our rooms {bn(r.own)} · creators {bn(r.koc)}<br />
                       {n0(r.phien)} sessions · {n0(r.gio)} hours<br />
-                      Views {n0(r.views)}</>
+                      Views {n0(r.views)}<br />
+                      GMV per 1k views {mn1(per1k(r.own, r.views))} mn<br />
+                      CTR {pct(r.imp > 0 ? p1(r.clicks, r.imp) : null)}</>
                   )
                 }}
               />
-              <p className="foot">Live GMV in VND bn per day, our rooms and creator rooms combined.</p>
             </section>
 
-            <section id="s5-6">
-              <h2><span className="hno">5.6</span>Top sessions</h2>
+            <section id="s5-10">
+              <h2><span className="hno">5.10</span>By month</h2>
               <p className="sub">
-                The {Math.min(40, liveTop.length)} biggest sessions of {n0(liveTop.length)} in the
-                selected months. Worth reading next to the title — the stream name is the only
+                The long view behind the daily charts. Six months is all the API allows, so read the
+                trend rather than the level.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Month</th>
+                    <th className="n">Sessions</th><th className="n">Hours</th>
+                    <th className="n">Our rooms<div className="uhint">bn</div></th>
+                    <th className="n">Creators<div className="uhint">bn</div></th>
+                    <th className="n">Total<div className="uhint">bn</div></th>
+                    <th className="n">Views</th>
+                    <th className="n">GMV / 1k views<div className="uhint">mn</div></th>
+                    <th className="n">CTR</th>
+                    <th className="n">Watch</th>
+                    <th className="n">Like rate</th>
+                    <th className="n">Comments<div className="uhint">per 1k</div></th>
+                    <th className="n">Follows<div className="uhint">per 1k</div></th>
+                  </tr></thead>
+                  <tbody>
+                    {liveMonthRows.map((m, i) => {
+                      const prev = liveMonthRows[i - 1]
+                      return (
+                        <tr key={m.ky}>
+                          <td>{mmyy(m.ky)}</td>
+                          <td className="n">{n0(m.phien)}</td>
+                          <td className="n">{n0(m.gio)}</td>
+                          <td className="n"><b>{bn(m.own)}</b></td>
+                          <td className="n muted">{bn(m.koc)}</td>
+                          <td className="n">
+                            {bn(m.own + m.koc)}{' '}
+                            <Dd a={m.own + m.koc} b={prev ? prev.own + prev.koc : undefined} />
+                          </td>
+                          <td className="n">{n0(m.views)}</td>
+                          <td className="n"><b>{mn1(per1k(m.own, m.views))}</b></td>
+                          <td className="n">{pct(m.imp > 0 ? p1(m.clicks, m.imp) : null)}</td>
+                          <td className="n">{m.gioOwn > 0 ? `${Math.round(m.xemW / m.gioOwn)}s` : '—'}</td>
+                          <td className="n">{pct(p1(m.likes, m.views))}</td>
+                          <td className="n">{k1(m.comments, m.views)}</td>
+                          <td className="n">{k1(m.followers, m.views)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>Top sessions</h2>
+              <p className="sub">
+                The {Math.min(40, liveTop.length)} biggest of {n0(liveTop.length)} sessions in the
+                selected months. Worth reading next to the title &mdash; the stream name is the only
                 record of what was actually being run that day.
               </p>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
                     <th>Day</th><th>Room</th><th>Title</th>
-                    <th className="n">Hours</th><th className="n">GMV</th>
+                    <th className="n">Hours</th>
+                    <th className="n">GMV<div className="uhint">bn</div></th>
                     <th className="n">Units</th><th className="n">Views</th>
-                    <th className="n">GMV / 1k views<div className="uhint">mn</div></th><th className="n">Watch</th>
+                    <th className="n">GMV / 1k views<div className="uhint">mn</div></th>
+                    <th className="n">Watch</th>
                   </tr></thead>
                   <tbody>
                     {liveTop.slice(0, 40).map((r) => (
                       <tr key={r.session_id}>
                         <td>{ddmm(String(r.ngay))}</td>
                         <td>{r.ten}</td>
-                        <td style={{ maxWidth: 260 }}>
-                          {r.title || <span className="muted">—</span>}
-                        </td>
+                        <td style={{ maxWidth: 260 }}>{r.title || <span className="muted">—</span>}</td>
                         <td className="n">{(Number(r.duration_phut || 0) / 60).toFixed(1)}</td>
                         <td className="n"><b>{bn(Number(r.gmv))}</b></td>
                         <td className="n">{n0(Number(r.items_sold))}</td>
@@ -2603,19 +2968,20 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-7">
-              <h2><span className="hno">5.7</span>Creator rooms</h2>
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>Creator rooms</h2>
               <p className="sub">
-                Rooms that sold our products but are not ours. They are registered automatically the
-                first time one appears, so the list grows on its own as the team works with new
-                creators. Engagement columns are blank by design — see the note at the top.
+                Rooms that sold our products but are not ours. They register themselves the first
+                time one appears, so the list grows on its own as the team works with new creators.
+                Engagement columns are blank by design &mdash; see the note at the top.
               </p>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
                     <th>Creator</th>
                     <th className="n">Sessions</th><th className="n">Hours</th>
-                    <th className="n">GMV<div className="uhint">bn</div></th><th className="n">GMV / hour<div className="uhint">mn</div></th>
+                    <th className="n">GMV<div className="uhint">bn</div></th>
+                    <th className="n">GMV / hour<div className="uhint">mn</div></th>
                     <th className="n">Units</th><th className="n">SKU orders</th>
                     <th className="n">Share of live GMV</th>
                   </tr></thead>
@@ -2639,9 +3005,9 @@ export default function Dashboard({
                 </table>
               </div>
               <p className="foot">
-                Live GMV in VND bn. Bear in mind that LIVE GMV Max spend runs largely on these
-                rooms while the GMV booked against their sessions is small — an order that starts in
-                a creator room but closes later, or through a video, is not counted here.
+                Bear in mind that LIVE GMV Max spend runs largely on these rooms while the GMV booked
+                against their sessions is small &mdash; an order that starts in a creator room but
+                closes later, or through a video, is not counted here.
               </p>
             </section>
           </>
