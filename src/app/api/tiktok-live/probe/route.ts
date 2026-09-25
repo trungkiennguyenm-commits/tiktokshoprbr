@@ -25,31 +25,33 @@ export async function GET(request: Request) {
     const ctx = await getShopContext()
     const db = supabaseAdmin()
 
-    /* Dò ĐƯỜNG DẪN, không phải tham số: cả 6 biến thể vòng trước đều trả
-       "Invalid path", nghĩa là chuỗi /analytics/202508/shop_live_performance
-       viết trong config từ đầu là sai.
+    /* Đường dẫn overview lấy từ tài liệu chính thức (Kiên chụp màn hình
+       25/09): /analytics/202508/shop_lives/overview_performance — chuỗi
+       shop_live_performance viết sẵn trong config từ đầu là sai.
 
-       Có kèm hai đường dẫn ĐÃ BIẾT CHẮC LÀ ĐÚNG làm đối chứng — nếu chúng
-       cũng hỏng thì vấn đề nằm ở scope hay token, không phải đường dẫn. */
-    const P = [
-      '/analytics/202405/shop/performance',            // đối chứng: vẫn đang dùng
-      '/analytics/202405/shop_products/performance',   // đối chứng
-      '/analytics/202508/shop_lives/performance',
-      '/analytics/202508/shop_live/performance',
-      '/analytics/202508/shop_lives',
-      '/analytics/202508/shop_live_performance/lives',
-      '/analytics/202508/shop_lives/live_list',
-      '/analytics/202506/shop_live_performance',
-      '/analytics/202409/shop_live_performance',
-      '/analytics/202405/shop_lives/performance',
-      '/analytics/202507/shop_lives/performance',
-      '/analytics/202508/live/performance',
+       Overview chỉ cho tổng cả shop, nên dò thêm endpoint liệt kê từng phiên
+       live để tách ba phòng. Có hai lượt overview làm đối chứng. */
+    const OVERVIEW = '/analytics/202508/shop_lives/overview_performance'
+    const candidates: { name: string; path: string; query: Record<string, string | number> }[] = [
+      { name: 'overview ALL', path: OVERVIEW, query: { start_date_ge: from, end_date_lt: to, granularity: 'ALL' } },
+      { name: 'overview 1D', path: OVERVIEW, query: { start_date_ge: from, end_date_lt: to, granularity: '1D' } },
+      { name: 'overview account_type sai (lộ enum)', path: OVERVIEW,
+        query: { start_date_ge: from, end_date_lt: to, account_type: 'KHONG_CO_THAT' } },
+      /* shop_lives/performance trả 36009003 (lỗi nội bộ) chứ không phải
+         "Invalid path" — tức đường dẫn CÓ THẬT, chỉ thiếu tham số. */
+      { name: 'performance + page_size', path: '/analytics/202508/shop_lives/performance',
+        query: { start_date_ge: from, end_date_lt: to, page_size: 10 } },
+      { name: 'performance + granularity', path: '/analytics/202508/shop_lives/performance',
+        query: { start_date_ge: from, end_date_lt: to, granularity: 'ALL' } },
+      { name: 'performance + sort', path: '/analytics/202508/shop_lives/performance',
+        query: { start_date_ge: from, end_date_lt: to, page_size: 10, sort_field: 'gmv', sort_order: 'DESC' } },
+      ...['performance_list', 'list', 'detail_performance', 'live_performance']
+        .map((tail) => ({
+          name: `list: ${tail}`,
+          path: `/analytics/202508/shop_lives/${tail}`,
+          query: { start_date_ge: from, end_date_lt: to, page_size: 10 } as Record<string, string | number>,
+        })),
     ]
-    const candidates = P.map((p) => ({
-      name: p,
-      path: p,
-      query: { start_date_ge: from, end_date_lt: to } as Record<string, string | number>,
-    }))
 
     const summary: Record<string, unknown>[] = []
     for (const c of candidates) {
