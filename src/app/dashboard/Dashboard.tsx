@@ -693,6 +693,55 @@ function Dd({ a, b }: { a?: number; b?: number }) {
 
 /** Pivot: rows down the side, periods across the top. `heat` shades cells
  *  so a bad column jumps out without reading every number. */
+/* --------------------- so sánh nhiều chỉ số cùng lúc --------------------- */
+
+/**
+ * Mỗi ô là MỘT chỉ số, bên trong là ba phòng xếp cạnh nhau.
+ *
+ * Không gộp chung một trục: views/giờ tính bằng vạn còn comment trên 1.000
+ * lượt xem chỉ vài đơn vị, chung trục thì cột nhỏ biến mất. Mỗi ô tự lấy
+ * phòng cao nhất làm 100%, nên đọc được ngay ai hơn ai và hơn bao nhiêu,
+ * còn giá trị thật in ngay cuối thanh.
+ */
+function CompareBars({ nhom }: {
+  nhom: {
+    ten: string; don_vi?: string; ghi_chu?: string
+    fmt: (v: number) => string
+    vals: { ten: string; color: string; v: number }[]
+  }[]
+}) {
+  return (
+    <div className="cmp">
+      {nhom.map((m) => {
+        const max = Math.max(1, ...m.vals.map((x) => x.v))
+        const best = m.vals.reduce((a2, b) => (b.v > a2.v ? b : a2))
+        return (
+          <div className="cmp-card" key={m.ten}>
+            <div className="cmp-t">
+              {m.ten}{m.don_vi && <span className="cmp-u">{m.don_vi}</span>}
+            </div>
+            {m.vals.map((x) => (
+              <div className="cmp-row" key={x.ten}>
+                <div className="cmp-l" title={x.ten}>{x.ten}</div>
+                <div className="cmp-track">
+                  <div className="cmp-bar"
+                    style={{
+                      width: `${Math.max(2, (x.v / max) * 100)}%`,
+                      background: x.color,
+                      opacity: x.ten === best.ten ? 1 : 0.55,
+                    }} />
+                </div>
+                <div className="cmp-v">{m.fmt(x.v)}</div>
+              </div>
+            ))}
+            {m.ghi_chu && <div className="cmp-n">{m.ghi_chu}</div>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 /* ------------------------------- phễu ------------------------------- */
 
 /**
@@ -1616,6 +1665,8 @@ export default function Dashboard({
 
   /** GMV trên 1.000 lượt xem — thước đo hiệu quả duy nhất so sánh được giữa
       ba phòng, vì quy mô traffic của chúng chênh nhau nhiều. */
+  /** Nhãn cột hẹp: bỏ tiền tố 'Roborock' cho đỡ cắt chữ. */
+  const shortRoom = (t: string) => t.replace(/^Roborock\s*/i, '') || t
   const per1k = (gmv: number, views: number) => (views > 0 ? (gmv / views) * 1000 : 0)
   /** Số lần trên 1.000 lượt xem — dùng cho comment, share, follow. */
   const k1 = (v: number, views: number) => (views > 0 ? Math.round((v / views) * 1000 * 10) / 10 : 0)
@@ -2721,6 +2772,117 @@ export default function Dashboard({
                 into the room; viewers counts people, so views ÷ viewers is how often the same
                 person came back during a stream.
               </p>
+              <CompareBars
+                nhom={[
+                  {
+                    ten: 'Views per hour', don_vi: 'views',
+                    fmt: (v) => n0(v),
+                    ghi_chu: 'How fast the room fills while it is live.',
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: r.gio > 0 ? r.views / r.gio : 0,
+                    })),
+                  },
+                  {
+                    ten: 'Watch time', don_vi: 'seconds',
+                    fmt: (v) => `${Math.round(v)}s`,
+                    ghi_chu: 'Average time a view lasts, weighted by hours streamed.',
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: r.gio > 0 ? r.xemW / r.gio : 0,
+                    })),
+                  },
+                  {
+                    ten: 'Views per viewer', don_vi: '×',
+                    fmt: (v) => v.toFixed(2),
+                    ghi_chu: 'Above 1 means the same person came back during the stream.',
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: r.viewers > 0 ? r.views / r.viewers : 0,
+                    })),
+                  },
+                  {
+                    ten: 'Engagement rate', don_vi: '% of views',
+                    fmt: (v) => `${v}%`,
+                    ghi_chu: 'Likes, comments and shares together, against views.',
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: p1(r.likes + r.comments + r.shares, r.views),
+                    })),
+                  },
+                  {
+                    ten: 'Like rate', don_vi: '% of views',
+                    fmt: (v) => `${v}%`,
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: p1(r.likes, r.views),
+                    })),
+                  },
+                  {
+                    ten: 'Comments', don_vi: 'per 1k views',
+                    fmt: (v) => v.toFixed(2),
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: k1(r.comments, r.views),
+                    })),
+                  },
+                  {
+                    ten: 'Shares', don_vi: 'per 1k views',
+                    fmt: (v) => v.toFixed(2),
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: k1(r.shares, r.views),
+                    })),
+                  },
+                  {
+                    ten: 'New followers', don_vi: 'per 1k views',
+                    fmt: (v) => v.toFixed(2),
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: k1(r.followers, r.views),
+                    })),
+                  },
+                  {
+                    ten: 'Product impressions', don_vi: 'per view',
+                    fmt: (v) => v.toFixed(2),
+                    ghi_chu: 'How often the product card is shown to each view.',
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: r.views > 0 ? r.imp / r.views : 0,
+                    })),
+                  },
+                  {
+                    ten: 'Product CTR', don_vi: '% of impressions',
+                    fmt: (v) => `${v}%`,
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: p1(r.clicks, r.imp),
+                    })),
+                  },
+                  {
+                    ten: 'GMV per 1k views', don_vi: 'VND mn',
+                    fmt: (v) => mn1(v),
+                    ghi_chu: 'What all of the above finally adds up to.',
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: per1k(r.gmv, r.views),
+                    })),
+                  },
+                  {
+                    ten: 'GMV per hour', don_vi: 'VND mn',
+                    fmt: (v) => mn1(v),
+                    vals: liveOwnRooms.map((r, i) => ({
+                      ten: shortRoom(r.ten), color: PALETTE[i % PALETTE.length],
+                      v: r.gio > 0 ? r.gmv / r.gio : 0,
+                    })),
+                  },
+                ]}
+              />
+              <p className="foot">
+                Each panel scales to its own leader, so bar length compares rooms within a metric
+                and never across metrics. The faded bars are the rooms behind on that one measure.
+              </p>
+
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -4272,6 +4434,20 @@ const CSS = `
 .car{font-size:9px}
 .wrap tbody tr:last-child td{border-bottom:0}
 .wrap .uhint{font-weight:400;font-size:.8em;color:var(--muted)}
+.wrap .cmp{display:grid;gap:12px;margin-top:18px;
+  grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.wrap .cmp-card{border:1px solid var(--line);border-radius:10px;padding:11px 13px 12px}
+.wrap .cmp-t{font-size:12.5px;font-weight:600;margin-bottom:9px;display:flex;
+  justify-content:space-between;align-items:baseline;gap:8px}
+.wrap .cmp-u{font-weight:400;font-size:.82em;color:var(--muted);white-space:nowrap}
+.wrap .cmp-row{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+.wrap .cmp-l{flex:0 0 78px;font-size:11px;color:var(--muted);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.wrap .cmp-track{flex:1;height:14px;background:var(--line);border-radius:3px;overflow:hidden}
+.wrap .cmp-bar{height:100%;border-radius:3px}
+.wrap .cmp-v{flex:0 0 auto;font-size:11.5px;font-weight:600;
+  font-variant-numeric:tabular-nums;white-space:nowrap;min-width:46px;text-align:right}
+.wrap .cmp-n{font-size:11px;color:var(--muted);margin-top:7px;line-height:1.4}
 .wrap .funnels{display:flex;gap:14px;flex-wrap:wrap;margin-top:18px}
 .wrap .fn-card{flex:1 1 240px;min-width:240px;border:1px solid var(--line);border-radius:10px;padding:12px 14px 14px}
 .wrap .fn-head{font-weight:600;font-size:.95em;padding-bottom:8px;margin-bottom:10px;border-bottom:2px solid}
