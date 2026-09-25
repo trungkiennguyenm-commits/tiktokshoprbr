@@ -200,7 +200,8 @@ const SECTIONS = [
     groups: [
       { ten: '', subs: ['Key numbers'] },
       { ten: 'By room', subs: ['Sales', 'Traffic and engagement', 'Funnel'] },
-      { ten: 'Day by day', subs: ['GMV by room', 'Room by day', 'Daily totals', 'Audience', 'Conversion'] },
+      { ten: 'Day by day', subs: ['GMV by room', 'Room by day', 'Daily totals', 'Audience',
+        'Conversion', 'Engagement vs CTR'] },
       { ten: 'Monthly', subs: ['By month, by room'] },
       { ten: 'Detail', subs: ['Top sessions', 'Creator rooms'] },
     ],
@@ -693,6 +694,86 @@ function Dd({ a, b }: { a?: number; b?: number }) {
 
 /** Pivot: rows down the side, periods across the top. `heat` shades cells
  *  so a bad column jumps out without reading every number. */
+/* ----------------------------- bubble scatter ----------------------------- */
+
+/**
+ * Mỗi chấm là MỘT NGÀY của MỘT PHÒNG. Trục X và Y là hai tỷ lệ, kích thước
+ * chấm là GMV, màu là phòng.
+ *
+ * Bán kính vẽ theo CĂN BẬC HAI của GMV, không theo GMV: mắt người đọc bong
+ * bóng bằng diện tích chứ không bằng bề ngang, vẽ thẳng theo giá trị thì
+ * ngày to bị phóng đại gấp nhiều lần.
+ *
+ * Hai trục đều cắt ở phân vị 98 để một ngày dị biệt không dồn toàn bộ phần
+ * còn lại vào một góc; những chấm vượt ngưỡng được ghim vào mép và viền đậm
+ * lên để biết là đang bị cắt, chứ không im lặng giấu đi.
+ */
+function Bubbles({ pts, series, xNhan, yNhan, fmtX, fmtY }: {
+  pts: { key: string; x: number; y: number; v: number; color: string; body: React.ReactNode }[]
+  series: { ten: string; color: string }[]
+  xNhan: string
+  yNhan: string
+  fmtX: (v: number) => string
+  fmtY: (v: number) => string
+}) {
+  const [t, setT] = useState<{ on: boolean; x: number; y: number; body: React.ReactNode }>({
+    on: false, x: 0, y: 0, body: null,
+  })
+  if (!pts.length) return null
+
+  const cut = (xs: number[]) => {
+    const a2 = xs.slice().sort((m, n) => m - n)
+    return a2[Math.min(a2.length - 1, Math.floor(a2.length * 0.98))] || 1
+  }
+  const xMax = cut(pts.map((d) => d.x))
+  const yMax = cut(pts.map((d) => d.y))
+  const vMax = Math.max(...pts.map((d) => d.v), 1)
+  const r = (v: number) => 4 + Math.sqrt(Math.max(0, v) / vMax) * 20
+
+  return (
+    <>
+      <div className="legend">
+        {series.map((sv) => (
+          <span key={sv.ten}><i className="sw" style={{ background: sv.color }} />{sv.ten}</span>
+        ))}
+        <span className="unit-inline">bubble size = GMV</span>
+      </div>
+      <div className="bub">
+        <div className="bub-yl">{yNhan}</div>
+        <div className="bub-main">
+          <div className="bub-plot">
+            <span className="bub-gt">{fmtY(yMax)}</span>
+            <span className="bub-gm">{fmtY(yMax / 2)}</span>
+            {pts.map((d) => {
+              const over = d.x > xMax || d.y > yMax
+              return (
+                <span
+                  key={d.key}
+                  className={`bub-d${over ? ' over' : ''}`}
+                  style={{
+                    left: `${Math.min(100, (d.x / xMax) * 100)}%`,
+                    bottom: `${Math.min(100, (d.y / yMax) * 100)}%`,
+                    width: r(d.v) * 2, height: r(d.v) * 2,
+                    marginLeft: -r(d.v), marginBottom: -r(d.v),
+                    background: d.color,
+                  }}
+                  onMouseMove={(e) => setT({ on: true, x: e.clientX + 14, y: e.clientY - 8, body: d.body })}
+                  onMouseLeave={() => setT((q) => ({ ...q, on: false }))}
+                />
+              )
+            })}
+          </div>
+          <div className="bub-xa">
+            <span>0</span><span>{fmtX(xMax / 2)}</span><span>{fmtX(xMax)}</span>
+          </div>
+          <div className="bub-xl">{xNhan}</div>
+        </div>
+      </div>
+      {t.on && <div className="tip" style={{ left: t.x, top: t.y }}>{t.body}</div>}
+    </>
+  )
+}
+
 /* --------------------- so sánh nhiều chỉ số cùng lúc --------------------- */
 
 /**
@@ -1617,6 +1698,46 @@ export default function Dashboard({
       hang: [...liveOwnRooms.map((r) => r.ten), 'KOC'],
     }
   }, [liveSessions, liveKeep, liveOwnRooms])
+
+  /** Mỗi ngày của mỗi phòng nhà thành một bong bóng: engagement × CTR × GMV. */
+  const bubblePts = useMemo(() => {
+    const out: {
+      key: string; ten: string; ngay: string; x: number; y: number; v: number; color: string
+      views: number; gio: number
+    }[] = []
+    liveOwnRooms.forEach((r, i) => {
+      const dm = liveGrid.ngay.get(r.ten)
+      if (!dm) return
+      for (const [d, ag] of dm) {
+        if (ag.views <= 0 || ag.imp <= 0 || ag.gmv <= 0) continue
+        out.push({
+          key: `${r.username}-${d}`, ten: r.ten, ngay: d,
+          x: Math.round(((ag.likes + ag.comments + ag.shares) / ag.views) * 1000) / 10,
+          y: Math.round((ag.clicks / ag.imp) * 10000) / 100,
+          v: ag.gmv, color: PALETTE[i % PALETTE.length],
+          views: ag.views, gio: ag.gio,
+        })
+      }
+    })
+    return out.sort((m, n) => n.v - m.v)
+  }, [liveOwnRooms, liveGrid])
+
+  /** Trung vị từng phòng, để đọc đám bong bóng mà không phải nheo mắt. */
+  const bubbleMid = useMemo(() => {
+    const mid = (xs: number[]) => {
+      if (!xs.length) return 0
+      const a2 = xs.slice().sort((m, n) => m - n)
+      const h = Math.floor(a2.length / 2)
+      return a2.length % 2 ? a2[h] : (a2[h - 1] + a2[h]) / 2
+    }
+    return liveOwnRooms.map((r, i) => {
+      const mine = bubblePts.filter((b) => b.ten === r.ten)
+      return {
+        ten: r.ten, color: PALETTE[i % PALETTE.length], n: mine.length,
+        x: mid(mine.map((b) => b.x)), y: mid(mine.map((b) => b.y)), v: mid(mine.map((b) => b.v)),
+      }
+    })
+  }, [bubblePts, liveOwnRooms])
 
   const mDef = useMemo(
     () => ROOM_METRICS.find((m) => m.id === roomMetric) ?? ROOM_METRICS[0],
@@ -3205,7 +3326,66 @@ export default function Dashboard({
             </section>
 
             <section id="s5-10">
-              <h2><span className="hno">5.10</span>By month, by room</h2>
+              <h2><span className="hno">5.10</span>Engagement vs CTR vs GMV</h2>
+              <p className="sub">
+                One bubble is one day of one room. Across: engagement rate. Up: product CTR. Size:
+                that day&rsquo;s GMV. If talking to the room is what drives people to tap the
+                product, the cloud runs bottom-left to top-right and the big bubbles sit in the top
+                right. If it does not, the cloud is flat and the big bubbles sit anywhere.
+              </p>
+              <Bubbles
+                pts={bubblePts.map((b) => ({
+                  key: b.key, x: b.x, y: b.y, v: b.v, color: b.color,
+                  body: (
+                    <><b>{b.ten}</b> · {ddmm(b.ngay)}<br />
+                      Engagement {b.x}% · CTR {b.y}%<br />
+                      GMV {bn(b.v)} bn<br />
+                      {n0(b.views)} views · {b.gio.toFixed(1)} hours</>
+                  ),
+                }))}
+                series={liveOwnRooms.map((r, i2) => ({
+                  ten: r.ten, color: PALETTE[i2 % PALETTE.length],
+                }))}
+                xNhan="Engagement rate — (likes + comments + shares) ÷ views"
+                yNhan="Product CTR — clicks ÷ impressions"
+                fmtX={(v) => `${Math.round(v)}%`}
+                fmtY={(v) => `${v.toFixed(2)}%`}
+              />
+              <div className="tablewrap" style={{ marginTop: 18 }}>
+                <table>
+                  <thead><tr>
+                    <th>Room</th><th className="n">Days plotted</th>
+                    <th className="n">Median engagement</th>
+                    <th className="n">Median CTR</th>
+                    <th className="n">Median GMV<div className="uhint">bn</div></th>
+                  </tr></thead>
+                  <tbody>
+                    {bubbleMid.map((m) => (
+                      <tr key={m.ten}>
+                        <td>
+                          <i className="sw" style={{ background: m.color, marginRight: 7 }} />
+                          {m.ten}
+                        </td>
+                        <td className="n">{n0(m.n)}</td>
+                        <td className="n">{m.x.toFixed(1)}%</td>
+                        <td className="n">{m.y.toFixed(2)}%</td>
+                        <td className="n"><b>{bn(m.v)}</b></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Medians, not averages &mdash; one 9.9 day would drag an average and say nothing
+                about an ordinary day. Both axes are cut at the 98th percentile so a single outlier
+                cannot flatten everything else into a corner; a bubble pinned to the edge with a
+                dashed outline is one that ran past the cut. Days with no views, no impressions or
+                no GMV are left out rather than drawn at zero.
+              </p>
+            </section>
+
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>By month, by room</h2>
               <p className="sub">
                 Same metric picker as the daily grid above, so a pattern spotted in one week can be
                 checked against the six-month trend without changing what is being measured.
@@ -3278,8 +3458,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-11">
-              <h2><span className="hno">5.11</span>Top sessions</h2>
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>Top sessions</h2>
               <p className="sub">
                 The {Math.min(40, liveTop.length)} biggest of {n0(liveTop.length)} sessions in the
                 selected months. Worth reading next to the title &mdash; the stream name is the only
@@ -3320,8 +3500,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-12">
-              <h2><span className="hno">5.12</span>Creator rooms</h2>
+            <section id="s5-13">
+              <h2><span className="hno">5.13</span>Creator rooms</h2>
               <p className="sub">
                 Rooms that sold our products but are not ours. They register themselves the first
                 time one appears, so the list grows on its own as the team works with new creators.
@@ -4434,6 +4614,25 @@ const CSS = `
 .car{font-size:9px}
 .wrap tbody tr:last-child td{border-bottom:0}
 .wrap .uhint{font-weight:400;font-size:.8em;color:var(--muted)}
+.wrap .bub{display:flex;gap:8px;margin-top:16px}
+.wrap .bub-yl{writing-mode:vertical-rl;transform:rotate(180deg);font-size:11px;
+  color:var(--muted);text-align:center;padding:6px 0;letter-spacing:.04em}
+.wrap .bub-main{flex:1;min-width:0}
+.wrap .bub-plot{position:relative;height:340px;border-left:1px solid var(--line-s);
+  border-bottom:1px solid var(--line-s);
+  background:linear-gradient(var(--line),var(--line)) 0 50%/100% 1px no-repeat}
+.wrap .bub-gt,.wrap .bub-gm{position:absolute;left:4px;font-size:10.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.wrap .bub-gt{top:-1px}
+.wrap .bub-gm{top:calc(50% - 7px)}
+.wrap .bub-d{position:absolute;border-radius:50%;opacity:.5;cursor:default;
+  border:1px solid rgba(255,255,255,.55)}
+.wrap .bub-d:hover{opacity:.9}
+.wrap .bub-d.over{border:2px dashed var(--ink-2);opacity:.75}
+.wrap .bub-xa{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);
+  padding-top:4px;font-variant-numeric:tabular-nums}
+.wrap .bub-xl{text-align:center;font-size:11px;color:var(--muted);padding-top:2px;
+  letter-spacing:.04em}
 .wrap .cmp{display:grid;gap:12px;margin-top:18px;
   grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
 .wrap .cmp-card{border:1px solid var(--line);border-radius:10px;padding:11px 13px 12px}
