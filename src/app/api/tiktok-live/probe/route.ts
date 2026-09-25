@@ -31,26 +31,20 @@ export async function GET(request: Request) {
 
        Overview chỉ cho tổng cả shop, nên dò thêm endpoint liệt kê từng phiên
        live để tách ba phòng. Có hai lượt overview làm đối chứng. */
-    const OVERVIEW = '/analytics/202508/shop_lives/overview_performance'
+    /* Phiên bản đúng là 202509, không phải 202508 (Kiên chụp tài liệu
+       25/09). Bản 202508 tồn tại nhưng trả 36009003 với mọi tham số hợp lệ.
+
+       performance  → từng phiên live, có username để tách theo phòng
+       overview_performance → tổng cả shop theo ngày */
     const candidates: { name: string; path: string; query: Record<string, string | number> }[] = [
-      { name: 'overview ALL', path: OVERVIEW, query: { start_date_ge: from, end_date_lt: to, granularity: 'ALL' } },
-      { name: 'overview 1D', path: OVERVIEW, query: { start_date_ge: from, end_date_lt: to, granularity: '1D' } },
-      { name: 'overview account_type sai (lộ enum)', path: OVERVIEW,
-        query: { start_date_ge: from, end_date_lt: to, account_type: 'KHONG_CO_THAT' } },
-      /* shop_lives/performance trả 36009003 (lỗi nội bộ) chứ không phải
-         "Invalid path" — tức đường dẫn CÓ THẬT, chỉ thiếu tham số. */
-      { name: 'performance + page_size', path: '/analytics/202508/shop_lives/performance',
-        query: { start_date_ge: from, end_date_lt: to, page_size: 10 } },
-      { name: 'performance + granularity', path: '/analytics/202508/shop_lives/performance',
+      { name: '202509 performance', path: '/analytics/202509/shop_lives/performance',
+        query: { start_date_ge: from, end_date_lt: to, page_size: 100, currency: 'LOCAL' } },
+      { name: '202509 performance sort gmv', path: '/analytics/202509/shop_lives/performance',
+        query: { start_date_ge: from, end_date_lt: to, page_size: 100, sort_field: 'gmv', sort_order: 'DESC' } },
+      { name: '202509 overview ALL', path: '/analytics/202509/shop_lives/overview_performance',
         query: { start_date_ge: from, end_date_lt: to, granularity: 'ALL' } },
-      { name: 'performance + sort', path: '/analytics/202508/shop_lives/performance',
-        query: { start_date_ge: from, end_date_lt: to, page_size: 10, sort_field: 'gmv', sort_order: 'DESC' } },
-      ...['performance_list', 'list', 'detail_performance', 'live_performance']
-        .map((tail) => ({
-          name: `list: ${tail}`,
-          path: `/analytics/202508/shop_lives/${tail}`,
-          query: { start_date_ge: from, end_date_lt: to, page_size: 10 } as Record<string, string | number>,
-        })),
+      { name: '202509 overview 1D', path: '/analytics/202509/shop_lives/overview_performance',
+        query: { start_date_ge: from, end_date_lt: to, granularity: '1D' } },
     ]
 
     const summary: Record<string, unknown>[] = []
@@ -64,7 +58,10 @@ export async function GET(request: Request) {
           query: c.query,
         })
       } catch (e) {
-        body = { error: e instanceof Error ? e.message : String(e) }
+        // TtsApiError mang theo request_id — TikTok bắt buộc có mã này mới
+        // nhận ticket hỗ trợ, nên phải giữ lại chứ không chỉ lấy message.
+        const err = e as { message?: string; code?: number; requestId?: string }
+        body = { error: err?.message ?? String(e), code: err?.code, request_id: err?.requestId }
       }
       await db.from('ads_debug').insert({
         note: `live ${c.name}`,
@@ -74,6 +71,8 @@ export async function GET(request: Request) {
         candidate: c.name,
         ok: !body.error,
         message: body.error ?? 'OK',
+        code: body.code,
+        request_id: body.request_id,
       })
     }
 
