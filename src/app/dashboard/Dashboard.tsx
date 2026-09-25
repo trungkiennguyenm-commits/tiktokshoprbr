@@ -91,11 +91,32 @@ export type AdsCampaign = {
   cost_usd: number
 }
 
+/* ---- livestream ---- */
+type LiveBase = {
+  phien: number; gio_live: number; gmv: number; pcs: number; don: number; khach: number
+  views: number; viewers: number; likes: number; comments: number; shares: number
+  followers: number; impressions: number; clicks: number
+}
+export type LiveDaily = LiveBase & { ngay: string; nhom: string; so_phong: number }
+export type LiveMonth = LiveBase & { thang: string; nhom: string; so_phong: number; so_ngay: number }
+export type LiveRoomMonth = Omit<LiveBase, 'likes'> & {
+  thang: string; username: string; ten: string; nhom: string; xem_tb_giay: number
+}
+export type LiveSession = {
+  session_id: string; ngay: string; username: string; ten: string; nhom: string
+  title: string | null; duration_phut: number; gmv: number; items_sold: number
+  sku_orders: number; customers: number; views: number; viewers: number
+  comments: number; shares: number; new_followers: number
+  product_impressions: number; product_clicks: number; avg_viewing_duration: number
+}
+
 type Props = {
   monthly: Monthly[]; daily: Daily[]; sku: Sku[]
   skuMonthly: SkuPeriod[]; skuDaily: SkuPeriod[]
   segMonthly: Segment[]; lapseDaily: LapseRow[]; shipDaily: Ship[]
   adsVs: AdsVs[]; adsMonthly: AdsMonth[]; adsCampaigns: AdsCampaign[]
+  liveDaily: LiveDaily[]; liveMonthly: LiveMonth[]
+  liveRooms: LiveRoomMonth[]; liveSessions: LiveSession[]
 }
 
 /* ============================== helpers ============================== */
@@ -166,6 +187,15 @@ const SECTIONS = [
       { ten: 'Daily', subs: ['Spend and ATR', 'Spend vs Seller NMV', 'Day by day'] },
       { ten: 'Monthly', subs: ['NMV, ads and ATR', 'LGM vs PGM', 'Spend by month'] },
       { ten: 'Campaigns', subs: ['Ranking'] },
+    ],
+  },
+  {
+    id: 'Livestream', ten: 'Livestream',
+    groups: [
+      { ten: '', subs: ['Key numbers'] },
+      { ten: 'Rooms', subs: ['Side by side', 'GMV by month', 'Traffic and conversion'] },
+      { ten: 'Sessions', subs: ['Day by day', 'Top sessions'] },
+      { ten: 'Creators', subs: ['KOC rooms'] },
     ],
   },
   {
@@ -729,6 +759,7 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
 export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, lapseDaily, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
+  liveDaily, liveMonthly, liveRooms, liveSessions,
 }: Props) {
   const [sec, setSec] = useState<Sec>('Summary')
   const [cat, setCat] = useState<CatKey>('all')
@@ -1205,6 +1236,166 @@ export default function Dashboard({
     ten: 'Cancellation rate (right axis)', color: 'var(--bad)', truc: 'pct' as const,
     vals: rows.map((r) => r.cancel_rate), showVals: true, fmtVal: (v: number) => `${v}%`,
   })
+
+  /* ---------------------------- livestream ----------------------------
+     Chỉ nghe bộ lọc chip tháng, không nghe nút 7/30 ngày: một phiên live là
+     một sự kiện rời rạc, cắt theo cửa sổ trượt thì tháng nào cũng dở dang.
+
+     Dữ liệu chỉ có từ ~04/2026: API chặn tra ngược quá 180 ngày.
+
+     Tài khoản KOC KHÔNG có số tương tác (view, comment, share đều 0) —
+     TikTok chỉ cấp phần đó cho tài khoản chính chủ của shop. Nên mọi chỉ số
+     dựa trên view chỉ tính cho ba phòng nhà, không gộp KOC vào rồi chia. */
+  const liveKeep = useMemo(
+    () => new Set(goodMonths.map((m) => m.slice(0, 7))),
+    [goodMonths],
+  )
+
+  const liveTot = useMemo(() => {
+    const z = () => ({
+      phien: 0, gio: 0, gmv: 0, pcs: 0, don: 0, khach: 0, views: 0, viewers: 0,
+      comments: 0, shares: 0, followers: 0, imp: 0, clicks: 0,
+    })
+    const own = z(); const koc = z()
+    for (const r of liveMonthly) {
+      if (!liveKeep.has(String(r.thang).slice(0, 7))) continue
+      const t = r.nhom === 'own' ? own : koc
+      t.phien += Number(r.phien || 0); t.gio += Number(r.gio_live || 0)
+      t.gmv += Number(r.gmv || 0); t.pcs += Number(r.pcs || 0)
+      t.don += Number(r.don || 0); t.khach += Number(r.khach || 0)
+      t.views += Number(r.views || 0); t.viewers += Number(r.viewers || 0)
+      t.comments += Number(r.comments || 0); t.shares += Number(r.shares || 0)
+      t.followers += Number(r.followers || 0)
+      t.imp += Number(r.impressions || 0); t.clicks += Number(r.clicks || 0)
+    }
+    return { own, koc, gmv: own.gmv + koc.gmv, phien: own.phien + koc.phien }
+  }, [liveMonthly, liveKeep])
+
+  /** Một dòng cho mỗi phòng, gộp các tháng đang chọn. */
+  const liveRoomAgg = useMemo(() => {
+    const map = new Map<string, {
+      username: string; ten: string; nhom: string
+      phien: number; gio: number; gmv: number; pcs: number; don: number; khach: number
+      views: number; viewers: number; comments: number; shares: number; followers: number
+      imp: number; clicks: number; xemW: number
+    }>()
+    for (const r of liveRooms) {
+      if (!liveKeep.has(String(r.thang).slice(0, 7))) continue
+      const cur = map.get(r.username) ?? {
+        username: r.username, ten: r.ten, nhom: r.nhom,
+        phien: 0, gio: 0, gmv: 0, pcs: 0, don: 0, khach: 0,
+        views: 0, viewers: 0, comments: 0, shares: 0, followers: 0,
+        imp: 0, clicks: 0, xemW: 0,
+      }
+      const ph = Number(r.phien || 0)
+      cur.phien += ph; cur.gio += Number(r.gio_live || 0)
+      cur.gmv += Number(r.gmv || 0); cur.pcs += Number(r.pcs || 0)
+      cur.don += Number(r.don || 0); cur.khach += Number(r.khach || 0)
+      cur.views += Number(r.views || 0); cur.viewers += Number(r.viewers || 0)
+      cur.comments += Number(r.comments || 0); cur.shares += Number(r.shares || 0)
+      cur.followers += Number(r.followers || 0)
+      cur.imp += Number(r.impressions || 0); cur.clicks += Number(r.clicks || 0)
+      // Thời lượng xem TB phải bình quân theo số phiên, không cộng dồn.
+      cur.xemW += Number(r.xem_tb_giay || 0) * ph
+      map.set(r.username, cur)
+    }
+    return Array.from(map.values()).sort((a, b) => b.gmv - a.gmv)
+  }, [liveRooms, liveKeep])
+
+  const liveOwnRooms = useMemo(() => liveRoomAgg.filter((r) => r.nhom === 'own'), [liveRoomAgg])
+  const liveKocRooms = useMemo(() => liveRoomAgg.filter((r) => r.nhom !== 'own'), [liveRoomAgg])
+
+  /** Các tháng có dữ liệu live, theo thứ tự thời gian. */
+  const liveMonthKeys = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of liveMonthly) {
+      const k = String(r.thang).slice(0, 7)
+      if (liveKeep.has(k)) set.add(k)
+    }
+    return Array.from(set).sort()
+  }, [liveMonthly, liveKeep])
+
+  /** GMV từng phòng nhà theo tháng, cho biểu đồ cột chồng. KOC gộp một cột. */
+  const liveMix = useMemo(() => {
+    const names = liveOwnRooms.map((r) => r.ten)
+    const series = [
+      ...liveOwnRooms.map((r, i) => ({ ten: r.ten, color: PALETTE[i % PALETTE.length] })),
+      { ten: 'KOC', color: GREY },
+    ]
+    const byRoom = new Map<string, Map<string, number>>()
+    let kocRow = new Map<string, number>()
+    for (const r of liveRooms) {
+      const k = String(r.thang).slice(0, 7)
+      if (!liveKeep.has(k)) continue
+      const g = Number(r.gmv || 0)
+      if (r.nhom === 'own') {
+        const m = byRoom.get(r.ten) ?? new Map<string, number>()
+        m.set(k, (m.get(k) ?? 0) + g)
+        byRoom.set(r.ten, m)
+      } else {
+        kocRow.set(k, (kocRow.get(k) ?? 0) + g)
+      }
+    }
+    const data = liveMonthKeys.map((k) => ({
+      ky: `${k}-01`,
+      parts: [...names.map((n) => byRoom.get(n)?.get(k) ?? 0), kocRow.get(k) ?? 0],
+    }))
+    return { series, data, names }
+  }, [liveRooms, liveOwnRooms, liveMonthKeys, liveKeep])
+
+  /** Theo tháng: cột GMV own vs KOC, đường CTR sản phẩm của ba phòng nhà. */
+  const liveMonthRows = useMemo(() => {
+    const m = new Map<string, {
+      ky: string; own: number; koc: number; views: number; imp: number
+      clicks: number; don: number; gio: number; phien: number
+    }>()
+    for (const k of liveMonthKeys) {
+      m.set(k, { ky: `${k}-01`, own: 0, koc: 0, views: 0, imp: 0, clicks: 0, don: 0, gio: 0, phien: 0 })
+    }
+    for (const r of liveMonthly) {
+      const k = String(r.thang).slice(0, 7)
+      const cur = m.get(k)
+      if (!cur) continue
+      const g = Number(r.gmv || 0)
+      if (r.nhom === 'own') {
+        cur.own += g
+        cur.views += Number(r.views || 0)
+        cur.imp += Number(r.impressions || 0)
+        cur.clicks += Number(r.clicks || 0)
+      } else cur.koc += g
+      cur.don += Number(r.don || 0)
+      cur.gio += Number(r.gio_live || 0)
+      cur.phien += Number(r.phien || 0)
+    }
+    return Array.from(m.values())
+  }, [liveMonthly, liveMonthKeys])
+
+  /** Theo ngày, gộp own + KOC. Chỉ lấy ngày thuộc các tháng đang chọn. */
+  const liveDays = useMemo(() => {
+    const m = new Map<string, { ngay: string; own: number; koc: number; views: number; gio: number; phien: number }>()
+    for (const r of liveDaily) {
+      const k = String(r.ngay)
+      if (!liveKeep.has(k.slice(0, 7))) continue
+      const cur = m.get(k) ?? { ngay: k, own: 0, koc: 0, views: 0, gio: 0, phien: 0 }
+      if (r.nhom === 'own') { cur.own += Number(r.gmv || 0); cur.views += Number(r.views || 0) }
+      else cur.koc += Number(r.gmv || 0)
+      cur.gio += Number(r.gio_live || 0)
+      cur.phien += Number(r.phien || 0)
+      m.set(k, cur)
+    }
+    return Array.from(m.values()).sort((a, b) => a.ngay.localeCompare(b.ngay))
+  }, [liveDaily, liveKeep])
+
+  const liveTop = useMemo(
+    () => liveSessions
+      .filter((r) => liveKeep.has(String(r.ngay).slice(0, 7)))
+      .sort((a, b) => Number(b.gmv || 0) - Number(a.gmv || 0)),
+    [liveSessions, liveKeep],
+  )
+
+  /** GMV trên 1.000 lượt xem — thước đo hiệu quả duy nhất so sánh được giữa
+      ba phòng, vì quy mô traffic của chúng chênh nhau nhiều. */
+  const per1k = (gmv: number, views: number) => (views > 0 ? (gmv / views) * 1000 : 0)
 
   /* ---- hai biểu đồ dùng chung cho MoM Summary, Overview và Advertising ----
      Cùng một biểu đồ đặt ở ba chỗ thì phải là MỘT đoạn mã, không phải ba bản
@@ -2194,6 +2385,264 @@ export default function Dashboard({
           </>
         )}
 
+        {/* ===================== LIVESTREAM ===================== */}
+        {sec === 'Livestream' && (
+          <>
+            <section id="s5-1">
+              <h2><span className="hno">5.1</span>Livestream — {monthNote}</h2>
+              <p className="sub">
+                Session-level data straight from TikTok Shop, not from our order table. It covers
+                Apr 2026 onward only: the API refuses any window older than about 180 days. This
+                tab follows the month chips above; the 7- and 30-day buttons do not apply, because
+                a live session is a discrete event and a sliding window cuts months in half.
+              </p>
+              <div className="tiles" style={{ marginTop: 20 }}>
+                <Tile label="Live GMV" value={bn(liveTot.gmv)} unit=" bn"
+                  sub={`${pct(p1(liveTot.own.gmv, liveTot.gmv))} from our own rooms`} />
+                <Tile label="Sessions" value={n0(liveTot.phien)}
+                  sub={`${n0(liveTot.own.gio)} hours live in our rooms`} />
+                <Tile label="Views" value={n0(liveTot.own.views)}
+                  sub={`${n0(liveTot.own.viewers)} viewers · our rooms only`} />
+                <Tile label="GMV per 1k views" value={bn(per1k(liveTot.own.gmv, liveTot.own.views))}
+                  unit=" bn" sub="our rooms — the one comparable efficiency figure" />
+                <Tile label="Product CTR" value={pct(p1(liveTot.own.clicks, liveTot.own.imp))}
+                  sub={`${n0(liveTot.own.clicks)} clicks on ${n0(liveTot.own.imp)} impressions`} />
+                <Tile label="Units sold" value={n0(liveTot.own.pcs + liveTot.koc.pcs)}
+                  sub={`${n0(liveTot.own.don + liveTot.koc.don)} SKU orders`} />
+                <Tile label="New followers" value={n0(liveTot.own.followers)}
+                  sub={`${n0(liveTot.own.comments)} comments · ${n0(liveTot.own.shares)} shares`} />
+                <Tile label="GMV from creator rooms" value={bn(liveTot.koc.gmv)} unit=" bn"
+                  tone={p1(liveTot.koc.gmv, liveTot.gmv) < 5 ? 'bad' : undefined}
+                  sub={`${pct(p1(liveTot.koc.gmv, liveTot.gmv))} of live GMV · ${n0(liveTot.koc.phien)} sessions`} />
+              </div>
+              <div className="note warn">
+                <b>Creator rooms report no engagement at all.</b> TikTok only releases views,
+                comments, shares and product impressions for the shop&rsquo;s own official accounts,
+                so every KOC row below shows zero on those columns. That is a permission boundary,
+                not a quiet room — reading it as low engagement would be wrong. Their GMV, units and
+                orders are real and are counted.
+              </div>
+            </section>
+
+            <section id="s5-2">
+              <h2><span className="hno">5.2</span>Our rooms side by side</h2>
+              <p className="sub">
+                The rooms differ enough in scale that totals alone mislead. GMV per 1k views is the
+                column to read across — it puts a big room with cheap traffic next to a small room
+                with expensive traffic on the same footing.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Room</th>
+                    <th className="n">Sessions</th><th className="n">Hours</th>
+                    <th className="n">GMV</th><th className="n">GMV / hour</th>
+                    <th className="n">Views</th><th className="n">GMV / 1k views</th>
+                    <th className="n">CTR</th><th className="n">Click to order</th>
+                    <th className="n">Watch time</th>
+                    <th className="n">Units</th><th className="n">Followers</th>
+                  </tr></thead>
+                  <tbody>
+                    {liveOwnRooms.map((r) => (
+                      <tr key={r.username}>
+                        <td>{r.ten}<div className="muted" style={{ fontSize: '.85em' }}>@{r.username}</div></td>
+                        <td className="n">{n0(r.phien)}</td>
+                        <td className="n">{n0(r.gio)}</td>
+                        <td className="n"><b>{bn(r.gmv)}</b></td>
+                        <td className="n">{r.gio > 0 ? bn(r.gmv / r.gio) : '—'}</td>
+                        <td className="n">{n0(r.views)}</td>
+                        <td className="n"><b>{bn(per1k(r.gmv, r.views))}</b></td>
+                        <td className="n">{pct(p1(r.clicks, r.imp))}</td>
+                        <td className="n">{pct(p1(r.don, r.clicks))}</td>
+                        <td className="n">{r.phien > 0 ? `${Math.round(r.xemW / r.phien)}s` : '—'}</td>
+                        <td className="n">{n0(r.pcs)}</td>
+                        <td className="n">{n0(r.followers)}</td>
+                      </tr>
+                    ))}
+                    <tr className="tot">
+                      <td><b>All three</b></td>
+                      <td className="n">{n0(liveTot.own.phien)}</td>
+                      <td className="n">{n0(liveTot.own.gio)}</td>
+                      <td className="n"><b>{bn(liveTot.own.gmv)}</b></td>
+                      <td className="n">{liveTot.own.gio > 0 ? bn(liveTot.own.gmv / liveTot.own.gio) : '—'}</td>
+                      <td className="n">{n0(liveTot.own.views)}</td>
+                      <td className="n"><b>{bn(per1k(liveTot.own.gmv, liveTot.own.views))}</b></td>
+                      <td className="n">{pct(p1(liveTot.own.clicks, liveTot.own.imp))}</td>
+                      <td className="n">{pct(p1(liveTot.own.don, liveTot.own.clicks))}</td>
+                      <td className="n muted">—</td>
+                      <td className="n">{n0(liveTot.own.pcs)}</td>
+                      <td className="n">{n0(liveTot.own.followers)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                GMV in VND bn, gross — this is what TikTok books for the session, before
+                cancellations. It will not tie to Seller NMV elsewhere in this dashboard.
+                Watch time is the average viewing duration per session.
+              </p>
+            </section>
+
+            <section id="s5-3">
+              <h2><span className="hno">5.3</span>Live GMV by month, by room</h2>
+              <MultiStack
+                data={liveMix.data}
+                series={liveMix.series}
+                fmt={bn} label={mmyy} unit="VND bn"
+                tip={(d) => {
+                  const tot = d.parts.reduce((a, b) => a + b, 0)
+                  return (
+                    <><b>{mmyy(d.ky)}</b><br />
+                      {liveMix.series.map((sv, i) => (
+                        <span key={sv.ten}>{sv.ten}: {bn(d.parts[i] || 0)}<br /></span>
+                      ))}
+                      Total {bn(tot)}</>
+                  )
+                }}
+              />
+            </section>
+
+            <section id="s5-4">
+              <h2><span className="hno">5.4</span>Traffic and conversion by month</h2>
+              <p className="sub">
+                Columns are live GMV split between our rooms and creator rooms. The red line is the
+                product click-through rate in our rooms — impressions that turned into a tap on the
+                product card.
+              </p>
+              <ComboChart
+                data={liveMonthRows.map((m) => ({ ky: m.ky, a: m.own, b: m.koc }))}
+                names={['Our rooms', 'Creator rooms']}
+                colors={['var(--c1)', GREY]}
+                lines={[{
+                  ten: 'Product CTR, our rooms (right axis)',
+                  color: 'var(--bad)', truc: 'pct',
+                  vals: liveMonthRows.map((m) => (m.imp > 0 ? p1(m.clicks, m.imp) : null)),
+                  showVals: true,
+                  fmtVal: (v) => `${v}%`,
+                }]}
+                fmt={bn} label={mmyy} unit="VND bn"
+                tip={(d, i) => {
+                  const m = liveMonthRows[i]
+                  if (!m) return null
+                  return (
+                    <><b>{mmyy(d.ky)}</b><br />
+                      Our rooms {bn(m.own)}<br />
+                      Creator rooms {bn(m.koc)}<br />
+                      {n0(m.phien)} sessions · {n0(m.gio)} hours<br />
+                      Views {n0(m.views)}<br />
+                      GMV per 1k views {bn(per1k(m.own, m.views))}<br />
+                      CTR {pct(m.imp > 0 ? p1(m.clicks, m.imp) : null)}</>
+                  )
+                }}
+              />
+            </section>
+
+            <section id="s5-5">
+              <h2><span className="hno">5.5</span>Day by day</h2>
+              <BarChart
+                data={liveDays.map((d) => ({ ky: d.ngay, v: d.own + d.koc }))}
+                color="var(--c1)" fmt={bn} label={ddmm} unit="VND bn"
+                tip={(d) => {
+                  const r = liveDays.find((x) => x.ngay === d.ky)
+                  if (!r) return null
+                  return (
+                    <><b>{ddmm(d.ky)}</b><br />
+                      Total {bn(r.own + r.koc)}<br />
+                      Our rooms {bn(r.own)} · creators {bn(r.koc)}<br />
+                      {n0(r.phien)} sessions · {n0(r.gio)} hours<br />
+                      Views {n0(r.views)}</>
+                  )
+                }}
+              />
+              <p className="foot">Live GMV in VND bn per day, our rooms and creator rooms combined.</p>
+            </section>
+
+            <section id="s5-6">
+              <h2><span className="hno">5.6</span>Top sessions</h2>
+              <p className="sub">
+                The {Math.min(40, liveTop.length)} biggest sessions of {n0(liveTop.length)} in the
+                selected months. Worth reading next to the title — the stream name is the only
+                record of what was actually being run that day.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Day</th><th>Room</th><th>Title</th>
+                    <th className="n">Hours</th><th className="n">GMV</th>
+                    <th className="n">Units</th><th className="n">Views</th>
+                    <th className="n">GMV / 1k views</th><th className="n">Watch</th>
+                  </tr></thead>
+                  <tbody>
+                    {liveTop.slice(0, 40).map((r) => (
+                      <tr key={r.session_id}>
+                        <td>{ddmm(String(r.ngay))}</td>
+                        <td>{r.ten}</td>
+                        <td style={{ maxWidth: 260 }}>
+                          {r.title || <span className="muted">—</span>}
+                        </td>
+                        <td className="n">{(Number(r.duration_phut || 0) / 60).toFixed(1)}</td>
+                        <td className="n"><b>{bn(Number(r.gmv))}</b></td>
+                        <td className="n">{n0(Number(r.items_sold))}</td>
+                        <td className="n">{Number(r.views) > 0 ? n0(Number(r.views)) : <span className="muted">—</span>}</td>
+                        <td className="n">
+                          {Number(r.views) > 0 ? bn(per1k(Number(r.gmv), Number(r.views))) : <span className="muted">—</span>}
+                        </td>
+                        <td className="n">
+                          {Number(r.avg_viewing_duration) > 0
+                            ? `${Math.round(Number(r.avg_viewing_duration))}s`
+                            : <span className="muted">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section id="s5-7">
+              <h2><span className="hno">5.7</span>Creator rooms</h2>
+              <p className="sub">
+                Rooms that sold our products but are not ours. They are registered automatically the
+                first time one appears, so the list grows on its own as the team works with new
+                creators. Engagement columns are blank by design — see the note at the top.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Creator</th>
+                    <th className="n">Sessions</th><th className="n">Hours</th>
+                    <th className="n">GMV</th><th className="n">GMV / hour</th>
+                    <th className="n">Units</th><th className="n">SKU orders</th>
+                    <th className="n">Share of live GMV</th>
+                  </tr></thead>
+                  <tbody>
+                    {liveKocRooms.map((r) => (
+                      <tr key={r.username}>
+                        <td>@{r.username}</td>
+                        <td className="n">{n0(r.phien)}</td>
+                        <td className="n">{n0(r.gio)}</td>
+                        <td className="n"><b>{bn(r.gmv)}</b></td>
+                        <td className="n">{r.gio > 0 ? bn(r.gmv / r.gio) : '—'}</td>
+                        <td className="n">{n0(r.pcs)}</td>
+                        <td className="n">{n0(r.don)}</td>
+                        <td className="n">{pct(p1(r.gmv, liveTot.gmv))}</td>
+                      </tr>
+                    ))}
+                    {!liveKocRooms.length && (
+                      <tr><td colSpan={8} className="muted">No creator sessions in this period.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Live GMV in VND bn. Bear in mind that LIVE GMV Max spend runs largely on these
+                rooms while the GMV booked against their sessions is small — an order that starts in
+                a creator room but closes later, or through a video, is not counted here.
+              </p>
+            </section>
+          </>
+        )}
+
         {/* ===================== DISCOUNTS ===================== */}
         {sec === 'Discounts' && (
           <>
@@ -2205,8 +2654,8 @@ export default function Dashboard({
               {modelSel && <button className="lnk" onClick={() => setModelSel('')}>Clear model filter</button>}
             </div>
 
-            <section id="s5-1">
-              <h2><span className="hno">5.1</span>{dayNote} — key numbers</h2>
+            <section id="s6-1">
+              <h2><span className="hno">6.1</span>{dayNote} — key numbers</h2>
               <p className="sub">
                 Discount money for the filtered days. Booked is what was put behind the orders;
                 valid is what survived to an order that was not cancelled.
@@ -2231,8 +2680,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-2">
-              <h2><span className="hno">5.2</span>Subsidy booked and capture rate per day · DoD</h2>
+            <section id="s6-2">
+              <h2><span className="hno">6.2</span>Subsidy booked and capture rate per day · DoD</h2>
               <p className="sub">
                 Column height is the whole platform subsidy TikTok booked that day. The
                 solid part landed on orders that survived — real money. The pale part was booked
@@ -2267,8 +2716,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-3">
-              <h2><span className="hno">5.3</span>Who paid for the revenue, per day</h2>
+            <section id="s6-3">
+              <h2><span className="hno">6.3</span>Who paid for the revenue, per day</h2>
               <p className="sub">
                 Column height is Seller NMV, split into the cash the customer paid and the subsidy
                 TikTok reimbursed on those same live orders. The line is the subsidy share — how
@@ -2298,8 +2747,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-4">
-              <h2><span className="hno">5.4</span>Subsidy detail per day</h2>
+            <section id="s6-4">
+              <h2><span className="hno">6.4</span>Subsidy detail per day</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -2350,8 +2799,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-5">
-              <h2><span className="hno">5.5</span>Valid subsidy by model, per day</h2>
+            <section id="s6-5">
+              <h2><span className="hno">6.5</span>Valid subsidy by model, per day</h2>
               <p className="sub">
                 Only the subsidy on live orders, split by model. Use the model filter above to
                 isolate one and compare it against the rest.
@@ -2367,8 +2816,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-6">
-              <h2><span className="hno">5.6</span>Who funds the discount — {dayNote}</h2>
+            <section id="s6-6">
+              <h2><span className="hno">6.6</span>Who funds the discount — {dayNote}</h2>
               <p className="sub">
                 Percentage of list price. Blue is money the shop gives up, orange is funded by
                 TikTok. Only the blue part eats into your margin.
@@ -2389,8 +2838,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-7">
-              <h2><span className="hno">5.7</span>Discount spend per day</h2>
+            <section id="s6-7">
+              <h2><span className="hno">6.7</span>Discount spend per day</h2>
               <StackChart
                 data={dayShown.map((r) => ({ ky: r.ky, a: r.seller_disc, b: r.platform_disc }))}
                 fmt={bn} label={ddmm} names={['Seller funded', 'Platform funded']}
@@ -2402,8 +2851,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-8">
-              <h2><span className="hno">5.8</span>Discount rates per day</h2>
+            <section id="s6-8">
+              <h2><span className="hno">6.8</span>Discount rates per day</h2>
               <p className="sub">Both as a percentage of list price, so they are directly comparable.</p>
               <div className="tablewrap">
                 <table>
@@ -2432,8 +2881,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn.</p>
             </section>
 
-            <section id="s5-9">
-              <h2><span className="hno">5.9</span>Discount detail by model — {dayNote}</h2>
+            <section id="s6-9">
+              <h2><span className="hno">6.9</span>Discount detail by model — {dayNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -2472,8 +2921,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-10">
-              <h2><span className="hno">5.10</span>Monthly overview</h2>
+            <section id="s6-10">
+              <h2><span className="hno">6.10</span>Monthly overview</h2>
               <p className="sub">
                 One row per month, totals only. The month-by-month breakdown by model and by price
                 band lives in the <b>MoM Summary</b> tab — this tab stays day-level.
@@ -2518,8 +2967,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn. Follows the month chips, not the day range.</p>
             </section>
 
-            <section id="s5-11">
-              <h2><span className="hno">5.11</span>Who funds the discount, month by month</h2>
+            <section id="s6-11">
+              <h2><span className="hno">6.11</span>Who funds the discount, month by month</h2>
               <p className="sub">
                 Stacked spend: blue is money you gave up, orange is money TikTok gave up.
                 Only the blue part hits your margin.
@@ -2535,8 +2984,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-12">
-              <h2><span className="hno">5.12</span>What Seller NMV is actually made of</h2>
+            <section id="s6-12">
+              <h2><span className="hno">6.12</span>What Seller NMV is actually made of</h2>
               <p className="sub">
                 Column height is Seller NMV, split into the cash the customer actually paid and the
                 subsidy TikTok funded on the same live orders. The two add up to Seller NMV exactly
@@ -2564,8 +3013,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-13">
-              <h2><span className="hno">5.13</span>Subsidy booked vs subsidy kept, by month</h2>
+            <section id="s6-13">
+              <h2><span className="hno">6.13</span>Subsidy booked vs subsidy kept, by month</h2>
               <p className="sub">
                 The whole column is what TikTok put behind your orders. Solid is what survived to
                 a live order; pale is what cancelled away. The green line is the share of Seller GMV
@@ -2634,8 +3083,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn.</p>
             </section>
 
-            <section id="s5-14">
-              <h2><span className="hno">5.14</span>Valid subsidy as a share of Seller NMV, by price band</h2>
+            <section id="s6-14">
+              <h2><span className="hno">6.14</span>Valid subsidy as a share of Seller NMV, by price band</h2>
               <p className="sub">
                 Greener means TikTok is carrying more of that band&rsquo;s revenue. A band warming
                 up month after month is where the platform is moving its voucher money.
@@ -2675,8 +3124,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-15">
-              <h2><span className="hno">5.15</span>Where the platform is putting its voucher money</h2>
+            <section id="s6-15">
+              <h2><span className="hno">6.15</span>Where the platform is putting its voucher money</h2>
               <p className="sub">
                 Platform discount as a percentage of list price, by band and month. If TikTok
                 shifts funding from one band to another — say from 5–10M up to 10–15M — it shows
@@ -2722,8 +3171,8 @@ export default function Dashboard({
         {/* =================== CANCELLATIONS =================== */}
         {sec === 'Cancellations' && (
           <>
-            <section id="s6-1">
-              <h2><span className="hno">6.1</span>{periodNote} — key numbers</h2>
+            <section id="s7-1">
+              <h2><span className="hno">7.1</span>{periodNote} — key numbers</h2>
               <p className="sub">
                 What cancellations cost over the filtered range, in money as well as in units.
               </p>
@@ -2743,8 +3192,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s6-2">
-              <h2><span className="hno">6.2</span>Cancellation rate per {periodWord} · {dod}</h2>
+            <section id="s7-2">
+              <h2><span className="hno">7.2</span>Cancellation rate per {periodWord} · {dod}</h2>
               <p className="sub">Internal target is 40% or below.</p>
               <DeltaChart
                 data={pt((r) => r.cancel_rate)} color="var(--bad)" fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
@@ -2755,8 +3204,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-3">
-              <h2><span className="hno">6.3</span>How long after ordering do orders die — {periodNote}</h2>
+            <section id="s7-3">
+              <h2><span className="hno">7.3</span>How long after ordering do orders die — {periodNote}</h2>
               <p className="sub">Two distinct clusters, and they are two different problems.</p>
               <BarChart
                 data={lapse.map((l) => ({ ky: l.khoang, v: l.so_luong }))}
@@ -2798,8 +3247,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s6-4">
-              <h2><span className="hno">6.4</span>Cancellation rate by model, month by month</h2>
+            <section id="s7-4">
+              <h2><span className="hno">7.4</span>Cancellation rate by model, month by month</h2>
               <p className="sub">Darker is worse. A row that heats up month after month is a product problem, not a seasonal one.</p>
               <Matrix
                 corner="Model"
@@ -2820,8 +3269,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-5">
-              <h2><span className="hno">6.5</span>Worst models — {periodNote}</h2>
+            <section id="s7-5">
+              <h2><span className="hno">7.5</span>Worst models — {periodNote}</h2>
               <p className="sub">Models with at least 30 gross units in the selected period.</p>
               <RowBars
                 rows={skuF.filter((s) => s.so_luong >= 30)
@@ -2836,8 +3285,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-6">
-              <h2><span className="hno">6.6</span>Cancellation detail by model — {periodNote}</h2>
+            <section id="s7-6">
+              <h2><span className="hno">7.6</span>Cancellation detail by model — {periodNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -2872,8 +3321,8 @@ export default function Dashboard({
         {/* ======================== P&L ======================== */}
         {sec === 'P&L' && (
           <>
-            <section id="s7-1">
-              <h2><span className="hno">7.1</span>From list price to cash — {periodNote}</h2>
+            <section id="s8-1">
+              <h2><span className="hno">8.1</span>From list price to cash — {periodNote}</h2>
               <p className="sub">
                 Cancelled orders excluded. This is a draft — COGS, platform fees, affiliate
                 commission and ad spend are still missing.
@@ -2929,8 +3378,8 @@ export default function Dashboard({
               })()}
             </section>
 
-            <section id="s7-2">
-              <h2><span className="hno">7.2</span>Seller NMV and what erodes it, by month</h2>
+            <section id="s8-2">
+              <h2><span className="hno">8.2</span>Seller NMV and what erodes it, by month</h2>
               <p className="sub">
                 Green is Seller NMV recognised, red is the discount the shop funded itself. Together they
                 equal the list price of non-cancelled orders. Always monthly.
@@ -2947,8 +3396,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s7-3">
-              <h2><span className="hno">7.3</span>P&amp;L by month</h2>
+            <section id="s8-3">
+              <h2><span className="hno">8.3</span>P&amp;L by month</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -3262,6 +3711,7 @@ const CSS = `
 .wrap thead th[data-on="1"]{color:var(--c1)}
 .car{font-size:9px}
 .wrap tbody tr:last-child td{border-bottom:0}
+.wrap tr.tot td{border-top:1px solid var(--line);background:var(--surface-2,rgba(0,0,0,.03));font-weight:600}
 .wrap tbody tr:hover td{background:var(--surface-2)}
 .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .k{font-variant-numeric:tabular-nums}

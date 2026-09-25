@@ -8,7 +8,7 @@ export const maxDuration = 300
 
 /**
  *   /api/cron/live?secret=<CRON_SECRET>            → 30 ngày gần nhất
- *   /api/cron/live?secret=<CRON_SECRET>&days=370   → kéo lại cả năm
+ *   /api/cron/live?secret=<CRON_SECRET>&days=175   → kéo tối đa (API chặn ~180 ngày)
  *
  * Được lượt đồng bộ quảng cáo gọi tiếp, vì gói Hobby chỉ cho 2 cron job.
  */
