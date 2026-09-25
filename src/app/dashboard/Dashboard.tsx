@@ -201,7 +201,7 @@ const SECTIONS = [
       { ten: '', subs: ['Key numbers'] },
       { ten: 'By room', subs: ['Sales', 'Traffic and engagement', 'Funnel'] },
       { ten: 'Day by day', subs: ['GMV by room', 'Room by day', 'Daily totals', 'Audience', 'Conversion'] },
-      { ten: 'Monthly', subs: ['By month'] },
+      { ten: 'Monthly', subs: ['By month, by room'] },
       { ten: 'Detail', subs: ['Top sessions', 'Creator rooms'] },
     ],
   },
@@ -494,6 +494,41 @@ const PALETTE = [
   '#0E7490', '#8A6D1F', '#4A5568', '#166534', '#7C2D12',
 ]
 const GREY = '#A9A2AB'
+
+/** Các chỉ số so sánh được giữa ba phòng live. Một nơi khai báo, hai lưới dùng
+ *  chung — thêm một dòng ở đây là cả hai lưới có thêm lựa chọn. */
+type LiveAgg = {
+  gmv: number; pcs: number; don: number; donTao: number; khach: number
+  views: number; viewers: number; likes: number; comments: number; shares: number
+  followers: number; imp: number; clicks: number; gio: number; xemW: number; phien: number
+}
+type RoomMetric = 'gmv' | 'gpm' | 'views' | 'ctr' | 'gio' | 'watch' | 'pcs' | 'engage'
+const ROOM_METRICS: {
+  id: RoomMetric; ten: string; don_vi: string
+  lay: (a: LiveAgg) => number | null
+  fmt: (v: number) => string
+}[] = [
+  { id: 'gmv', ten: 'GMV', don_vi: 'VND bn',
+    lay: (a) => a.gmv || null, fmt: (v) => ((v || 0) / 1e9).toFixed(2) },
+  { id: 'gpm', ten: 'GMV / 1k views', don_vi: 'VND mn',
+    lay: (a) => (a.views > 0 ? (a.gmv / a.views) * 1000 : null),
+    fmt: (v) => ((v || 0) / 1e6).toFixed(1) },
+  { id: 'views', ten: 'Views', don_vi: '',
+    lay: (a) => a.views || null, fmt: (v) => new Intl.NumberFormat('en-US').format(Math.round(v || 0)) },
+  { id: 'ctr', ten: 'Product CTR', don_vi: '%',
+    lay: (a) => (a.imp > 0 ? Math.round((a.clicks / a.imp) * 10000) / 100 : null),
+    fmt: (v) => `${v}%` },
+  { id: 'engage', ten: 'Engagement rate', don_vi: '%',
+    lay: (a) => (a.views > 0
+      ? Math.round(((a.likes + a.comments + a.shares) / a.views) * 1000) / 10 : null),
+    fmt: (v) => `${v}%` },
+  { id: 'watch', ten: 'Watch time', don_vi: 'giây',
+    lay: (a) => (a.gio > 0 ? Math.round(a.xemW / a.gio) : null), fmt: (v) => `${v}s` },
+  { id: 'gio', ten: 'Hours live', don_vi: 'giờ',
+    lay: (a) => a.gio || null, fmt: (v) => v.toFixed(1) },
+  { id: 'pcs', ten: 'Units sold', don_vi: '',
+    lay: (a) => a.pcs || null, fmt: (v) => new Intl.NumberFormat('en-US').format(Math.round(v || 0)) },
+]
 const BAND_COLOR: Record<string, string> = {
   '<5M': '#4A5568', '5-10M': '#2563A8', '10-15M': '#C2620B',
   '15-20M': '#1F7A4D', '20-30M': '#8E44AD', '30M+': '#B31B4A',
@@ -658,6 +693,53 @@ function Dd({ a, b }: { a?: number; b?: number }) {
 
 /** Pivot: rows down the side, periods across the top. `heat` shades cells
  *  so a bad column jumps out without reading every number. */
+/* ------------------------------- phễu ------------------------------- */
+
+/**
+ * Phễu chuyển đổi, mỗi phòng một cột.
+ *
+ * Bề rộng vẽ theo THANG LOG. Impressions gấp ~180 lần số click, vẽ tuyến tính
+ * thì từ bậc hai trở đi chỉ còn một vạch mờ, nhìn không ra gì. Log giữ được
+ * hình phễu mà vẫn trung thực về thứ bậc — số tuyệt đối và % chuyển đổi in
+ * ngay trên từng bậc, đó mới là thứ để đọc.
+ */
+function Funnel({ rooms }: {
+  rooms: { ten: string; color: string; stages: { ten: string; v: number }[] }[]
+}) {
+  const all = rooms.flatMap((r) => r.stages.map((x) => x.v)).filter((v) => v > 0)
+  if (!all.length) return null
+  const hi = Math.log10(Math.max(...all))
+  const lo = Math.log10(Math.min(...all))
+  const w = (v: number) =>
+    v <= 0 ? 4 : 16 + (hi === lo ? 84 : ((Math.log10(v) - lo) / (hi - lo)) * 84)
+
+  return (
+    <div className="funnels">
+      {rooms.map((r) => (
+        <div className="fn-card" key={r.ten}>
+          <div className="fn-head" style={{ borderColor: r.color }}>{r.ten}</div>
+          {r.stages.map((st, i) => {
+            const prev = i > 0 ? r.stages[i - 1].v : 0
+            const conv = i > 0 && prev > 0 ? Math.round((st.v / prev) * 1000) / 10 : null
+            return (
+              <div className="fn-row" key={st.ten}>
+                <div className="fn-lab">{st.ten}</div>
+                <div className="fn-track">
+                  <div className="fn-bar"
+                    style={{ width: `${w(st.v)}%`, background: r.color, opacity: 1 - i * 0.14 }}>
+                    <span className="fn-v">{new Intl.NumberFormat('en-US').format(Math.round(st.v))}</span>
+                  </div>
+                  {conv != null && <div className="fn-conv">{conv}%</div>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function Matrix({ cols, rows, fmt, heat, corner }: {
   cols: string[]
   rows: { label: string; sub?: string; color?: string; vals: (number | null)[] }[]
@@ -786,6 +868,8 @@ export default function Dashboard({
   const [modelSel, setModelSel] = useState('')
   const [closed, setClosed] = useState<Set<string>>(new Set())
   const [momMetric, setMomMetric] = useState<'net' | 'gross' | 'cancel'>('net')
+  /** Chỉ số đang xem ở hai lưới phòng × ngày và phòng × tháng. */
+  const [roomMetric, setRoomMetric] = useState<RoomMetric>('gmv')
 
   const toggleClosed = (c: string) =>
     setClosed((p) => {
@@ -1442,6 +1526,71 @@ export default function Dashboard({
     }
   }, [liveSessions, liveOwnRooms, liveKeep])
 
+  /** Phòng × ngày và phòng × tháng, đầy đủ chỉ số — dựng từ bảng phiên vì
+   *  v_live_daily chỉ gộp theo nhóm own/koc. Hai lưới so sánh dùng chung. */
+  const liveGrid = useMemo(() => {
+    const z = (): LiveAgg => ({
+      gmv: 0, pcs: 0, don: 0, donTao: 0, khach: 0, views: 0, viewers: 0,
+      likes: 0, comments: 0, shares: 0, followers: 0, imp: 0, clicks: 0,
+      gio: 0, xemW: 0, phien: 0,
+    })
+    const cong = (t: LiveAgg, r: LiveSession) => {
+      const gio = Number(r.duration_phut || 0) / 60
+      t.gmv += Number(r.gmv || 0); t.pcs += Number(r.items_sold || 0)
+      t.don += Number(r.sku_orders || 0); t.donTao += Number(r.created_sku_orders || 0)
+      t.khach += Number(r.customers || 0)
+      t.views += Number(r.views || 0); t.viewers += Number(r.viewers || 0)
+      t.likes += Number(r.likes || 0); t.comments += Number(r.comments || 0)
+      t.shares += Number(r.shares || 0); t.followers += Number(r.new_followers || 0)
+      t.imp += Number(r.product_impressions || 0); t.clicks += Number(r.product_clicks || 0)
+      t.gio += gio; t.xemW += Number(r.avg_viewing_duration || 0) * gio
+      t.phien += 1
+    }
+    const ngay = new Map<string, Map<string, LiveAgg>>()
+    const thang = new Map<string, Map<string, LiveAgg>>()
+    const days = new Set<string>()
+    const months = new Set<string>()
+    for (const r of liveSessions) {
+      const d = String(r.ngay)
+      const m = d.slice(0, 7)
+      if (!liveKeep.has(m)) continue
+      const who = r.nhom === 'own' ? r.ten : 'KOC'
+      days.add(d); months.add(m)
+      const dm = ngay.get(who) ?? new Map<string, LiveAgg>()
+      const da = dm.get(d) ?? z(); cong(da, r); dm.set(d, da); ngay.set(who, dm)
+      const mm = thang.get(who) ?? new Map<string, LiveAgg>()
+      const ma = mm.get(m) ?? z(); cong(ma, r); mm.set(m, ma); thang.set(who, mm)
+    }
+    return {
+      days: Array.from(days).sort(),
+      months: Array.from(months).sort(),
+      ngay, thang,
+      hang: [...liveOwnRooms.map((r) => r.ten), 'KOC'],
+    }
+  }, [liveSessions, liveKeep, liveOwnRooms])
+
+  const mDef = useMemo(
+    () => ROOM_METRICS.find((m) => m.id === roomMetric) ?? ROOM_METRICS[0],
+    [roomMetric],
+  )
+
+  /** Một hàng của lưới: lấy giá trị chỉ số đang chọn cho từng cột. */
+  const gridRows = (
+    src: Map<string, Map<string, LiveAgg>>,
+    cols: string[],
+    boKoc = false,
+  ) =>
+    liveGrid.hang
+      .filter((h) => !(boKoc && h === 'KOC'))
+      .map((h, i) => ({
+        label: h,
+        color: h === 'KOC' ? GREY : PALETTE[i % PALETTE.length],
+        vals: cols.map((c) => {
+          const a2 = src.get(h)?.get(c)
+          return a2 ? mDef.lay(a2) : null
+        }),
+      }))
+
   /** Vài mốc theo ngày cho hàng ô đầu sheet: ngày mạnh nhất, ngày gần nhất
    *  và mức tăng giảm so với ngày liền trước. */
   const liveDayStats = useMemo(() => {
@@ -1456,7 +1605,7 @@ export default function Dashboard({
 
   /** Lưới phòng × ngày chỉ vẽ nổi vài chục cột; chọn cả 6 tháng là 175 ngày
    *  nên cắt còn 45 ngày gần nhất, phần còn lại đọc ở bảng bên dưới. */
-  const gridDays = useMemo(() => liveDayRoom.days.slice(-45), [liveDayRoom])
+  const gridDays = useMemo(() => liveGrid.days.slice(-45), [liveGrid])
 
   const liveTop = useMemo(
     () => liveSessions
@@ -2635,6 +2784,26 @@ export default function Dashboard({
                 it, so a weak room shows exactly where it loses people rather than only that it
                 sells less.
               </p>
+              <Funnel
+                rooms={liveOwnRooms.map((r, i) => ({
+                  ten: r.ten,
+                  color: PALETTE[i % PALETTE.length],
+                  stages: [
+                    { ten: 'Product impressions', v: r.imp },
+                    { ten: 'Product clicks', v: r.clicks },
+                    { ten: 'Orders created', v: r.donTao },
+                    { ten: 'Paid SKU orders', v: r.don },
+                    { ten: 'Customers', v: r.khach },
+                  ],
+                }))}
+              />
+              <p className="foot">
+                Bar width is on a log scale, because impressions outnumber clicks by roughly 180 to
+                1 and a linear funnel would collapse every step after the first into a sliver. The
+                number on each bar and the percentage beside it are the real figures — read those,
+                and use the shape only to see where a room narrows.
+              </p>
+
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -2732,27 +2901,25 @@ export default function Dashboard({
                 down a column shows which room carried a given day. Shading is relative to the
                 largest cell.
               </p>
+              <div className="chips" style={{ marginTop: 14 }}>
+                <span className="chips-l">Metric</span>
+                {ROOM_METRICS.map((m) => (
+                  <button key={m.id} className={`chip ${roomMetric === m.id ? 'on' : ''}`}
+                    onClick={() => setRoomMetric(m.id)}>{m.ten}</button>
+                ))}
+              </div>
               <Matrix
-                corner="Room"
+                corner={`Room · ${mDef.ten}`}
                 cols={gridDays.map(ddmm)}
-                fmt={bn}
+                fmt={mDef.fmt}
                 heat="high-good"
-                rows={[
-                  ...liveDayRoom.names.map((nm, i) => ({
-                    label: nm,
-                    color: PALETTE[i % PALETTE.length],
-                    vals: gridDays.map((d) => liveDayRoom.get(d, i) || null),
-                  })),
-                  {
-                    label: 'KOC', color: GREY,
-                    vals: gridDays.map((d) => liveDayRoom.get(d, liveDayRoom.names.length) || null),
-                  },
-                ]}
+                rows={gridRows(liveGrid.ngay, gridDays)}
               />
               <p className="foot">
-                VND bn per room per day. An empty cell means no session that day.
-                {liveDayRoom.days.length > gridDays.length &&
-                  ` Showing the most recent ${gridDays.length} of ${liveDayRoom.days.length} days — the full history is in the table below.`}
+                {mDef.ten}{mDef.don_vi ? ` (${mDef.don_vi})` : ''} per room per day. An empty cell
+                means no session that day.
+                {liveGrid.days.length > gridDays.length &&
+                  ` Showing the most recent ${gridDays.length} of ${liveGrid.days.length} days — the full history is in the table below.`}
               </p>
             </section>
 
@@ -2876,7 +3043,30 @@ export default function Dashboard({
             </section>
 
             <section id="s5-10">
-              <h2><span className="hno">5.10</span>By month</h2>
+              <h2><span className="hno">5.10</span>By month, by room</h2>
+              <p className="sub">
+                Same metric picker as the daily grid above, so a pattern spotted in one week can be
+                checked against the six-month trend without changing what is being measured.
+              </p>
+              <div className="chips" style={{ marginTop: 14 }}>
+                <span className="chips-l">Metric</span>
+                {ROOM_METRICS.map((m) => (
+                  <button key={m.id} className={`chip ${roomMetric === m.id ? 'on' : ''}`}
+                    onClick={() => setRoomMetric(m.id)}>{m.ten}</button>
+                ))}
+              </div>
+              <Matrix
+                corner={`Room · ${mDef.ten}`}
+                cols={liveGrid.months.map((m) => mmyy(`${m}-01`))}
+                fmt={mDef.fmt}
+                heat="high-good"
+                rows={gridRows(liveGrid.thang, liveGrid.months)}
+              />
+              <p className="foot">
+                {mDef.ten}{mDef.don_vi ? ` (${mDef.don_vi})` : ''} per room per month.
+              </p>
+
+              <h3 style={{ marginTop: 30 }}>Shop total by month</h3>
               <p className="sub">
                 The long view behind the daily charts. Six months is all the API allows, so read the
                 trend rather than the level.
@@ -4082,6 +4272,16 @@ const CSS = `
 .car{font-size:9px}
 .wrap tbody tr:last-child td{border-bottom:0}
 .wrap .uhint{font-weight:400;font-size:.8em;color:var(--muted)}
+.wrap .funnels{display:flex;gap:14px;flex-wrap:wrap;margin-top:18px}
+.wrap .fn-card{flex:1 1 240px;min-width:240px;border:1px solid var(--line);border-radius:10px;padding:12px 14px 14px}
+.wrap .fn-head{font-weight:600;font-size:.95em;padding-bottom:8px;margin-bottom:10px;border-bottom:2px solid}
+.wrap .fn-row{margin-bottom:9px}
+.wrap .fn-lab{font-size:.78em;color:var(--muted);margin-bottom:3px}
+.wrap .fn-track{display:flex;align-items:center;gap:8px}
+.wrap .fn-bar{height:22px;border-radius:4px;display:flex;align-items:center;justify-content:flex-end;
+  padding-right:7px;box-sizing:border-box;min-width:46px}
+.wrap .fn-v{font-size:.76em;font-weight:600;color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wrap .fn-conv{font-size:.76em;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .wrap tr.tot td{border-top:1px solid var(--line);background:var(--surface-2,rgba(0,0,0,.03));font-weight:600}
 .wrap tbody tr:hover td{background:var(--surface-2)}
 .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
