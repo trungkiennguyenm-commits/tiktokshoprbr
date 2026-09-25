@@ -3023,6 +3023,60 @@ export default function Dashboard({
                 fmtDuong={(v) => `${mn1(v)} mn`}
                 fmtAds={(v) => `${mn1(v)} mn`}
               />
+              <div className="tablewrap" style={{ marginTop: 14 }}>
+                <table className="mini">
+                  <thead><tr>
+                    <th>Room</th>
+                    <th className="n">LGM spend<div className="uhint">mn</div></th>
+                    <th className="n">Share of ads</th>
+                    <th className="n">Share of GMV</th>
+                    <th className="n">Index</th>
+                    <th className="n">GMV per ₫</th>
+                    <th className="n">ATR</th>
+                  </tr></thead>
+                  <tbody>
+                    {liveOwnRooms.map((r, i2) => {
+                      const lgm = lgmTong.get(r.ten) ?? 0
+                      const sAds = p1(lgm, lgmOwn)
+                      const sGmv = p1(r.gmv, liveTot.own.gmv)
+                      const idx = sGmv > 0 ? sAds / sGmv : 0
+                      return (
+                        <tr key={r.username}>
+                          <td>
+                            <i className="sw" style={{ background: PALETTE[i2 % PALETTE.length], marginRight: 7 }} />
+                            {r.ten}
+                          </td>
+                          <td className="n">{mn1(lgm)}</td>
+                          <td className="n"><b>{pct(sAds)}</b></td>
+                          <td className="n">{pct(sGmv)}</td>
+                          <td className="n"
+                            style={{ color: idx > 1.15 ? 'var(--bad)' : idx < 0.85 ? 'var(--c1)' : 'inherit' }}>
+                            {sGmv > 0 ? `${idx.toFixed(2)}×` : '—'}
+                          </td>
+                          <td className="n">{lgmLai(r.gmv, lgm)}</td>
+                          <td className="n">{pct(p1(lgm, r.gmv))}</td>
+                        </tr>
+                      )
+                    })}
+                    <tr className="tot">
+                      <td><b>All three</b></td>
+                      <td className="n">{mn1(lgmOwn)}</td>
+                      <td className="n">100%</td>
+                      <td className="n">100%</td>
+                      <td className="n muted">—</td>
+                      <td className="n">{lgmLai(liveTot.own.gmv, lgmOwn)}</td>
+                      <td className="n">{pct(p1(lgmOwn, liveTot.own.gmv))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                <b>Index</b> is share of ads ÷ share of GMV. Above 1 the room takes more of the
+                budget than it brings back in live GMV; below 1 it brings back more than it costs.
+                It is a weighting check, not a verdict &mdash; a room can sit above 1 on purpose
+                while it is being grown, and GMV Max bids toward a GMV target, so spend follows
+                results as much as it drives them.
+              </p>
               <p className="foot">
                 Ad spend is drawn as a separate strip rather than a fourth stack segment or a second
                 line, on purpose. LGM runs at 4&ndash;6% of live GMV, so on the same axis it would
@@ -4818,6 +4872,8 @@ const CSS = `
 .car{font-size:9px}
 .wrap tbody tr:last-child td{border-bottom:0}
 .wrap .uhint{font-weight:400;font-size:.8em;color:var(--muted)}
+.wrap table.mini{font-size:12.5px}
+.wrap table.mini td,.wrap table.mini th{padding-top:6px;padding-bottom:6px}
 .wrap .lh{margin-top:14px}
 .wrap .lh-plot{position:relative;height:270px;padding:0 46px;
   border-bottom:1px solid var(--line-s);
