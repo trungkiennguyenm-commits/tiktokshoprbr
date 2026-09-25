@@ -1013,9 +1013,12 @@ export default function Dashboard({
     return keep.map((k) => {
       const sale = momRows.find((r) => r.ky.slice(0, 7) === k)
       const nmv = (sale?.nmv ?? 0) / FX
-      const lost = (sale?.gmv_mat_do_huy ?? 0) / FX
       const cost = adsByMonth.get(k) ?? 0
-      return { ky: `${k}-01`, nmv, lost, cost, atr: nmv > 0 ? p1(cost, nmv) : null }
+      // Cột = Seller NMV, tách thành tiền ads và phần còn lại. Hai phần cộng
+      // lại đúng bằng NMV, và tỷ lệ phần ads trên cả cột CHÍNH LÀ ATR — nên
+      // đường ATR và hình dạng cột nói cùng một chuyện.
+      const rest = Math.max(0, nmv - cost)
+      return { ky: `${k}-01`, nmv, cost, rest, atr: nmv > 0 ? p1(cost, nmv) : null }
     })
   }, [goodMonths, momRows, adsByMonth, FX])
 
@@ -1110,6 +1113,72 @@ export default function Dashboard({
     ten: 'Cancellation rate (right axis)', color: 'var(--bad)', truc: 'pct' as const,
     vals: rows.map((r) => r.cancel_rate), showVals: true, fmtVal: (v: number) => `${v}%`,
   })
+
+  /* ---- hai biểu đồ dùng chung cho MoM Summary, Overview và Advertising ----
+     Cùng một biểu đồ đặt ở ba chỗ thì phải là MỘT đoạn mã, không phải ba bản
+     sao — sửa một lần là cả ba đổi theo, không có chuyện lệch nhau. Cả hai
+     luôn chạy theo tháng, chỉ nghe bộ lọc chip tháng. */
+  const chartRevAtr = (
+    <section>
+      <h2>Seller NMV, ad spend and ATR by month — {monthNote}</h2>
+      <p className="sub">
+        Column height is Seller NMV, split into what advertising cost and what was left after it.
+        The two parts add up to Seller NMV, so the coloured share of each column IS the ATR drawn
+        on the red line. All figures in USD.
+      </p>
+      <ComboChart
+        data={adsRevMonths.map((m) => ({ ky: m.ky, a: m.cost, b: m.rest }))}
+        names={['Ad spend', 'Seller NMV after ads']}
+        colors={['var(--c2)', 'var(--c1-soft)']}
+        lines={[{
+          ten: 'ATR (right axis)',
+          color: 'var(--bad)', truc: 'pct',
+          vals: adsRevMonths.map((m) => m.atr),
+          showVals: true,
+          fmtVal: (v) => `${v}%`,
+        }]}
+        fmt={usd} label={mmyy} unit="USD"
+        tip={(d, i) => {
+          const m = adsRevMonths[i]
+          if (!m) return null
+          return (
+            <><b>{mmyy(d.ky)}</b><br />
+              Seller NMV {usd(m.nmv)}<br />
+              · ad spend {usd(m.cost)}<br />
+              · left after ads {usd(m.rest)}<br />
+              ATR {pct(m.atr)}</>
+          )
+        }}
+      />
+    </section>
+  )
+
+  const chartAdsMix = (
+    <section>
+      <h2>LIVE vs Product GMV Max — {monthNote}</h2>
+      <p className="sub">
+        Always monthly, so the shift in budget mix is readable. C-Ads and branding sit on top in
+        grey — small in money, but they are the only spend with no direct sales attribution.
+      </p>
+      <MultiStack
+        data={adsMonths.map((m) => ({ ky: m.ky, parts: [m.lgm, m.pgm, m.cads] }))}
+        series={[
+          { ten: 'LIVE GMV Max', color: 'var(--c1)' },
+          { ten: 'Product GMV Max', color: 'var(--c2)' },
+          { ten: 'C-Ads and branding', color: GREY },
+        ]}
+        fmt={usd} label={mmyy} unit="USD"
+        tip={(d) => (
+          <><b>{mmyy(d.ky)}</b><br />
+            LGM {usd(d.parts[0])}<br />
+            PGM {usd(d.parts[1])}<br />
+            C-Ads {usd(d.parts[2])}<br />
+            Total {usd(d.parts[0] + d.parts[1] + d.parts[2])}</>
+        )}
+      />
+    </section>
+  )
+
 
   return (
     <>
@@ -1274,6 +1343,10 @@ export default function Dashboard({
                 }}
               />
             </section>
+
+            {chartRevAtr}
+
+            {chartAdsMix}
 
             <section>
               <h2>Headline numbers by month</h2>
@@ -1676,6 +1749,10 @@ export default function Dashboard({
                 }}
               />
             </section>
+
+            {chartRevAtr}
+
+            {chartAdsMix}
 
             <section>
               <h2>Seller NMV per {periodWord} · {dod}</h2>
@@ -2450,64 +2527,13 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section>
-              <h2>Revenue and ATR by month — {monthNote}</h2>
-              <p className="sub">
-                Column height is Seller GMV: solid is Seller NMV, pale is what cancellations took
-                away. The red line is ATR on the right axis. Seller NMV is both the solid part of
-                the column and the denominator of ATR, so a month with heavy cancellations pushes
-                ATR up even when ad spend has not moved.
-              </p>
-              <ComboChart
-                data={adsRevMonths.map((m) => ({ ky: m.ky, a: m.nmv, b: m.lost }))}
-                names={['Seller NMV', 'Lost to cancellations']}
-                colors={['var(--c1)', 'var(--c1-soft)']}
-                lines={[{
-                  ten: 'ATR (right axis)',
-                  color: 'var(--bad)', truc: 'pct',
-                  vals: adsRevMonths.map((m) => m.atr),
-                  showVals: true,
-                  fmtVal: (v) => `${v}%`,
-                }]}
-                fmt={usd} label={mmyy} unit="USD"
-                tip={(d, i) => {
-                  const m = adsRevMonths[i]
-                  if (!m) return null
-                  return (
-                    <><b>{mmyy(d.ky)}</b><br />
-                      Seller GMV {usd(m.nmv + m.lost)}<br />
-                      · Seller NMV {usd(m.nmv)}<br />
-                      · lost to cancels {usd(m.lost)}<br />
-                      Ad spend {usd(m.cost)}<br />
-                      ATR {pct(m.atr)}</>
-                  )
-                }}
-              />
-            </section>
+            {chartRevAtr}
+
+            {chartAdsMix}
 
             <section>
-              <h2>LIVE vs Product GMV Max — {monthNote}</h2>
-              <p className="sub">
-                Always monthly, so the shift in budget mix is readable. C-Ads and branding sit on top
-                in grey — small in money, but they are the only spend with no direct sales attribution.
-              </p>
-              <MultiStack
-                data={adsMonths.map((m) => ({ ky: m.ky, parts: [m.lgm, m.pgm, m.cads] }))}
-                series={[
-                  { ten: 'LIVE GMV Max', color: 'var(--c1)' },
-                  { ten: 'Product GMV Max', color: 'var(--c2)' },
-                  { ten: 'C-Ads and branding', color: GREY },
-                ]}
-                fmt={usd} label={mmyy} unit="USD"
-                tip={(d) => (
-                  <><b>{mmyy(d.ky)}</b><br />
-                    LGM {usd(d.parts[0])}<br />
-                    PGM {usd(d.parts[1])}<br />
-                    C-Ads {usd(d.parts[2])}<br />
-                    Total {usd(d.parts[0] + d.parts[1] + d.parts[2])}</>
-                )}
-              />
-              <div className="tablewrap" style={{ marginTop: 18 }}>
+              <h2>Ad spend by month — {monthNote}</h2>
+              <div className="tablewrap">
                 <table>
                   <thead><tr>
                     <th>Month</th>
@@ -2520,6 +2546,7 @@ export default function Dashboard({
                     {adsMonths.map((m) => {
                       const total = m.lgm + m.pgm + m.cads
                       const sale = momRows.find((r) => r.ky.slice(0, 7) === m.ky.slice(0, 7))
+                      const nmvUsd = sale ? sale.nmv / FX : 0
                       return (
                         <tr key={m.ky}>
                           <td>{mmyy(m.ky)}</td>
@@ -2527,8 +2554,8 @@ export default function Dashboard({
                           <td className="n">{usd(m.pgm)}</td>
                           <td className="n">{usd(m.cads)}</td>
                           <td className="n"><b>{usd(total)}</b></td>
-                          <td className="n">{sale ? usd(sale.nmv / FX) : '—'}</td>
-                          <td className="n">{sale && sale.nmv > 0 ? pct(p1(total, sale.nmv / FX)) : '—'}</td>
+                          <td className="n">{sale ? usd(nmvUsd) : '—'}</td>
+                          <td className="n">{nmvUsd > 0 ? pct(p1(total, nmvUsd)) : '—'}</td>
                           <td className="n">{total > 0 ? pct(p1(m.lgm, total)) : '—'}</td>
                         </tr>
                       )
