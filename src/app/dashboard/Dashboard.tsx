@@ -124,6 +124,10 @@ type Props = {
 const n0 = (v: number) => new Intl.NumberFormat('en-US').format(Math.round(v || 0))
 const bn = (v: number) => ((v || 0) / 1e9).toFixed(2)
 const mn = (v: number) => ((v || 0) / 1e6).toFixed(0)
+/** Triệu VND, một chữ số lẻ. Dùng cho các tỷ suất nhỏ — GMV trên 1.000
+ *  lượt xem hay GMV mỗi giờ live rơi vào vài triệu, in ra theo tỷ thì
+ *  cả cột thành 0.00. */
+const mn1 = (v: number) => ((v || 0) / 1e6).toFixed(1)
 /** USD hai chữ số thập phân — tab Advertising chạy bằng đô, vì ngân sách
  *  quảng cáo được duyệt và báo cáo bằng đô. */
 const usd = (v: number) =>
@@ -2403,8 +2407,8 @@ export default function Dashboard({
                   sub={`${n0(liveTot.own.gio)} hours live in our rooms`} />
                 <Tile label="Views" value={n0(liveTot.own.views)}
                   sub={`${n0(liveTot.own.viewers)} viewers · our rooms only`} />
-                <Tile label="GMV per 1k views" value={bn(per1k(liveTot.own.gmv, liveTot.own.views))}
-                  unit=" bn" sub="our rooms — the one comparable efficiency figure" />
+                <Tile label="GMV per 1k views" value={mn1(per1k(liveTot.own.gmv, liveTot.own.views))}
+                  unit=" mn" sub="our rooms — the one comparable efficiency figure" />
                 <Tile label="Product CTR" value={pct(p1(liveTot.own.clicks, liveTot.own.imp))}
                   sub={`${n0(liveTot.own.clicks)} clicks on ${n0(liveTot.own.imp)} impressions`} />
                 <Tile label="Units sold" value={n0(liveTot.own.pcs + liveTot.koc.pcs)}
@@ -2436,8 +2440,8 @@ export default function Dashboard({
                   <thead><tr>
                     <th>Room</th>
                     <th className="n">Sessions</th><th className="n">Hours</th>
-                    <th className="n">GMV</th><th className="n">GMV / hour</th>
-                    <th className="n">Views</th><th className="n">GMV / 1k views</th>
+                    <th className="n">GMV<div className="uhint">bn</div></th><th className="n">GMV / hour<div className="uhint">mn</div></th>
+                    <th className="n">Views</th><th className="n">GMV / 1k views<div className="uhint">mn</div></th>
                     <th className="n">CTR</th><th className="n">Click to order</th>
                     <th className="n">Watch time</th>
                     <th className="n">Units</th><th className="n">Followers</th>
@@ -2449,9 +2453,9 @@ export default function Dashboard({
                         <td className="n">{n0(r.phien)}</td>
                         <td className="n">{n0(r.gio)}</td>
                         <td className="n"><b>{bn(r.gmv)}</b></td>
-                        <td className="n">{r.gio > 0 ? bn(r.gmv / r.gio) : '—'}</td>
+                        <td className="n">{r.gio > 0 ? mn1(r.gmv / r.gio) : '—'}</td>
                         <td className="n">{n0(r.views)}</td>
-                        <td className="n"><b>{bn(per1k(r.gmv, r.views))}</b></td>
+                        <td className="n"><b>{mn1(per1k(r.gmv, r.views))}</b></td>
                         <td className="n">{pct(p1(r.clicks, r.imp))}</td>
                         <td className="n">{pct(p1(r.don, r.clicks))}</td>
                         <td className="n">{r.phien > 0 ? `${Math.round(r.xemW / r.phien)}s` : '—'}</td>
@@ -2464,9 +2468,9 @@ export default function Dashboard({
                       <td className="n">{n0(liveTot.own.phien)}</td>
                       <td className="n">{n0(liveTot.own.gio)}</td>
                       <td className="n"><b>{bn(liveTot.own.gmv)}</b></td>
-                      <td className="n">{liveTot.own.gio > 0 ? bn(liveTot.own.gmv / liveTot.own.gio) : '—'}</td>
+                      <td className="n">{liveTot.own.gio > 0 ? mn1(liveTot.own.gmv / liveTot.own.gio) : '—'}</td>
                       <td className="n">{n0(liveTot.own.views)}</td>
-                      <td className="n"><b>{bn(per1k(liveTot.own.gmv, liveTot.own.views))}</b></td>
+                      <td className="n"><b>{mn1(per1k(liveTot.own.gmv, liveTot.own.views))}</b></td>
                       <td className="n">{pct(p1(liveTot.own.clicks, liveTot.own.imp))}</td>
                       <td className="n">{pct(p1(liveTot.own.don, liveTot.own.clicks))}</td>
                       <td className="n muted">—</td>
@@ -2530,7 +2534,7 @@ export default function Dashboard({
                       Creator rooms {bn(m.koc)}<br />
                       {n0(m.phien)} sessions · {n0(m.gio)} hours<br />
                       Views {n0(m.views)}<br />
-                      GMV per 1k views {bn(per1k(m.own, m.views))}<br />
+                      GMV per 1k views {mn1(per1k(m.own, m.views))} mn<br />
                       CTR {pct(m.imp > 0 ? p1(m.clicks, m.imp) : null)}</>
                   )
                 }}
@@ -2570,7 +2574,7 @@ export default function Dashboard({
                     <th>Day</th><th>Room</th><th>Title</th>
                     <th className="n">Hours</th><th className="n">GMV</th>
                     <th className="n">Units</th><th className="n">Views</th>
-                    <th className="n">GMV / 1k views</th><th className="n">Watch</th>
+                    <th className="n">GMV / 1k views<div className="uhint">mn</div></th><th className="n">Watch</th>
                   </tr></thead>
                   <tbody>
                     {liveTop.slice(0, 40).map((r) => (
@@ -2585,7 +2589,7 @@ export default function Dashboard({
                         <td className="n">{n0(Number(r.items_sold))}</td>
                         <td className="n">{Number(r.views) > 0 ? n0(Number(r.views)) : <span className="muted">—</span>}</td>
                         <td className="n">
-                          {Number(r.views) > 0 ? bn(per1k(Number(r.gmv), Number(r.views))) : <span className="muted">—</span>}
+                          {Number(r.views) > 0 ? mn1(per1k(Number(r.gmv), Number(r.views))) : <span className="muted">—</span>}
                         </td>
                         <td className="n">
                           {Number(r.avg_viewing_duration) > 0
@@ -2611,7 +2615,7 @@ export default function Dashboard({
                   <thead><tr>
                     <th>Creator</th>
                     <th className="n">Sessions</th><th className="n">Hours</th>
-                    <th className="n">GMV</th><th className="n">GMV / hour</th>
+                    <th className="n">GMV<div className="uhint">bn</div></th><th className="n">GMV / hour<div className="uhint">mn</div></th>
                     <th className="n">Units</th><th className="n">SKU orders</th>
                     <th className="n">Share of live GMV</th>
                   </tr></thead>
@@ -2622,7 +2626,7 @@ export default function Dashboard({
                         <td className="n">{n0(r.phien)}</td>
                         <td className="n">{n0(r.gio)}</td>
                         <td className="n"><b>{bn(r.gmv)}</b></td>
-                        <td className="n">{r.gio > 0 ? bn(r.gmv / r.gio) : '—'}</td>
+                        <td className="n">{r.gio > 0 ? mn1(r.gmv / r.gio) : '—'}</td>
                         <td className="n">{n0(r.pcs)}</td>
                         <td className="n">{n0(r.don)}</td>
                         <td className="n">{pct(p1(r.gmv, liveTot.gmv))}</td>
@@ -3711,6 +3715,7 @@ const CSS = `
 .wrap thead th[data-on="1"]{color:var(--c1)}
 .car{font-size:9px}
 .wrap tbody tr:last-child td{border-bottom:0}
+.wrap .uhint{font-weight:400;font-size:.8em;color:var(--muted)}
 .wrap tr.tot td{border-top:1px solid var(--line);background:var(--surface-2,rgba(0,0,0,.03));font-weight:600}
 .wrap tbody tr:hover td{background:var(--surface-2)}
 .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
