@@ -2387,7 +2387,7 @@ export default function Dashboard({
                 ad spend (including C-Ads) divided by that day&rsquo;s Seller NMV, on the right axis.
               </p>
               <ComboChart
-                data={adsDays.map((r) => ({ ky: r.ngay, a: Number(r.lgm_vnd || 0), b: Number(r.pgm_vnd || 0) }))}
+                data={adsDays.map((r) => ({ ky: r.ngay, a: Number(r.lgm_usd || 0), b: Number(r.pgm_usd || 0) }))}
                 names={['LIVE GMV Max', 'Product GMV Max']}
                 colors={['var(--c1)', 'var(--c2)']}
                 lines={[{
