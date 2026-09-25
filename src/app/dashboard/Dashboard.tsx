@@ -130,8 +130,68 @@ const RANGES = [
 ] as const
 type RangeKey = (typeof RANGES)[number]['key']
 
-const TABS = ['MoM Summary', 'Overview', 'Category', 'SKU', 'Discounts', 'Advertising', 'Cancellations', 'P&L', 'Glossary'] as const
-type Tab = (typeof TABS)[number]
+/* ============================ điều hướng ============================
+   Dashboard chia làm 7 phần đánh số, cộng Glossary để tra cứu. Mỗi phần
+   liệt kê sẵn các khối bên trong kèm số hiệu (4.4, 5.2…) để trong họp chỉ
+   cần gọi số là mọi người mở đúng chỗ.
+
+   Thứ tự nhãn ở đây PHẢI khớp thứ tự khối trong JSX — có kiểm tra tự động
+   bên dưới, lệch là hiện cảnh báo ngay trên thanh điều hướng.
+   ==================================================================== */
+
+const SECTIONS = [
+  {
+    id: 'Summary', ten: 'Summary',
+    subs: ['Month at a glance', 'GMV, NMV and cancellations',
+      'Seller NMV, ad spend and ATR', 'LIVE vs Product GMV Max', 'Headline numbers by month'],
+  },
+  {
+    id: 'Sales', ten: 'Sales',
+    subs: ['Range totals', 'GMV, NMV and cancellation rate', 'Seller NMV, ad spend and ATR',
+      'LIVE vs Product GMV Max', 'Seller NMV per period', 'Net quantity per period',
+      'Robot vs handheld', 'Detail by period'],
+  },
+  {
+    id: 'Products', ten: 'Products',
+    subs: ['Category cards', 'Seller NMV by category', 'Cancellation rate by category',
+      'Category detail', 'Net quantity by price band', 'Cancellation rate by price band',
+      'Gross vs net units', 'Model performance by month', 'Top models',
+      'Full table by category'],
+  },
+  {
+    id: 'Advertising', ten: 'Advertising',
+    subs: ['Spend and ATR', 'Spend vs Seller NMV per day', 'Day by day',
+      'Seller NMV, ad spend and ATR by month', 'LIVE vs Product GMV Max',
+      'Ad spend by month', 'Campaigns'],
+  },
+  {
+    id: 'Discounts', ten: 'Discounts',
+    subs: ['Subsidy booked and capture per day', 'Who paid for the revenue', 'Subsidy detail per day',
+      'Valid subsidy by model', 'Who funds the discount', 'Discount spend per day',
+      'Discount rates per day', 'Discount detail by model', 'Monthly overview',
+      'Who funds the discount by month', 'What Seller NMV is made of',
+      'Subsidy booked vs kept by month', 'Valid subsidy by price band',
+      'Where the platform puts its voucher'],
+  },
+  {
+    id: 'Cancellations', ten: 'Cancellations',
+    subs: ['Rate per period', 'Time to cancel', 'By model, by month', 'Worst models',
+      'Detail by model'],
+  },
+  {
+    id: 'P&L', ten: 'P&L',
+    subs: ['List price to cash', 'What erodes Seller NMV', 'P&L by month'],
+  },
+  { id: 'Glossary', ten: 'Glossary', subs: [] },
+] as const
+
+type Sec = (typeof SECTIONS)[number]['id']
+
+/** Số hiệu của phần, ví dụ Products là 3. Glossary không đánh số. */
+const secNo = (id: Sec) => {
+  const i = SECTIONS.findIndex((s) => s.id === id)
+  return id === 'Glossary' ? null : i + 1
+}
 
 /* ============================== glossary ==============================
    One place where every term on this dashboard is pinned down. If a number
@@ -664,7 +724,7 @@ export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, lapseDaily, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
 }: Props) {
-  const [tab, setTab] = useState<Tab>('MoM Summary')
+  const [sec, setSec] = useState<Sec>('Summary')
   const [cat, setCat] = useState<CatKey>('all')
   const [range, setRange] = useState<RangeKey>('mom')
   /** Chọn nhiều tháng để so sánh. Rỗng nghĩa là lấy hết. */
@@ -1183,7 +1243,7 @@ export default function Dashboard({
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <main className="wrap">
+      <div className="wrap">
         <header>
           <p className="eyebrow">Roborock Official VN · TikTok Shop</p>
           <h1>Business performance</h1>
@@ -1213,7 +1273,6 @@ export default function Dashboard({
               name when you share these numbers. Full definitions are in the <b>Glossary</b> tab.
             </div>
           </div>
-        </header>
 
         <div className="filters">
           <div className="seg">
@@ -1247,23 +1306,49 @@ export default function Dashboard({
         </div>
 
         <p className="foot">
-          {tab === 'MoM Summary'
+          {sec === 'Summary'
             ? `Always monthly — the day ranges do not apply here. Showing ${monthNote}.`
-            : tab === 'Discounts'
-              ? `Always day-level — this is the DoD tab. Showing ${dayNote}. The single monthly table at the bottom follows the month chips instead.`
-              : tab === 'Glossary'
-                ? 'Reference only — the filters above do not apply to this tab.'
-                : `Showing: ${periodNote}. Every chart and table on this tab follows this filter.`}
+            : sec === 'Discounts'
+              ? `Mostly day-level. Showing ${dayNote}. The monthly blocks at the bottom follow the month chips instead.`
+              : sec === 'Glossary'
+                ? 'Reference only — the filters above do not apply here.'
+                : `Showing: ${periodNote}. Every chart and table in this section follows this filter.`}
         </p>
+      </header>
 
-        <nav className="tabs">
-          {TABS.map((t) => (
-            <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t}</button>
-          ))}
+      <div className="body">
+        {/* Thanh điều hướng trái. Dưới 1100px nó tự nằm ngang thành dải tab
+            như cũ, nên mở trên điện thoại không vỡ. */}
+        <nav className="side">
+          {SECTIONS.map((sc) => {
+            const no = secNo(sc.id)
+            const on = sec === sc.id
+            return (
+              <div key={sc.id} className={`side-g ${on ? 'on' : ''}`}>
+                <button className="side-s" onClick={() => setSec(sc.id)}>
+                  {no && <span className="side-n">{no}</span>}
+                  {sc.ten}
+                </button>
+                {on && sc.subs.length > 0 && (
+                  <ol className="side-subs">
+                    {sc.subs.map((t, i) => (
+                      <li key={t}>
+                        <a href={`#s${no}-${i + 1}`}>
+                          <span className="side-n2">{no}.{i + 1}</span>{t}
+                        </a>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            )
+          })}
         </nav>
 
-        {/* =================== MoM SUMMARY =================== */}
-        {tab === 'MoM Summary' && (
+        <main className="main">
+
+        {/* ====================== SUMMARY ====================== */}
+        {sec === 'Summary' && (
           <>
             {(() => {
               const c = momRows[momRows.length - 1]
@@ -1273,8 +1358,8 @@ export default function Dashboard({
               const subShare = (r?: Rolled) => (r ? p1(r.platform_disc_chua_huy, r.nmv) : undefined)
               return (
                 <>
-                  <section>
-                    <h2>{mmyy(c.ky)} at a glance</h2>
+                  <section id="s1-1">
+                    <h2><span className="hno">1.1</span>{mmyy(c.ky)} at a glance</h2>
                     <p className="sub">
                       The latest month in view, against the month before it. Rates move in
                       percentage points; everything else in percent.
@@ -1319,8 +1404,8 @@ export default function Dashboard({
               )
             })()}
 
-            <section>
-              <h2>The month-over-month picture</h2>
+            <section id="s1-2">
+              <h2><span className="hno">1.2</span>The month-over-month picture</h2>
               <p className="sub">
                 Column height is Seller GMV: solid is Seller NMV, pale is what cancellations took away.
                 The red line is the cancellation rate with its own 0–100% axis on the right,
@@ -1344,12 +1429,12 @@ export default function Dashboard({
               />
             </section>
 
-            {chartRevAtr}
+            <div id="s1-3">{chartRevAtr}</div>
 
-            {chartAdsMix}
+            <div id="s1-4">{chartAdsMix}</div>
 
-            <section>
-              <h2>Headline numbers by month</h2>
+            <section id="s1-5">
+              <h2><span className="hno">1.5</span>Headline numbers by month</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -1388,8 +1473,237 @@ export default function Dashboard({
               <p className="foot">Money in VND bn.</p>
             </section>
 
-            <section>
-              <h2>Net quantity by price band</h2>
+          </>
+        )}
+
+        {/* ======================= SALES ======================= */}
+        {sec === 'Sales' && (
+          <>
+            <section id="s2-1">
+              <h2><span className="hno">2.1</span>{periodNote} — totals</h2>
+              <p className="sub">
+                The whole filtered range added up ({span.n} {periodWord}{span.n === 1 ? '' : 's'}),
+                not just the latest one.{' '}
+                {span.nPrev
+                  ? `Compared with the ${span.nPrev} ${periodWord}${span.nPrev === 1 ? '' : 's'} immediately before it.`
+                  : 'No earlier range of the same length to compare against.'}
+              </p>
+              <div className="tiles" style={{ marginTop: 20 }}>
+                <Tile label="Seller NMV" value={bn(span.cur.nmv)} unit=" bn"
+                  sub={deltaText(delta(span.cur.nmv, span.prev?.nmv), 'range')} />
+                <Tile label="Net quantity" value={n0(span.cur.sl_chua_huy)} unit=" pcs"
+                  sub={deltaText(delta(span.cur.sl_chua_huy, span.prev?.sl_chua_huy), 'range')} />
+                <Tile label="Seller GMV" value={bn(span.cur.gmv)} unit=" bn"
+                  sub={deltaText(delta(span.cur.gmv, span.prev?.gmv), 'range')} />
+                <Tile label="Cancellation rate" value={pct(span.cur.cancel_rate)}
+                  tone={span.cur.cancel_rate > 40 ? 'bad' : 'ok'}
+                  sub={`${n0(span.cur.sl_huy)} of ${n0(span.cur.so_luong)} pcs cancelled`} />
+                <Tile label="Ad spend" value={usd(adsSpanUsd)} unit=" USD"
+                  sub="all four Roborock ad accounts" />
+                <Tile label="ATR — ad take rate" value={pct(p1(adsSpanUsd, span.cur.nmv / FX))}
+                  tone={p1(adsSpanUsd, span.cur.nmv / FX) > 25 ? 'bad' : 'ok'}
+                  sub="ad spend ÷ Seller NMV" />
+              </div>
+            </section>
+
+            <section id="s2-2">
+              <h2><span className="hno">2.2</span>Seller GMV, Seller NMV and cancellation rate in one picture</h2>
+              <p className="sub">
+                Full column height is Seller GMV. The solid part is Seller NMV — what is still alive. The pale
+                part is value lost to cancellations. The green line is the share of Seller NMV that has
+                actually completed. The red line is the cancellation rate on the right axis.
+              </p>
+              <ComboChart
+                data={shown.map((r) => ({ ky: r.ky, a: r.nmv, b: r.gmv_mat_do_huy }))}
+                names={['Seller NMV (live orders)', 'Lost to cancellations']}
+                colors={['var(--c1)', 'var(--c1-soft)']}
+                lines={[
+                  { ten: 'Seller NMV completed', color: 'var(--ok)', truc: 'tien', vals: shown.map((r) => r.nmv_hoan_tat) },
+                  cancelLine(shown),
+                ]}
+                fmt={bn} label={lbl} unit="VND bn"
+                tip={(d) => {
+                  const r = shown.find((x) => x.ky === d.ky)!
+                  return (
+                    <><b>{lbl(d.ky)}</b><br />
+                      Seller GMV {bn(r.gmv)} bn<br />
+                      · Seller NMV {bn(r.nmv)} bn<br />
+                      · lost to cancels {bn(r.gmv_mat_do_huy)} bn<br />
+                      Seller NMV completed {bn(r.nmv_hoan_tat)} bn<br />
+                      Customer-funded {bn(r.khach_tra)} bn<br />
+                      Cancellation rate {r.cancel_rate}%</>
+                  )
+                }}
+              />
+            </section>
+
+            <div id="s2-3">{chartRevAtr}</div>
+
+            <div id="s2-4">{chartAdsMix}</div>
+
+            <section id="s2-5">
+              <h2><span className="hno">2.5</span>Seller NMV per {periodWord} · {dod}</h2>
+              <p className="sub">Cancelled orders already removed.</p>
+              <DeltaChart
+                data={pt((r) => r.nmv)} color="var(--c1)" fmt={bn} label={lbl} unit="VND bn"
+                tip={(d, dl) => (
+                  <><b>{lbl(d.ky)}</b><br />Seller NMV {n0(d.v)} VND
+                    {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% vs previous period</>}</>
+                )}
+              />
+            </section>
+
+            <section id="s2-6">
+              <h2><span className="hno">2.6</span>Net quantity per {periodWord} · {dod}</h2>
+              <p className="sub">Units that have not been cancelled.</p>
+              <DeltaChart
+                data={pt((r) => r.sl_chua_huy)} color="var(--c3)" fmt={n0} label={lbl} unit="pcs"
+                tip={(d, dl) => (
+                  <><b>{lbl(d.ky)}</b><br />{n0(d.v)} net pcs
+                    {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% vs previous period</>}</>
+                )}
+              />
+            </section>
+
+            <section id="s2-7">
+              <h2><span className="hno">2.7</span>Robot vs handheld mix</h2>
+              <p className="sub">Stacked net quantity.</p>
+              <StackChart
+                data={splitByCat(srcShown, (r) => r.sl_chua_huy)}
+                fmt={n0} label={lbl} names={['Robot', 'Handheld']}
+                colors={['var(--c1)', 'var(--c2)']} unit="net pcs"
+                tip={(d) => (
+                  <><b>{lbl(d.ky)}</b><br />Robot {n0(d.a)} · Handheld {n0(d.b)}
+                    <br />Total {n0(d.a + d.b)} pcs · Robot share {p1(d.a, d.a + d.b)}%</>
+                )}
+              />
+            </section>
+
+            <section id="s2-8">
+              <h2><span className="hno">2.8</span>Detail by {periodWord}</h2>
+              <SeriesTable rows={shown} lbl={lbl} />
+            </section>
+
+            <div className="note warn">
+              <b>The newest period still understates cancellations.</b> Orders placed in the current
+              period have not finished their life cycle, and the largest cancellation cluster lands
+              3–7 days after the order. Expect the cancellation rate to climb and Seller NMV to drift down
+              over the following week.
+            </div>
+          </>
+        )}
+
+        {/* ===================== PRODUCTS ===================== */}
+        {sec === 'Products' && (
+          <>
+            <section id="s3-1" className="cards">
+              {(['robot', 'handheld'] as const).map((c, i) => {
+                const rows = srcShown.filter((r) => r.category === c)
+                const s = (f: (r: Monthly | Daily) => number) =>
+                  rows.reduce((a, r) => a + Number(f(r) || 0), 0)
+                const gross = s((r) => r.so_luong)
+                const gmv = s((r) => r.gmv)
+                const cancelled = s((r) => r.sl_huy)
+                return (
+                  <div className="card" key={c}>
+                    <div className="card-h">
+                      <i className="sw" style={{ background: i === 0 ? 'var(--c1)' : 'var(--c2)' }} />
+                      <b>{c === 'robot' ? 'Robot vacuums' : 'Handheld vacuums'}</b>
+                    </div>
+                    <div className="kv"><span>Seller NMV</span><b>{bn(s((r) => r.nmv))} bn</b></div>
+                    <div className="kv"><span>Seller GMV</span><b>{bn(gmv)} bn</b></div>
+                    <div className="kv"><span>Net quantity</span><b>{n0(s((r) => r.sl_chua_huy))} pcs</b></div>
+                    <div className="kv"><span>Gross quantity</span><b>{n0(gross)} pcs</b></div>
+                    <div className="kv"><span>Cancellation rate</span>
+                      <b style={{ color: p1(cancelled, gross) > 40 ? 'var(--bad)' : 'inherit' }}>
+                        {pct(p1(cancelled, gross))}
+                      </b></div>
+                    <div className="kv"><span>Avg price after seller disc.</span>
+                      <b>{n0(gmv / Math.max(1, gross))}</b></div>
+                  </div>
+                )
+              })}
+            </section>
+
+            <section id="s3-2">
+              <h2><span className="hno">3.2</span>Seller NMV by category per {periodWord}</h2>
+              <StackChart
+                data={splitByCat(srcShown, (r) => r.nmv)}
+                fmt={bn} label={lbl} names={['Robot', 'Handheld']}
+                colors={['var(--c1)', 'var(--c2)']} unit="VND bn"
+                tip={(d) => (
+                  <><b>{lbl(d.ky)}</b><br />Robot {bn(d.a)} bn · Handheld {bn(d.b)} bn
+                    <br />Robot share {p1(d.a, d.a + d.b)}%</>
+                )}
+              />
+            </section>
+
+            <section id="s3-3">
+              <h2><span className="hno">3.3</span>Cancellation rate by category · {dod}</h2>
+              <p className="sub">
+                Handhelds usually cancel harder than robots. Same delivery problem, lower order
+                value, so buyers refuse more easily.
+              </p>
+              <div className="two">
+                {(['robot', 'handheld'] as const).map((c) => {
+                  const rr = rollup(srcShown, c)
+                  return (
+                    <div key={c}>
+                      <h3>{c === 'robot' ? 'Robot' : 'Handheld'}</h3>
+                      <DeltaChart
+                        data={rr.map((r) => ({ ky: r.ky, v: r.cancel_rate }))}
+                        color={c === 'robot' ? 'var(--c1)' : 'var(--c2)'}
+                        fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
+                        tip={(d) => <><b>{lbl(d.ky)}</b><br />Cancelled {d.v}%</>}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+
+            <section id="s3-4">
+              <h2><span className="hno">3.4</span>Category detail by {periodWord}</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Period</th><th>Category</th>
+                    <th className="n">Gross pcs</th><th className="n">Net pcs</th><th className="n">Cancelled</th>
+                    <th className="n">Cancel %</th><th className="n">Seller GMV</th><th className="n">Seller NMV</th>
+                    <th className="n">Avg price</th>
+                  </tr></thead>
+                  <tbody>
+                    {srcShown
+                      .filter((r) => r.category === 'robot' || r.category === 'handheld')
+                      .slice()
+                      .sort((a, b) => keyOf(b).localeCompare(keyOf(a)) || a.category.localeCompare(b.category))
+                      .slice(0, 80)
+                      .map((r) => (
+                        <tr key={`${keyOf(r)}-${r.category}`}>
+                          <td className="k">{lbl(keyOf(r))}</td>
+                          <td>
+                            <span className="sw sm" style={{ background: r.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
+                            {r.category === 'robot' ? 'Robot' : 'Handheld'}
+                          </td>
+                          <td className="n">{n0(r.so_luong)}</td>
+                          <td className="n"><b>{n0(r.sl_chua_huy)}</b></td>
+                          <td className="n">{n0(r.sl_huy)}</td>
+                          <td className="n" style={{ color: Number(r.cancel_rate) > 40 ? 'var(--bad)' : 'inherit' }}>
+                            {pct(r.cancel_rate)}
+                          </td>
+                          <td className="n">{bn(r.gmv)}</td>
+                          <td className="n">{bn(r.nmv)}</td>
+                          <td className="n">{n0(Number(r.gmv || 0) / Math.max(1, Number(r.so_luong || 0)))}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">Money in VND bn, average price in VND. Latest 80 rows.</p>
+            </section>
+
+            <section id="s3-5">
+              <h2><span className="hno">3.5</span>Net quantity by price band</h2>
               <p className="sub">Stacked columns — where the volume actually sits each month.</p>
               <MultiStack
                 data={goodMonths.map((m) => ({
@@ -1406,8 +1720,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>Cancellation rate by price band</h2>
+            <section id="s3-6">
+              <h2><span className="hno">3.6</span>Cancellation rate by price band</h2>
               <p className="sub">
                 Darker means worse. Read down a column to see which band is dragging the month,
                 across a row to see whether a band is getting better or worse.
@@ -1456,470 +1770,6 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section>
-              <h2>Model performance by month</h2>
-              <p className="sub">
-                One row per model, one column per month. Switch the metric to compare volume or
-                cancellation behaviour. The band next to each model name is its list-price band.
-              </p>
-              <div className="seg" style={{ marginTop: 14 }}>
-                {([['net', 'Net pcs'], ['gross', 'Gross pcs'], ['cancel', 'Cancel %']] as const).map(([k, l]) => (
-                  <button key={k} className={momMetric === k ? 'on' : ''} onClick={() => setMomMetric(k)}>{l}</button>
-                ))}
-              </div>
-              <Matrix
-                corner="Model"
-                cols={goodMonths.map(mmyy)}
-                heat={momMetric === 'cancel' ? 'high-bad' : undefined}
-                fmt={momMetric === 'cancel' ? (v) => `${v}%` : n0}
-                rows={skuGrid.models.map((m) => ({
-                  label: m,
-                  sub: skuGrid.bandByModel.get(m),
-                  color: BAND_COLOR[skuGrid.bandByModel.get(m) ?? '<5M'],
-                  vals: goodMonths.map((mo) => {
-                    const rows = skuGrid.cell.get(`${m}|${mo}`)
-                    if (!rows?.length) return null
-                    const s = (f: keyof SkuPeriod) => rows.reduce((a, r) => a + Number(r[f] || 0), 0)
-                    if (momMetric === 'net') return s('sl_chua_huy')
-                    if (momMetric === 'gross') return s('so_luong')
-                    return p1(s('sl_huy'), s('so_luong'))
-                  }),
-                }))}
-              />
-            </section>
-
-            <section>
-              <h2>Who funds the discount, month by month</h2>
-              <p className="sub">
-                Stacked spend: blue is money you gave up, orange is money TikTok gave up.
-                Only the blue part hits your margin.
-              </p>
-              <StackChart
-                data={momRows.map((r) => ({ ky: r.ky, a: r.seller_disc, b: r.platform_disc }))}
-                fmt={bn} label={mmyy} names={['Seller funded', 'Platform funded']}
-                colors={['var(--c1)', 'var(--c2)']} unit="VND bn"
-                tip={(d) => (
-                  <><b>{mmyy(d.ky)}</b><br />Seller {bn(d.a)} bn · Platform {bn(d.b)} bn<br />
-                    Seller carries {p1(d.a, d.a + d.b)}% of all discounting</>
-                )}
-              />
-            </section>
-
-            <section>
-              <h2>What Seller NMV is actually made of</h2>
-              <p className="sub">
-                Column height is Seller NMV, split into the cash the customer actually paid and the
-                subsidy TikTok funded on the same live orders. The two add up to Seller NMV exactly
-                — the subsidy already sits inside Seller NMV, it is not added on top. The line is
-                the subsidy share: how much of your recognised revenue is TikTok&rsquo;s money
-                rather than the customer&rsquo;s.
-              </p>
-              <ComboChart
-                data={momRows.map((r) => ({ ky: r.ky, a: r.khach_tra, b: r.platform_disc_chua_huy }))}
-                names={['Customer-funded NMV', 'Platform-funded NMV']}
-                colors={['var(--c1)', 'var(--c2)']}
-                lines={[{
-                  ten: 'Valid subsidy % of Seller NMV', color: 'var(--ok)', truc: 'pct',
-                  showVals: true, fmtVal: (v) => `${v}%`,
-                  vals: momRows.map((r) => p1(r.platform_disc_chua_huy, r.nmv)),
-                }]}
-                fmt={bn} label={mmyy} unit="VND bn"
-                tip={(d) => (
-                  <><b>{mmyy(d.ky)}</b><br />
-                    Seller NMV {bn(d.a + d.b)} bn<br />
-                    · customer-funded {bn(d.a)} bn (cash from buyer)<br />
-                    · valid subsidy {bn(d.b)} bn<br />
-                    Subsidy share {p1(d.b, d.a + d.b)}%</>
-                )}
-              />
-            </section>
-
-            <section>
-              <h2>Subsidy booked vs subsidy kept, by month</h2>
-              <p className="sub">
-                The whole column is what TikTok put behind your orders. Solid is what survived to
-                a live order; pale is what cancelled away. The green line is the share of Seller GMV
-                TikTok is funding — your effective subsidy rate.
-              </p>
-              <ComboChart
-                data={momRows.map((r) => ({
-                  ky: r.ky,
-                  a: r.platform_disc_chua_huy,
-                  b: Math.max(0, r.platform_disc - r.platform_disc_chua_huy),
-                }))}
-                names={['Valid subsidy', 'Lost with cancellations']}
-                colors={['var(--c2)', 'var(--c1-soft)']}
-                lines={[{
-                  ten: 'Subsidy % of Seller GMV', color: 'var(--ok)', truc: 'pct',
-                  showVals: true, fmtVal: (v) => `${v}%`,
-                  vals: momRows.map((r) => p1(r.platform_disc, r.gmv)),
-                }]}
-                fmt={bn} label={mmyy} unit="VND bn"
-                tip={(d) => {
-                  const r = momRows.find((x) => x.ky === d.ky)!
-                  return (
-                    <><b>{mmyy(d.ky)}</b><br />
-                      Booked {bn(r.platform_disc)} bn · {p1(r.platform_disc, r.gmv)}% of Seller GMV<br />
-                      Valid {bn(d.a)} bn · {p1(d.a, r.nmv)}% of Seller NMV<br />
-                      Lost {bn(d.b)} bn<br />
-                      Capture rate {p1(d.a, r.platform_disc)}%</>
-                  )
-                }}
-              />
-              <div className="tablewrap" style={{ marginTop: 18 }}>
-                <table>
-                  <thead><tr>
-                    <th>Month</th>
-                    <th className="n">Seller GMV</th><th className="n">Subsidy booked</th><th className="n">% of Seller GMV</th>
-                    <th className="n">Seller NMV</th><th className="n">Valid subsidy</th><th className="n">% of Seller NMV</th>
-                    <th className="n">Lost subsidy</th><th className="n">Capture rate</th>
-                    <th className="n">Seller funded</th><th className="n">Seller % of list</th>
-                  </tr></thead>
-                  <tbody>
-                    {momRows.map((r) => {
-                      const capture = p1(r.platform_disc_chua_huy, r.platform_disc)
-                      return (
-                        <tr key={r.ky}>
-                          <td className="k">{mmyy(r.ky)}</td>
-                          <td className="n">{bn(r.gmv)}</td>
-                          <td className="n">{bn(r.platform_disc)}</td>
-                          <td className="n">{pct(p1(r.platform_disc, r.gmv))}</td>
-                          <td className="n">{bn(r.nmv)}</td>
-                          <td className="n"><b>{bn(r.platform_disc_chua_huy)}</b></td>
-                          <td className="n"><b>{pct(p1(r.platform_disc_chua_huy, r.nmv))}</b></td>
-                          <td className="n" style={{ color: 'var(--bad)' }}>
-                            {bn(r.platform_disc - r.platform_disc_chua_huy)}
-                          </td>
-                          <td className="n" style={{ color: capture < 40 ? 'var(--bad)' : 'inherit' }}>
-                            {pct(capture)}
-                          </td>
-                          <td className="n muted">{bn(r.seller_disc_chua_huy)}</td>
-                          <td className="n muted">{pct(p1(r.seller_disc_chua_huy, r.gia_goc_chua_huy))}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className="foot">Money in VND bn.</p>
-            </section>
-
-            <section>
-              <h2>Valid subsidy as a share of Seller NMV, by price band</h2>
-              <p className="sub">
-                Greener means TikTok is carrying more of that band&rsquo;s revenue. A band warming
-                up month after month is where the platform is moving its voucher money.
-              </p>
-              <Matrix
-                corner="Price band"
-                cols={goodMonths.map(mmyy)}
-                heat="high-good"
-                fmt={(v) => `${v}%`}
-                rows={segGrid.bands.map((b) => ({
-                  label: b, color: BAND_COLOR[b],
-                  vals: goodMonths.map((m) => {
-                    const rows = segGrid.cell.get(`${b}|${m}`)
-                    const base = segGrid.sum(rows, 'nmv')
-                    return base ? p1(segGrid.sum(rows, 'platform_disc_chua_huy'), base) : null
-                  }),
-                }))}
-              />
-              <h3 style={{ marginTop: 26 }}>Capture rate by price band</h3>
-              <p className="sub">
-                How much of the booked subsidy each band actually kept. A low cell means TikTok
-                spent there and the orders died anyway.
-              </p>
-              <Matrix
-                corner="Price band"
-                cols={goodMonths.map(mmyy)}
-                heat="high-good"
-                fmt={(v) => `${v}%`}
-                rows={segGrid.bands.map((b) => ({
-                  label: b, color: BAND_COLOR[b],
-                  vals: goodMonths.map((m) => {
-                    const rows = segGrid.cell.get(`${b}|${m}`)
-                    const base = segGrid.sum(rows, 'platform_disc')
-                    return base ? p1(segGrid.sum(rows, 'platform_disc_chua_huy'), base) : null
-                  }),
-                }))}
-              />
-            </section>
-
-            <section>
-              <h2>Where the platform is putting its voucher money</h2>
-              <p className="sub">
-                Platform discount as a percentage of list price, by band and month. If TikTok
-                shifts funding from one band to another — say from 5–10M up to 10–15M — it shows
-                up here as one row cooling while another heats up.
-              </p>
-              <Matrix
-                corner="Price band"
-                cols={goodMonths.map(mmyy)}
-                heat="high-good"
-                fmt={(v) => `${v}%`}
-                rows={segGrid.bands.map((b) => ({
-                  label: b, color: BAND_COLOR[b],
-                  vals: goodMonths.map((m) => {
-                    const rows = segGrid.cell.get(`${b}|${m}`)
-                    const base = segGrid.sum(rows, 'gia_goc')
-                    return base ? p1(segGrid.sum(rows, 'platform_disc'), base) : null
-                  }),
-                }))}
-              />
-              <h3 style={{ marginTop: 26 }}>Seller-funded discount, same view</h3>
-              <Matrix
-                corner="Price band"
-                cols={goodMonths.map(mmyy)}
-                heat="high-bad"
-                fmt={(v) => `${v}%`}
-                rows={segGrid.bands.map((b) => ({
-                  label: b, color: BAND_COLOR[b],
-                  vals: goodMonths.map((m) => {
-                    const rows = segGrid.cell.get(`${b}|${m}`)
-                    const base = segGrid.sum(rows, 'gia_goc')
-                    return base ? p1(segGrid.sum(rows, 'seller_disc'), base) : null
-                  }),
-                }))}
-              />
-              <p className="foot">
-                Both grids share the same denominator — list price — so a cell in one is directly
-                comparable with the same cell in the other.
-              </p>
-            </section>
-          </>
-        )}
-
-        {/* =================== OVERVIEW =================== */}
-        {tab === 'Overview' && (
-          <>
-            <section>
-              <h2>{periodNote} — totals</h2>
-              <p className="sub">
-                The whole filtered range added up ({span.n} {periodWord}{span.n === 1 ? '' : 's'}),
-                not just the latest one.{' '}
-                {span.nPrev
-                  ? `Compared with the ${span.nPrev} ${periodWord}${span.nPrev === 1 ? '' : 's'} immediately before it.`
-                  : 'No earlier range of the same length to compare against.'}
-              </p>
-              <div className="tiles" style={{ marginTop: 20 }}>
-                <Tile label="Seller NMV" value={bn(span.cur.nmv)} unit=" bn"
-                  sub={deltaText(delta(span.cur.nmv, span.prev?.nmv), 'range')} />
-                <Tile label="Net quantity" value={n0(span.cur.sl_chua_huy)} unit=" pcs"
-                  sub={deltaText(delta(span.cur.sl_chua_huy, span.prev?.sl_chua_huy), 'range')} />
-                <Tile label="Seller GMV" value={bn(span.cur.gmv)} unit=" bn"
-                  sub={deltaText(delta(span.cur.gmv, span.prev?.gmv), 'range')} />
-                <Tile label="Cancellation rate" value={pct(span.cur.cancel_rate)}
-                  tone={span.cur.cancel_rate > 40 ? 'bad' : 'ok'}
-                  sub={`${n0(span.cur.sl_huy)} of ${n0(span.cur.so_luong)} pcs cancelled`} />
-                <Tile label="Ad spend" value={usd(adsSpanUsd)} unit=" USD"
-                  sub="all four Roborock ad accounts" />
-                <Tile label="ATR — ad take rate" value={pct(p1(adsSpanUsd, span.cur.nmv / FX))}
-                  tone={p1(adsSpanUsd, span.cur.nmv / FX) > 25 ? 'bad' : 'ok'}
-                  sub="ad spend ÷ Seller NMV" />
-              </div>
-            </section>
-
-            <section>
-              <h2>Seller GMV, Seller NMV and cancellation rate in one picture</h2>
-              <p className="sub">
-                Full column height is Seller GMV. The solid part is Seller NMV — what is still alive. The pale
-                part is value lost to cancellations. The green line is the share of Seller NMV that has
-                actually completed. The red line is the cancellation rate on the right axis.
-              </p>
-              <ComboChart
-                data={shown.map((r) => ({ ky: r.ky, a: r.nmv, b: r.gmv_mat_do_huy }))}
-                names={['Seller NMV (live orders)', 'Lost to cancellations']}
-                colors={['var(--c1)', 'var(--c1-soft)']}
-                lines={[
-                  { ten: 'Seller NMV completed', color: 'var(--ok)', truc: 'tien', vals: shown.map((r) => r.nmv_hoan_tat) },
-                  cancelLine(shown),
-                ]}
-                fmt={bn} label={lbl} unit="VND bn"
-                tip={(d) => {
-                  const r = shown.find((x) => x.ky === d.ky)!
-                  return (
-                    <><b>{lbl(d.ky)}</b><br />
-                      Seller GMV {bn(r.gmv)} bn<br />
-                      · Seller NMV {bn(r.nmv)} bn<br />
-                      · lost to cancels {bn(r.gmv_mat_do_huy)} bn<br />
-                      Seller NMV completed {bn(r.nmv_hoan_tat)} bn<br />
-                      Customer-funded {bn(r.khach_tra)} bn<br />
-                      Cancellation rate {r.cancel_rate}%</>
-                  )
-                }}
-              />
-            </section>
-
-            {chartRevAtr}
-
-            {chartAdsMix}
-
-            <section>
-              <h2>Seller NMV per {periodWord} · {dod}</h2>
-              <p className="sub">Cancelled orders already removed.</p>
-              <DeltaChart
-                data={pt((r) => r.nmv)} color="var(--c1)" fmt={bn} label={lbl} unit="VND bn"
-                tip={(d, dl) => (
-                  <><b>{lbl(d.ky)}</b><br />Seller NMV {n0(d.v)} VND
-                    {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% vs previous period</>}</>
-                )}
-              />
-            </section>
-
-            <section>
-              <h2>Net quantity per {periodWord} · {dod}</h2>
-              <p className="sub">Units that have not been cancelled.</p>
-              <DeltaChart
-                data={pt((r) => r.sl_chua_huy)} color="var(--c3)" fmt={n0} label={lbl} unit="pcs"
-                tip={(d, dl) => (
-                  <><b>{lbl(d.ky)}</b><br />{n0(d.v)} net pcs
-                    {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% vs previous period</>}</>
-                )}
-              />
-            </section>
-
-            <section>
-              <h2>Robot vs handheld mix</h2>
-              <p className="sub">Stacked net quantity.</p>
-              <StackChart
-                data={splitByCat(srcShown, (r) => r.sl_chua_huy)}
-                fmt={n0} label={lbl} names={['Robot', 'Handheld']}
-                colors={['var(--c1)', 'var(--c2)']} unit="net pcs"
-                tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />Robot {n0(d.a)} · Handheld {n0(d.b)}
-                    <br />Total {n0(d.a + d.b)} pcs · Robot share {p1(d.a, d.a + d.b)}%</>
-                )}
-              />
-            </section>
-
-            <section>
-              <h2>Detail by {periodWord}</h2>
-              <SeriesTable rows={shown} lbl={lbl} />
-            </section>
-
-            <div className="note warn">
-              <b>The newest period still understates cancellations.</b> Orders placed in the current
-              period have not finished their life cycle, and the largest cancellation cluster lands
-              3–7 days after the order. Expect the cancellation rate to climb and Seller NMV to drift down
-              over the following week.
-            </div>
-          </>
-        )}
-
-        {/* =================== CATEGORY =================== */}
-        {tab === 'Category' && (
-          <>
-            <section className="cards">
-              {(['robot', 'handheld'] as const).map((c, i) => {
-                const rows = srcShown.filter((r) => r.category === c)
-                const s = (f: (r: Monthly | Daily) => number) =>
-                  rows.reduce((a, r) => a + Number(f(r) || 0), 0)
-                const gross = s((r) => r.so_luong)
-                const gmv = s((r) => r.gmv)
-                const cancelled = s((r) => r.sl_huy)
-                return (
-                  <div className="card" key={c}>
-                    <div className="card-h">
-                      <i className="sw" style={{ background: i === 0 ? 'var(--c1)' : 'var(--c2)' }} />
-                      <b>{c === 'robot' ? 'Robot vacuums' : 'Handheld vacuums'}</b>
-                    </div>
-                    <div className="kv"><span>Seller NMV</span><b>{bn(s((r) => r.nmv))} bn</b></div>
-                    <div className="kv"><span>Seller GMV</span><b>{bn(gmv)} bn</b></div>
-                    <div className="kv"><span>Net quantity</span><b>{n0(s((r) => r.sl_chua_huy))} pcs</b></div>
-                    <div className="kv"><span>Gross quantity</span><b>{n0(gross)} pcs</b></div>
-                    <div className="kv"><span>Cancellation rate</span>
-                      <b style={{ color: p1(cancelled, gross) > 40 ? 'var(--bad)' : 'inherit' }}>
-                        {pct(p1(cancelled, gross))}
-                      </b></div>
-                    <div className="kv"><span>Avg price after seller disc.</span>
-                      <b>{n0(gmv / Math.max(1, gross))}</b></div>
-                  </div>
-                )
-              })}
-            </section>
-
-            <section>
-              <h2>Seller NMV by category per {periodWord}</h2>
-              <StackChart
-                data={splitByCat(srcShown, (r) => r.nmv)}
-                fmt={bn} label={lbl} names={['Robot', 'Handheld']}
-                colors={['var(--c1)', 'var(--c2)']} unit="VND bn"
-                tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />Robot {bn(d.a)} bn · Handheld {bn(d.b)} bn
-                    <br />Robot share {p1(d.a, d.a + d.b)}%</>
-                )}
-              />
-            </section>
-
-            <section>
-              <h2>Cancellation rate by category · {dod}</h2>
-              <p className="sub">
-                Handhelds usually cancel harder than robots. Same delivery problem, lower order
-                value, so buyers refuse more easily.
-              </p>
-              <div className="two">
-                {(['robot', 'handheld'] as const).map((c) => {
-                  const rr = rollup(srcShown, c)
-                  return (
-                    <div key={c}>
-                      <h3>{c === 'robot' ? 'Robot' : 'Handheld'}</h3>
-                      <DeltaChart
-                        data={rr.map((r) => ({ ky: r.ky, v: r.cancel_rate }))}
-                        color={c === 'robot' ? 'var(--c1)' : 'var(--c2)'}
-                        fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
-                        tip={(d) => <><b>{lbl(d.ky)}</b><br />Cancelled {d.v}%</>}
-                      />
-                    </div>
-                  )
-                })}
-              </div>
-            </section>
-
-            <section>
-              <h2>Category detail by {periodWord}</h2>
-              <div className="tablewrap">
-                <table>
-                  <thead><tr>
-                    <th>Period</th><th>Category</th>
-                    <th className="n">Gross pcs</th><th className="n">Net pcs</th><th className="n">Cancelled</th>
-                    <th className="n">Cancel %</th><th className="n">Seller GMV</th><th className="n">Seller NMV</th>
-                    <th className="n">Avg price</th>
-                  </tr></thead>
-                  <tbody>
-                    {srcShown
-                      .filter((r) => r.category === 'robot' || r.category === 'handheld')
-                      .slice()
-                      .sort((a, b) => keyOf(b).localeCompare(keyOf(a)) || a.category.localeCompare(b.category))
-                      .slice(0, 80)
-                      .map((r) => (
-                        <tr key={`${keyOf(r)}-${r.category}`}>
-                          <td className="k">{lbl(keyOf(r))}</td>
-                          <td>
-                            <span className="sw sm" style={{ background: r.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
-                            {r.category === 'robot' ? 'Robot' : 'Handheld'}
-                          </td>
-                          <td className="n">{n0(r.so_luong)}</td>
-                          <td className="n"><b>{n0(r.sl_chua_huy)}</b></td>
-                          <td className="n">{n0(r.sl_huy)}</td>
-                          <td className="n" style={{ color: Number(r.cancel_rate) > 40 ? 'var(--bad)' : 'inherit' }}>
-                            {pct(r.cancel_rate)}
-                          </td>
-                          <td className="n">{bn(r.gmv)}</td>
-                          <td className="n">{bn(r.nmv)}</td>
-                          <td className="n">{n0(Number(r.gmv || 0) / Math.max(1, Number(r.so_luong || 0)))}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="foot">Money in VND bn, average price in VND. Latest 80 rows.</p>
-            </section>
-          </>
-        )}
-
-        {/* =================== SKU =================== */}
-        {tab === 'SKU' && (
-          <>
             <div className="filters" style={{ marginTop: 26 }}>
               <select className="drop wide" value={modelSel} onChange={(e) => setModelSel(e.target.value)}>
                 <option value="">All models ({allModels.length})</option>
@@ -1928,8 +1778,8 @@ export default function Dashboard({
               {modelSel && <button className="lnk" onClick={() => setModelSel('')}>Clear model filter</button>}
             </div>
 
-            <section>
-              <h2>Gross vs net units and cancellation rate — {scopeLabel}</h2>
+            <section id="s3-7">
+              <h2><span className="hno">3.7</span>Gross vs net units and cancellation rate — {scopeLabel}</h2>
               <p className="sub">
                 Column height is gross units, the solid part is net. The red line is the
                 cancellation rate on the right axis, with the number printed on it.
@@ -1955,8 +1805,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>Model performance by month</h2>
+            <section id="s3-8">
+              <h2><span className="hno">3.8</span>Model performance by month</h2>
               <p className="sub">
                 Always monthly so the trend is readable, and it follows the category and model
                 filters. Switch the metric below.
@@ -2015,8 +1865,8 @@ export default function Dashboard({
               </section>
             )}
 
-            <section>
-              <h2>Top models by Seller NMV — {periodNote}</h2>
+            <section id="s3-9">
+              <h2><span className="hno">3.9</span>Top models by Seller NMV — {periodNote}</h2>
               <RowBars
                 rows={skuF.slice().sort((a, b) => b.nmv - a.nmv).slice(0, 15).map((s) => ({
                   nhan: s.model,
@@ -2026,8 +1876,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>Full table, grouped by category</h2>
+            <section id="s3-10">
+              <h2><span className="hno">3.10</span>Full table, grouped by category</h2>
               <p className="sub">
                 Covers {periodNote}. The bold row is the category total — click it to collapse.
                 Click a column header to re-sort. Currently sorted by <b>{String(sortKey)}</b>.
@@ -2121,8 +1971,191 @@ export default function Dashboard({
           </>
         )}
 
-        {/* =================== DISCOUNTS =================== */}
-        {tab === 'Discounts' && (
+        {/* ==================== ADVERTISING ==================== */}
+        {sec === 'Advertising' && (
+          <>
+            <section id="s4-1">
+              <h2><span className="hno">4.1</span>{dayNote} — ad spend</h2>
+              <p className="sub">
+                This tab is in USD, the currency the ad budget is set in. VND accounts and VND
+                revenue are converted at one fixed rate held in the database, so ATR is unaffected
+                by the conversion. Original currencies stay in the database for reconciling TikTok
+                invoices.
+              </p>
+              <div className="tiles" style={{ marginTop: 20 }}>
+                <Tile label="Ad spend" value={usd(adsTotals.cost)} unit=" USD" />
+                <Tile label="LIVE GMV Max" value={usd(adsTotals.lgm)} unit=" USD"
+                  sub={`${pct(p1(adsTotals.lgm, adsTotals.cost))} of spend`} />
+                <Tile label="Product GMV Max" value={usd(adsTotals.pgm)} unit=" USD"
+                  sub={`${pct(p1(adsTotals.pgm, adsTotals.cost))} of spend`} />
+                <Tile label="C-Ads and branding" value={usd(adsTotals.cads)} unit=" USD"
+                  sub={`${pct(p1(adsTotals.cads, adsTotals.cost))} of spend`} />
+                <Tile label="ATR — ad take rate" value={pct(p1(adsTotals.cost, adsTotals.nmv))}
+                  tone={p1(adsTotals.cost, adsTotals.nmv) > 25 ? 'bad' : 'ok'}
+                  sub={`ad spend ÷ Seller NMV ${usd(adsTotals.nmv)} USD`} />
+                <Tile label="Seller NMV per ad dollar" value={adsTotals.cost ? (adsTotals.nmv / adsTotals.cost).toFixed(2) : '—'}
+                  sub="inverse of ATR — all sales, not attributed" />
+              </div>
+              <div className="note warn">
+                <b>TikTok&rsquo;s own revenue and order counts are deliberately kept out of this tab.</b>{' '}
+                They do not measure the same thing we do. In Sep 2026 TikTok reported 4,703 attributed
+                orders against 2,350 machine orders in the shop &mdash; it counts accessories, and one
+                order can be claimed by several campaigns at once. Its revenue implies an average order
+                of 6.3 mn when our cheapest machine is around 6 mn and the bulk sell at 15&ndash;25 mn.
+                Everything above is money we actually paid, against revenue we actually recognised.
+              </div>
+            </section>
+
+            <section id="s4-2">
+              <h2><span className="hno">4.2</span>Spend per day, against Seller NMV · DoD</h2>
+              <p className="sub">
+                Columns split LIVE GMV Max from Product GMV Max. The red line is ATR &mdash; total
+                ad spend (including C-Ads) divided by that day&rsquo;s Seller NMV, on the right axis.
+              </p>
+              <ComboChart
+                data={adsDays.map((r) => ({ ky: r.ngay, a: Number(r.lgm_usd || 0), b: Number(r.pgm_usd || 0) }))}
+                names={['LIVE GMV Max', 'Product GMV Max']}
+                colors={['var(--c1)', 'var(--c2)']}
+                lines={[{
+                  ten: 'ATR — ad spend ÷ Seller NMV (right axis)',
+                  color: 'var(--bad)', truc: 'pct',
+                  vals: adsDays.map((r) => (Number(r.nmv || 0) > 0 ? p1(Number(r.ads_cost_vnd || 0), Number(r.nmv)) : null)),
+                  showVals: true,
+                  fmtVal: (v) => `${v}%`,
+                }]}
+                fmt={usd} label={ddmm} unit="USD"
+                tip={(d) => {
+                  const r = adsDays.find((x) => x.ngay === d.ky)
+                  if (!r) return null
+                  return (
+                    <><b>{ddmm(d.ky)}</b><br />
+                      LGM {usd(Number(r.lgm_usd))} · PGM {usd(Number(r.pgm_usd))}<br />
+                      C-Ads {usd(Number(r.cads_usd))}<br />
+                      Total spend {usd(Number(r.ads_cost_usd))}<br />
+                      Seller NMV {usd(Number(r.nmv_usd))}<br />
+                      ATR {pct(p1(Number(r.ads_cost_usd), Number(r.nmv_usd)))}</>
+                  )
+                }}
+              />
+            </section>
+
+            <section id="s4-3">
+              <h2><span className="hno">4.3</span>Day by day</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Day</th>
+                    <th className="n">LGM</th><th className="n">PGM</th><th className="n">C-Ads</th>
+                    <th className="n">Total spend</th>
+                    <th className="n">Seller NMV</th><th className="n">ATR %</th>
+                    <th className="n">Net pcs</th>
+                  </tr></thead>
+                  <tbody>
+                    {adsDays.slice().reverse().map((r) => {
+                      const cost = Number(r.ads_cost_usd || 0)
+                      const share = Number(r.nmv_usd || 0) > 0 ? p1(cost, Number(r.nmv_usd)) : null
+                      return (
+                        <tr key={r.ngay}>
+                          <td>{ddmm(r.ngay)}</td>
+                          <td className="n">{usd(Number(r.lgm_usd))}</td>
+                          <td className="n">{usd(Number(r.pgm_usd))}</td>
+                          <td className="n">{usd(Number(r.cads_usd))}</td>
+                          <td className="n"><b>{usd(cost)}</b></td>
+                          <td className="n">{usd(Number(r.nmv_usd))}</td>
+                          <td className="n">{pct(share)}</td>
+                          <td className="n">{n0(Number(r.net_pcs))}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Money in USD, net pcs after cancellations. Every column here is ours &mdash; nothing
+                on this table comes from TikTok&rsquo;s attribution.
+              </p>
+            </section>
+
+            <div id="s4-4">{chartRevAtr}</div>
+
+            <div id="s4-5">{chartAdsMix}</div>
+
+            <section id="s4-6">
+              <h2><span className="hno">4.6</span>Ad spend by month — {monthNote}</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Month</th>
+                    <th className="n">LGM</th><th className="n">PGM</th><th className="n">C-Ads</th>
+                    <th className="n">Total spend</th>
+                    <th className="n">Seller NMV</th><th className="n">ATR %</th>
+                    <th className="n">LGM share</th>
+                  </tr></thead>
+                  <tbody>
+                    {adsMonths.map((m) => {
+                      const total = m.lgm + m.pgm + m.cads
+                      const sale = momRows.find((r) => r.ky.slice(0, 7) === m.ky.slice(0, 7))
+                      const nmvUsd = sale ? sale.nmv / FX : 0
+                      return (
+                        <tr key={m.ky}>
+                          <td>{mmyy(m.ky)}</td>
+                          <td className="n">{usd(m.lgm)}</td>
+                          <td className="n">{usd(m.pgm)}</td>
+                          <td className="n">{usd(m.cads)}</td>
+                          <td className="n"><b>{usd(total)}</b></td>
+                          <td className="n">{sale ? usd(nmvUsd) : '—'}</td>
+                          <td className="n">{nmvUsd > 0 ? pct(p1(total, nmvUsd)) : '—'}</td>
+                          <td className="n">{total > 0 ? pct(p1(m.lgm, total)) : '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">All money in USD.</p>
+            </section>
+
+            <section id="s4-7">
+              <h2><span className="hno">4.7</span>Campaigns — {monthNote}</h2>
+              <p className="sub">
+                Every campaign that spent in the selected months, biggest first. KOC handle and model
+                are read off the campaign name, so they follow the team&rsquo;s naming convention — a
+                renamed campaign shows a dash rather than a guess.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Campaign</th><th>Type</th><th>KOC</th><th>Model</th>
+                    <th className="n">Spend</th><th className="n">Share of spend</th>
+                    <th className="n">TikTok ROAS</th>
+                  </tr></thead>
+                  <tbody>
+                    {adsCamps.slice(0, 60).map((c) => (
+                      <tr key={c.id}>
+                        <td>{c.ten}</td>
+                        <td>{c.loai === 'LIVE_GMV_MAX' ? 'LGM' : c.loai === 'PRODUCT_GMV_MAX' ? 'PGM' : 'C-Ads'}</td>
+                        <td>{c.koc ?? <span className="muted">—</span>}</td>
+                        <td>{c.model ?? <span className="muted">—</span>}</td>
+                        <td className="n"><b>{usd(c.cost)}</b></td>
+                        <td className="n">{pct(p1(c.cost, adsTotals.cost))}</td>
+                        <td className="n muted">{c.cost > 0 ? (c.rev / c.cost).toFixed(1) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Spend in USD. Showing the top 60 of {n0(adsCamps.length)} campaigns. The last column
+                is TikTok&rsquo;s own ROAS, kept only because it is the one signal that exists per
+                campaign &mdash; our order data cannot be traced back to a campaign. Read it as a
+                ranking between campaigns, never as a return on our own revenue.
+              </p>
+            </section>
+          </>
+        )}
+
+        {/* ===================== DISCOUNTS ===================== */}
+        {sec === 'Discounts' && (
           <>
             <div className="filters" style={{ marginTop: 26 }}>
               <select className="drop wide" value={modelSel} onChange={(e) => setModelSel(e.target.value)}>
@@ -2132,8 +2165,8 @@ export default function Dashboard({
               {modelSel && <button className="lnk" onClick={() => setModelSel('')}>Clear model filter</button>}
             </div>
 
-            <section>
-              <h2>Subsidy booked and capture rate per day · DoD</h2>
+            <section id="s5-1">
+              <h2><span className="hno">5.1</span>Subsidy booked and capture rate per day · DoD</h2>
               <p className="sub">
                 Column height is the whole platform subsidy TikTok booked that day. The
                 solid part landed on orders that survived — real money. The pale part was booked
@@ -2168,8 +2201,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>Who paid for the revenue, per day</h2>
+            <section id="s5-2">
+              <h2><span className="hno">5.2</span>Who paid for the revenue, per day</h2>
               <p className="sub">
                 Column height is Seller NMV, split into the cash the customer paid and the subsidy
                 TikTok reimbursed on those same live orders. The line is the subsidy share — how
@@ -2199,8 +2232,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>Subsidy detail per day</h2>
+            <section id="s5-3">
+              <h2><span className="hno">5.3</span>Subsidy detail per day</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -2251,8 +2284,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section>
-              <h2>Valid subsidy by model, per day</h2>
+            <section id="s5-4">
+              <h2><span className="hno">5.4</span>Valid subsidy by model, per day</h2>
               <p className="sub">
                 Only the subsidy on live orders, split by model. Use the model filter above to
                 isolate one and compare it against the rest.
@@ -2268,8 +2301,113 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>Monthly overview</h2>
+            <section id="s5-5">
+              <h2><span className="hno">5.5</span>Who funds the discount — {dayNote}</h2>
+              <p className="sub">
+                Percentage of list price. Blue is money the shop gives up, orange is funded by
+                TikTok. Only the blue part eats into your margin.
+              </p>
+              <RowBars
+                rows={daySkuF.slice().sort((a, b) => b.nmv - a.nmv).slice(0, 15).map((s) => ({
+                  nhan: s.model,
+                  segs: [
+                    { v: s.pct_seller_disc, color: 'var(--c1)', ten: 'Seller funded (%)' },
+                    { v: s.pct_platform_disc, color: 'var(--c2)', ten: 'Platform funded (%)' },
+                  ],
+                  phu: `${pct(s.pct_seller_disc)} + ${pct(s.pct_platform_disc)}`,
+                }))}
+              />
+              <div className="legend" style={{ marginTop: 14 }}>
+                <span><i className="sw" style={{ background: 'var(--c1)' }} />Seller funded</span>
+                <span><i className="sw" style={{ background: 'var(--c2)' }} />Platform funded</span>
+              </div>
+            </section>
+
+            <section id="s5-6">
+              <h2><span className="hno">5.6</span>Discount spend per day</h2>
+              <StackChart
+                data={dayShown.map((r) => ({ ky: r.ky, a: r.seller_disc, b: r.platform_disc }))}
+                fmt={bn} label={ddmm} names={['Seller funded', 'Platform funded']}
+                colors={['var(--c1)', 'var(--c2)']} unit="VND bn"
+                tip={(d) => (
+                  <><b>{ddmm(d.ky)}</b><br />Seller {bn(d.a)} bn · Platform {bn(d.b)} bn
+                    <br />Seller carries {p1(d.a, d.a + d.b)}% of all discounting</>
+                )}
+              />
+            </section>
+
+            <section id="s5-7">
+              <h2><span className="hno">5.7</span>Discount rates per day</h2>
+              <p className="sub">Both as a percentage of list price, so they are directly comparable.</p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Period</th><th className="n">List price</th>
+                    <th className="n">Seller disc.</th><th className="n">Seller %</th>
+                    <th className="n">Platform disc.</th><th className="n">Platform %</th>
+                    <th className="n">Total disc. %</th><th className="n">Seller share of disc.</th>
+                  </tr></thead>
+                  <tbody>
+                    {dayShown.map((r) => (
+                      <tr key={r.ky}>
+                        <td className="k">{ddmm(r.ky)}</td>
+                        <td className="n">{bn(r.gia_goc)}</td>
+                        <td className="n">{bn(r.seller_disc)}</td>
+                        <td className="n"><b>{pct(p1(r.seller_disc, r.gia_goc))}</b></td>
+                        <td className="n muted">{bn(r.platform_disc)}</td>
+                        <td className="n muted">{pct(p1(r.platform_disc, r.gia_goc))}</td>
+                        <td className="n">{pct(p1(r.seller_disc + r.platform_disc, r.gia_goc))}</td>
+                        <td className="n">{pct(p1(r.seller_disc, r.seller_disc + r.platform_disc))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">Money in VND bn.</p>
+            </section>
+
+            <section id="s5-8">
+              <h2><span className="hno">5.8</span>Discount detail by model — {dayNote}</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Model</th><th>Band</th><th className="n">List price</th><th className="n">After seller disc.</th>
+                    <th className="n">Seller disc. (VND)</th><th className="n">Seller disc. %</th>
+                    <th className="n">Platform disc. (VND)</th><th className="n">Platform disc. %</th>
+                    <th className="n">Total disc. %</th><th className="n">Gross pcs</th>
+                    <th className="n">Valid subsidy</th><th className="n">Valid % of Seller NMV</th>
+                    <th className="n">Capture rate</th>
+                  </tr></thead>
+                  <tbody>
+                    {daySkuF.slice().sort((a, b) => b.so_luong - a.so_luong).map((s) => (
+                      <tr key={s.model}>
+                        <td>
+                          <span className="sw sm" style={{ background: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
+                          {s.model}
+                        </td>
+                        <td className="muted">{s.band}</td>
+                        <td className="n">{n0(s.gia_goc_tb)}</td>
+                        <td className="n">{n0(s.gia_ban_tb)}</td>
+                        <td className="n">{n0(s.seller_disc_tb)}</td>
+                        <td className="n"><b>{pct(s.pct_seller_disc)}</b></td>
+                        <td className="n muted">{n0(s.platform_disc_tb)}</td>
+                        <td className="n muted">{pct(s.pct_platform_disc)}</td>
+                        <td className="n">{pct(Math.round((s.pct_seller_disc + s.pct_platform_disc) * 10) / 10)}</td>
+                        <td className="n">{n0(s.so_luong)}</td>
+                        <td className="n"><b>{mn(s.valid_sub)}m</b></td>
+                        <td className="n">{pct(s.pct_valid_sub)}</td>
+                        <td className="n" style={{ color: s.sub_capture < 40 ? 'var(--bad)' : 'inherit' }}>
+                          {pct(s.sub_capture)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section id="s5-9">
+              <h2><span className="hno">5.9</span>Monthly overview</h2>
               <p className="sub">
                 One row per month, totals only. The month-by-month breakdown by model and by price
                 band lives in the <b>MoM Summary</b> tab — this tab stays day-level.
@@ -2314,301 +2452,212 @@ export default function Dashboard({
               <p className="foot">Money in VND bn. Follows the month chips, not the day range.</p>
             </section>
 
-            <section>
-              <h2>Who funds the discount — {dayNote}</h2>
+            <section id="s5-10">
+              <h2><span className="hno">5.10</span>Who funds the discount, month by month</h2>
               <p className="sub">
-                Percentage of list price. Blue is money the shop gives up, orange is funded by
-                TikTok. Only the blue part eats into your margin.
+                Stacked spend: blue is money you gave up, orange is money TikTok gave up.
+                Only the blue part hits your margin.
               </p>
-              <RowBars
-                rows={daySkuF.slice().sort((a, b) => b.nmv - a.nmv).slice(0, 15).map((s) => ({
-                  nhan: s.model,
-                  segs: [
-                    { v: s.pct_seller_disc, color: 'var(--c1)', ten: 'Seller funded (%)' },
-                    { v: s.pct_platform_disc, color: 'var(--c2)', ten: 'Platform funded (%)' },
-                  ],
-                  phu: `${pct(s.pct_seller_disc)} + ${pct(s.pct_platform_disc)}`,
-                }))}
-              />
-              <div className="legend" style={{ marginTop: 14 }}>
-                <span><i className="sw" style={{ background: 'var(--c1)' }} />Seller funded</span>
-                <span><i className="sw" style={{ background: 'var(--c2)' }} />Platform funded</span>
-              </div>
-            </section>
-
-            <section>
-              <h2>Discount spend per day</h2>
               <StackChart
-                data={dayShown.map((r) => ({ ky: r.ky, a: r.seller_disc, b: r.platform_disc }))}
-                fmt={bn} label={ddmm} names={['Seller funded', 'Platform funded']}
+                data={momRows.map((r) => ({ ky: r.ky, a: r.seller_disc, b: r.platform_disc }))}
+                fmt={bn} label={mmyy} names={['Seller funded', 'Platform funded']}
                 colors={['var(--c1)', 'var(--c2)']} unit="VND bn"
                 tip={(d) => (
-                  <><b>{ddmm(d.ky)}</b><br />Seller {bn(d.a)} bn · Platform {bn(d.b)} bn
-                    <br />Seller carries {p1(d.a, d.a + d.b)}% of all discounting</>
+                  <><b>{mmyy(d.ky)}</b><br />Seller {bn(d.a)} bn · Platform {bn(d.b)} bn<br />
+                    Seller carries {p1(d.a, d.a + d.b)}% of all discounting</>
                 )}
               />
             </section>
 
-            <section>
-              <h2>Discount rates per day</h2>
-              <p className="sub">Both as a percentage of list price, so they are directly comparable.</p>
-              <div className="tablewrap">
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>What Seller NMV is actually made of</h2>
+              <p className="sub">
+                Column height is Seller NMV, split into the cash the customer actually paid and the
+                subsidy TikTok funded on the same live orders. The two add up to Seller NMV exactly
+                — the subsidy already sits inside Seller NMV, it is not added on top. The line is
+                the subsidy share: how much of your recognised revenue is TikTok&rsquo;s money
+                rather than the customer&rsquo;s.
+              </p>
+              <ComboChart
+                data={momRows.map((r) => ({ ky: r.ky, a: r.khach_tra, b: r.platform_disc_chua_huy }))}
+                names={['Customer-funded NMV', 'Platform-funded NMV']}
+                colors={['var(--c1)', 'var(--c2)']}
+                lines={[{
+                  ten: 'Valid subsidy % of Seller NMV', color: 'var(--ok)', truc: 'pct',
+                  showVals: true, fmtVal: (v) => `${v}%`,
+                  vals: momRows.map((r) => p1(r.platform_disc_chua_huy, r.nmv)),
+                }]}
+                fmt={bn} label={mmyy} unit="VND bn"
+                tip={(d) => (
+                  <><b>{mmyy(d.ky)}</b><br />
+                    Seller NMV {bn(d.a + d.b)} bn<br />
+                    · customer-funded {bn(d.a)} bn (cash from buyer)<br />
+                    · valid subsidy {bn(d.b)} bn<br />
+                    Subsidy share {p1(d.b, d.a + d.b)}%</>
+                )}
+              />
+            </section>
+
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>Subsidy booked vs subsidy kept, by month</h2>
+              <p className="sub">
+                The whole column is what TikTok put behind your orders. Solid is what survived to
+                a live order; pale is what cancelled away. The green line is the share of Seller GMV
+                TikTok is funding — your effective subsidy rate.
+              </p>
+              <ComboChart
+                data={momRows.map((r) => ({
+                  ky: r.ky,
+                  a: r.platform_disc_chua_huy,
+                  b: Math.max(0, r.platform_disc - r.platform_disc_chua_huy),
+                }))}
+                names={['Valid subsidy', 'Lost with cancellations']}
+                colors={['var(--c2)', 'var(--c1-soft)']}
+                lines={[{
+                  ten: 'Subsidy % of Seller GMV', color: 'var(--ok)', truc: 'pct',
+                  showVals: true, fmtVal: (v) => `${v}%`,
+                  vals: momRows.map((r) => p1(r.platform_disc, r.gmv)),
+                }]}
+                fmt={bn} label={mmyy} unit="VND bn"
+                tip={(d) => {
+                  const r = momRows.find((x) => x.ky === d.ky)!
+                  return (
+                    <><b>{mmyy(d.ky)}</b><br />
+                      Booked {bn(r.platform_disc)} bn · {p1(r.platform_disc, r.gmv)}% of Seller GMV<br />
+                      Valid {bn(d.a)} bn · {p1(d.a, r.nmv)}% of Seller NMV<br />
+                      Lost {bn(d.b)} bn<br />
+                      Capture rate {p1(d.a, r.platform_disc)}%</>
+                  )
+                }}
+              />
+              <div className="tablewrap" style={{ marginTop: 18 }}>
                 <table>
                   <thead><tr>
-                    <th>Period</th><th className="n">List price</th>
-                    <th className="n">Seller disc.</th><th className="n">Seller %</th>
-                    <th className="n">Platform disc.</th><th className="n">Platform %</th>
-                    <th className="n">Total disc. %</th><th className="n">Seller share of disc.</th>
+                    <th>Month</th>
+                    <th className="n">Seller GMV</th><th className="n">Subsidy booked</th><th className="n">% of Seller GMV</th>
+                    <th className="n">Seller NMV</th><th className="n">Valid subsidy</th><th className="n">% of Seller NMV</th>
+                    <th className="n">Lost subsidy</th><th className="n">Capture rate</th>
+                    <th className="n">Seller funded</th><th className="n">Seller % of list</th>
                   </tr></thead>
                   <tbody>
-                    {dayShown.map((r) => (
-                      <tr key={r.ky}>
-                        <td className="k">{ddmm(r.ky)}</td>
-                        <td className="n">{bn(r.gia_goc)}</td>
-                        <td className="n">{bn(r.seller_disc)}</td>
-                        <td className="n"><b>{pct(p1(r.seller_disc, r.gia_goc))}</b></td>
-                        <td className="n muted">{bn(r.platform_disc)}</td>
-                        <td className="n muted">{pct(p1(r.platform_disc, r.gia_goc))}</td>
-                        <td className="n">{pct(p1(r.seller_disc + r.platform_disc, r.gia_goc))}</td>
-                        <td className="n">{pct(p1(r.seller_disc, r.seller_disc + r.platform_disc))}</td>
-                      </tr>
-                    ))}
+                    {momRows.map((r) => {
+                      const capture = p1(r.platform_disc_chua_huy, r.platform_disc)
+                      return (
+                        <tr key={r.ky}>
+                          <td className="k">{mmyy(r.ky)}</td>
+                          <td className="n">{bn(r.gmv)}</td>
+                          <td className="n">{bn(r.platform_disc)}</td>
+                          <td className="n">{pct(p1(r.platform_disc, r.gmv))}</td>
+                          <td className="n">{bn(r.nmv)}</td>
+                          <td className="n"><b>{bn(r.platform_disc_chua_huy)}</b></td>
+                          <td className="n"><b>{pct(p1(r.platform_disc_chua_huy, r.nmv))}</b></td>
+                          <td className="n" style={{ color: 'var(--bad)' }}>
+                            {bn(r.platform_disc - r.platform_disc_chua_huy)}
+                          </td>
+                          <td className="n" style={{ color: capture < 40 ? 'var(--bad)' : 'inherit' }}>
+                            {pct(capture)}
+                          </td>
+                          <td className="n muted">{bn(r.seller_disc_chua_huy)}</td>
+                          <td className="n muted">{pct(p1(r.seller_disc_chua_huy, r.gia_goc_chua_huy))}</td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
               <p className="foot">Money in VND bn.</p>
             </section>
 
-            <section>
-              <h2>Discount detail by model — {dayNote}</h2>
-              <div className="tablewrap">
-                <table>
-                  <thead><tr>
-                    <th>Model</th><th>Band</th><th className="n">List price</th><th className="n">After seller disc.</th>
-                    <th className="n">Seller disc. (VND)</th><th className="n">Seller disc. %</th>
-                    <th className="n">Platform disc. (VND)</th><th className="n">Platform disc. %</th>
-                    <th className="n">Total disc. %</th><th className="n">Gross pcs</th>
-                    <th className="n">Valid subsidy</th><th className="n">Valid % of Seller NMV</th>
-                    <th className="n">Capture rate</th>
-                  </tr></thead>
-                  <tbody>
-                    {daySkuF.slice().sort((a, b) => b.so_luong - a.so_luong).map((s) => (
-                      <tr key={s.model}>
-                        <td>
-                          <span className="sw sm" style={{ background: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
-                          {s.model}
-                        </td>
-                        <td className="muted">{s.band}</td>
-                        <td className="n">{n0(s.gia_goc_tb)}</td>
-                        <td className="n">{n0(s.gia_ban_tb)}</td>
-                        <td className="n">{n0(s.seller_disc_tb)}</td>
-                        <td className="n"><b>{pct(s.pct_seller_disc)}</b></td>
-                        <td className="n muted">{n0(s.platform_disc_tb)}</td>
-                        <td className="n muted">{pct(s.pct_platform_disc)}</td>
-                        <td className="n">{pct(Math.round((s.pct_seller_disc + s.pct_platform_disc) * 10) / 10)}</td>
-                        <td className="n">{n0(s.so_luong)}</td>
-                        <td className="n"><b>{mn(s.valid_sub)}m</b></td>
-                        <td className="n">{pct(s.pct_valid_sub)}</td>
-                        <td className="n" style={{ color: s.sub_capture < 40 ? 'var(--bad)' : 'inherit' }}>
-                          {pct(s.sub_capture)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <section id="s5-13">
+              <h2><span className="hno">5.13</span>Valid subsidy as a share of Seller NMV, by price band</h2>
+              <p className="sub">
+                Greener means TikTok is carrying more of that band&rsquo;s revenue. A band warming
+                up month after month is where the platform is moving its voucher money.
+              </p>
+              <Matrix
+                corner="Price band"
+                cols={goodMonths.map(mmyy)}
+                heat="high-good"
+                fmt={(v) => `${v}%`}
+                rows={segGrid.bands.map((b) => ({
+                  label: b, color: BAND_COLOR[b],
+                  vals: goodMonths.map((m) => {
+                    const rows = segGrid.cell.get(`${b}|${m}`)
+                    const base = segGrid.sum(rows, 'nmv')
+                    return base ? p1(segGrid.sum(rows, 'platform_disc_chua_huy'), base) : null
+                  }),
+                }))}
+              />
+              <h3 style={{ marginTop: 26 }}>Capture rate by price band</h3>
+              <p className="sub">
+                How much of the booked subsidy each band actually kept. A low cell means TikTok
+                spent there and the orders died anyway.
+              </p>
+              <Matrix
+                corner="Price band"
+                cols={goodMonths.map(mmyy)}
+                heat="high-good"
+                fmt={(v) => `${v}%`}
+                rows={segGrid.bands.map((b) => ({
+                  label: b, color: BAND_COLOR[b],
+                  vals: goodMonths.map((m) => {
+                    const rows = segGrid.cell.get(`${b}|${m}`)
+                    const base = segGrid.sum(rows, 'platform_disc')
+                    return base ? p1(segGrid.sum(rows, 'platform_disc_chua_huy'), base) : null
+                  }),
+                }))}
+              />
+            </section>
+
+            <section id="s5-14">
+              <h2><span className="hno">5.14</span>Where the platform is putting its voucher money</h2>
+              <p className="sub">
+                Platform discount as a percentage of list price, by band and month. If TikTok
+                shifts funding from one band to another — say from 5–10M up to 10–15M — it shows
+                up here as one row cooling while another heats up.
+              </p>
+              <Matrix
+                corner="Price band"
+                cols={goodMonths.map(mmyy)}
+                heat="high-good"
+                fmt={(v) => `${v}%`}
+                rows={segGrid.bands.map((b) => ({
+                  label: b, color: BAND_COLOR[b],
+                  vals: goodMonths.map((m) => {
+                    const rows = segGrid.cell.get(`${b}|${m}`)
+                    const base = segGrid.sum(rows, 'gia_goc')
+                    return base ? p1(segGrid.sum(rows, 'platform_disc'), base) : null
+                  }),
+                }))}
+              />
+              <h3 style={{ marginTop: 26 }}>Seller-funded discount, same view</h3>
+              <Matrix
+                corner="Price band"
+                cols={goodMonths.map(mmyy)}
+                heat="high-bad"
+                fmt={(v) => `${v}%`}
+                rows={segGrid.bands.map((b) => ({
+                  label: b, color: BAND_COLOR[b],
+                  vals: goodMonths.map((m) => {
+                    const rows = segGrid.cell.get(`${b}|${m}`)
+                    const base = segGrid.sum(rows, 'gia_goc')
+                    return base ? p1(segGrid.sum(rows, 'seller_disc'), base) : null
+                  }),
+                }))}
+              />
+              <p className="foot">
+                Both grids share the same denominator — list price — so a cell in one is directly
+                comparable with the same cell in the other.
+              </p>
             </section>
           </>
         )}
 
         {/* =================== CANCELLATIONS =================== */}
-        {/* =================== ADVERTISING =================== */}
-        {tab === 'Advertising' && (
+        {sec === 'Cancellations' && (
           <>
-            <section>
-              <h2>{dayNote} — ad spend</h2>
-              <p className="sub">
-                This tab is in USD, the currency the ad budget is set in. VND accounts and VND
-                revenue are converted at one fixed rate held in the database, so ATR is unaffected
-                by the conversion. Original currencies stay in the database for reconciling TikTok
-                invoices.
-              </p>
-              <div className="tiles" style={{ marginTop: 20 }}>
-                <Tile label="Ad spend" value={usd(adsTotals.cost)} unit=" USD" />
-                <Tile label="LIVE GMV Max" value={usd(adsTotals.lgm)} unit=" USD"
-                  sub={`${pct(p1(adsTotals.lgm, adsTotals.cost))} of spend`} />
-                <Tile label="Product GMV Max" value={usd(adsTotals.pgm)} unit=" USD"
-                  sub={`${pct(p1(adsTotals.pgm, adsTotals.cost))} of spend`} />
-                <Tile label="C-Ads and branding" value={usd(adsTotals.cads)} unit=" USD"
-                  sub={`${pct(p1(adsTotals.cads, adsTotals.cost))} of spend`} />
-                <Tile label="ATR — ad take rate" value={pct(p1(adsTotals.cost, adsTotals.nmv))}
-                  tone={p1(adsTotals.cost, adsTotals.nmv) > 25 ? 'bad' : 'ok'}
-                  sub={`ad spend ÷ Seller NMV ${usd(adsTotals.nmv)} USD`} />
-                <Tile label="Seller NMV per ad dollar" value={adsTotals.cost ? (adsTotals.nmv / adsTotals.cost).toFixed(2) : '—'}
-                  sub="inverse of ATR — all sales, not attributed" />
-              </div>
-              <div className="note warn">
-                <b>TikTok&rsquo;s own revenue and order counts are deliberately kept out of this tab.</b>{' '}
-                They do not measure the same thing we do. In Sep 2026 TikTok reported 4,703 attributed
-                orders against 2,350 machine orders in the shop &mdash; it counts accessories, and one
-                order can be claimed by several campaigns at once. Its revenue implies an average order
-                of 6.3 mn when our cheapest machine is around 6 mn and the bulk sell at 15&ndash;25 mn.
-                Everything above is money we actually paid, against revenue we actually recognised.
-              </div>
-            </section>
-
-            <section>
-              <h2>Spend per day, against Seller NMV · DoD</h2>
-              <p className="sub">
-                Columns split LIVE GMV Max from Product GMV Max. The red line is ATR &mdash; total
-                ad spend (including C-Ads) divided by that day&rsquo;s Seller NMV, on the right axis.
-              </p>
-              <ComboChart
-                data={adsDays.map((r) => ({ ky: r.ngay, a: Number(r.lgm_usd || 0), b: Number(r.pgm_usd || 0) }))}
-                names={['LIVE GMV Max', 'Product GMV Max']}
-                colors={['var(--c1)', 'var(--c2)']}
-                lines={[{
-                  ten: 'ATR — ad spend ÷ Seller NMV (right axis)',
-                  color: 'var(--bad)', truc: 'pct',
-                  vals: adsDays.map((r) => (Number(r.nmv || 0) > 0 ? p1(Number(r.ads_cost_vnd || 0), Number(r.nmv)) : null)),
-                  showVals: true,
-                  fmtVal: (v) => `${v}%`,
-                }]}
-                fmt={usd} label={ddmm} unit="USD"
-                tip={(d) => {
-                  const r = adsDays.find((x) => x.ngay === d.ky)
-                  if (!r) return null
-                  return (
-                    <><b>{ddmm(d.ky)}</b><br />
-                      LGM {usd(Number(r.lgm_usd))} · PGM {usd(Number(r.pgm_usd))}<br />
-                      C-Ads {usd(Number(r.cads_usd))}<br />
-                      Total spend {usd(Number(r.ads_cost_usd))}<br />
-                      Seller NMV {usd(Number(r.nmv_usd))}<br />
-                      ATR {pct(p1(Number(r.ads_cost_usd), Number(r.nmv_usd)))}</>
-                  )
-                }}
-              />
-            </section>
-
-            <section>
-              <h2>Day by day</h2>
-              <div className="tablewrap">
-                <table>
-                  <thead><tr>
-                    <th>Day</th>
-                    <th className="n">LGM</th><th className="n">PGM</th><th className="n">C-Ads</th>
-                    <th className="n">Total spend</th>
-                    <th className="n">Seller NMV</th><th className="n">ATR %</th>
-                    <th className="n">Net pcs</th>
-                  </tr></thead>
-                  <tbody>
-                    {adsDays.slice().reverse().map((r) => {
-                      const cost = Number(r.ads_cost_usd || 0)
-                      const share = Number(r.nmv_usd || 0) > 0 ? p1(cost, Number(r.nmv_usd)) : null
-                      return (
-                        <tr key={r.ngay}>
-                          <td>{ddmm(r.ngay)}</td>
-                          <td className="n">{usd(Number(r.lgm_usd))}</td>
-                          <td className="n">{usd(Number(r.pgm_usd))}</td>
-                          <td className="n">{usd(Number(r.cads_usd))}</td>
-                          <td className="n"><b>{usd(cost)}</b></td>
-                          <td className="n">{usd(Number(r.nmv_usd))}</td>
-                          <td className="n">{pct(share)}</td>
-                          <td className="n">{n0(Number(r.net_pcs))}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className="foot">
-                Money in USD, net pcs after cancellations. Every column here is ours &mdash; nothing
-                on this table comes from TikTok&rsquo;s attribution.
-              </p>
-            </section>
-
-            {chartRevAtr}
-
-            {chartAdsMix}
-
-            <section>
-              <h2>Ad spend by month — {monthNote}</h2>
-              <div className="tablewrap">
-                <table>
-                  <thead><tr>
-                    <th>Month</th>
-                    <th className="n">LGM</th><th className="n">PGM</th><th className="n">C-Ads</th>
-                    <th className="n">Total spend</th>
-                    <th className="n">Seller NMV</th><th className="n">ATR %</th>
-                    <th className="n">LGM share</th>
-                  </tr></thead>
-                  <tbody>
-                    {adsMonths.map((m) => {
-                      const total = m.lgm + m.pgm + m.cads
-                      const sale = momRows.find((r) => r.ky.slice(0, 7) === m.ky.slice(0, 7))
-                      const nmvUsd = sale ? sale.nmv / FX : 0
-                      return (
-                        <tr key={m.ky}>
-                          <td>{mmyy(m.ky)}</td>
-                          <td className="n">{usd(m.lgm)}</td>
-                          <td className="n">{usd(m.pgm)}</td>
-                          <td className="n">{usd(m.cads)}</td>
-                          <td className="n"><b>{usd(total)}</b></td>
-                          <td className="n">{sale ? usd(nmvUsd) : '—'}</td>
-                          <td className="n">{nmvUsd > 0 ? pct(p1(total, nmvUsd)) : '—'}</td>
-                          <td className="n">{total > 0 ? pct(p1(m.lgm, total)) : '—'}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className="foot">All money in USD.</p>
-            </section>
-
-            <section>
-              <h2>Campaigns — {monthNote}</h2>
-              <p className="sub">
-                Every campaign that spent in the selected months, biggest first. KOC handle and model
-                are read off the campaign name, so they follow the team&rsquo;s naming convention — a
-                renamed campaign shows a dash rather than a guess.
-              </p>
-              <div className="tablewrap">
-                <table>
-                  <thead><tr>
-                    <th>Campaign</th><th>Type</th><th>KOC</th><th>Model</th>
-                    <th className="n">Spend</th><th className="n">Share of spend</th>
-                    <th className="n">TikTok ROAS</th>
-                  </tr></thead>
-                  <tbody>
-                    {adsCamps.slice(0, 60).map((c) => (
-                      <tr key={c.id}>
-                        <td>{c.ten}</td>
-                        <td>{c.loai === 'LIVE_GMV_MAX' ? 'LGM' : c.loai === 'PRODUCT_GMV_MAX' ? 'PGM' : 'C-Ads'}</td>
-                        <td>{c.koc ?? <span className="muted">—</span>}</td>
-                        <td>{c.model ?? <span className="muted">—</span>}</td>
-                        <td className="n"><b>{usd(c.cost)}</b></td>
-                        <td className="n">{pct(p1(c.cost, adsTotals.cost))}</td>
-                        <td className="n muted">{c.cost > 0 ? (c.rev / c.cost).toFixed(1) : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="foot">
-                Spend in USD. Showing the top 60 of {n0(adsCamps.length)} campaigns. The last column
-                is TikTok&rsquo;s own ROAS, kept only because it is the one signal that exists per
-                campaign &mdash; our order data cannot be traced back to a campaign. Read it as a
-                ranking between campaigns, never as a return on our own revenue.
-              </p>
-            </section>
-          </>
-        )}
-
-        {tab === 'Cancellations' && (
-          <>
-            <section>
-              <h2>Cancellation rate per {periodWord} · {dod}</h2>
+            <section id="s6-1">
+              <h2><span className="hno">6.1</span>Cancellation rate per {periodWord} · {dod}</h2>
               <p className="sub">Internal target is 40% or below.</p>
               <DeltaChart
                 data={pt((r) => r.cancel_rate)} color="var(--bad)" fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
@@ -2619,8 +2668,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>How long after ordering do orders die — {periodNote}</h2>
+            <section id="s6-2">
+              <h2><span className="hno">6.2</span>How long after ordering do orders die — {periodNote}</h2>
               <p className="sub">Two distinct clusters, and they are two different problems.</p>
               <BarChart
                 data={lapse.map((l) => ({ ky: l.khoang, v: l.so_luong }))}
@@ -2662,8 +2711,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section>
-              <h2>Cancellation rate by model, month by month</h2>
+            <section id="s6-3">
+              <h2><span className="hno">6.3</span>Cancellation rate by model, month by month</h2>
               <p className="sub">Darker is worse. A row that heats up month after month is a product problem, not a seasonal one.</p>
               <Matrix
                 corner="Model"
@@ -2684,8 +2733,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>Worst models — {periodNote}</h2>
+            <section id="s6-4">
+              <h2><span className="hno">6.4</span>Worst models — {periodNote}</h2>
               <p className="sub">Models with at least 30 gross units in the selected period.</p>
               <RowBars
                 rows={skuF.filter((s) => s.so_luong >= 30)
@@ -2700,8 +2749,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>Cancellation detail by model — {periodNote}</h2>
+            <section id="s6-5">
+              <h2><span className="hno">6.5</span>Cancellation detail by model — {periodNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -2733,11 +2782,11 @@ export default function Dashboard({
           </>
         )}
 
-        {/* =================== P&L =================== */}
-        {tab === 'P&L' && (
+        {/* ======================== P&L ======================== */}
+        {sec === 'P&L' && (
           <>
-            <section>
-              <h2>From list price to cash — {periodNote}</h2>
+            <section id="s7-1">
+              <h2><span className="hno">7.1</span>From list price to cash — {periodNote}</h2>
               <p className="sub">
                 Cancelled orders excluded. This is a draft — COGS, platform fees, affiliate
                 commission and ad spend are still missing.
@@ -2793,8 +2842,8 @@ export default function Dashboard({
               })()}
             </section>
 
-            <section>
-              <h2>Seller NMV and what erodes it, by month</h2>
+            <section id="s7-2">
+              <h2><span className="hno">7.2</span>Seller NMV and what erodes it, by month</h2>
               <p className="sub">
                 Green is Seller NMV recognised, red is the discount the shop funded itself. Together they
                 equal the list price of non-cancelled orders. Always monthly.
@@ -2811,8 +2860,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section>
-              <h2>P&amp;L by month</h2>
+            <section id="s7-3">
+              <h2><span className="hno">7.3</span>P&amp;L by month</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -2846,8 +2895,8 @@ export default function Dashboard({
           </>
         )}
 
-        {/* =================== GLOSSARY =================== */}
-        {tab === 'Glossary' && (
+        {/* ===================== GLOSSARY ===================== */}
+        {sec === 'Glossary' && (
           <>
             <section>
               <h2>What every term on this dashboard means</h2>
@@ -2893,11 +2942,13 @@ export default function Dashboard({
           </>
         )}
 
-        <div className="note">
-          <b>Not in this dashboard yet:</b> Livestream, Advertising and Product Funnel. Each needs a
-          new sync adapter — that data is not in the database.
-        </div>
-      </main>
+          <div className="note">
+            <b>Not in this dashboard yet:</b> Livestream and Product Funnel. Each needs a new sync
+            adapter — that data is not in the database.
+          </div>
+        </main>
+      </div>
+      </div>
     </>
   )
 }
@@ -2994,6 +3045,46 @@ const CSS = `
   background:var(--surface);color:var(--ink);border-radius:5px;cursor:pointer;max-width:100%}
 .drop.wide{min-width:240px}
 .drop:focus-visible{outline:2px solid var(--c1);outline-offset:1px}
+
+/* ---- bố cục hai cột: điều hướng trái, nội dung phải ----
+   Thanh trái dính khi cuộn để lúc nào cũng biết mình đang ở phần nào.
+   Dưới 1100px nó nằm ngang thành dải tab như bản cũ. */
+.body{display:grid;grid-template-columns:232px minmax(0,1fr);gap:28px;margin-top:22px;
+  align-items:start}
+.main{min-width:0}
+
+.side{position:sticky;top:14px;display:flex;flex-direction:column;gap:2px;
+  border-right:1px solid var(--line);padding-right:14px}
+.side-g{display:flex;flex-direction:column}
+.side-s{display:flex;align-items:baseline;gap:8px;width:100%;text-align:left;font:inherit;
+  font-size:14px;padding:7px 9px;border:0;border-radius:6px;background:transparent;
+  color:var(--ink-2);cursor:pointer}
+.side-s:hover{background:var(--surface-2);color:var(--ink)}
+.side-g.on>.side-s{background:var(--surface-2);color:var(--ink);font-weight:600}
+.side-n{display:inline-block;min-width:14px;font-variant-numeric:tabular-nums;
+  font-size:12px;color:var(--muted)}
+.side-g.on>.side-s .side-n{color:var(--c1)}
+.side-subs{list-style:none;margin:2px 0 8px;padding:0 0 0 9px}
+.side-subs li{margin:0}
+.side-subs a{display:flex;gap:7px;padding:4px 8px;border-radius:5px;font-size:12.5px;
+  line-height:1.35;color:var(--muted);text-decoration:none}
+.side-subs a:hover{background:var(--surface-2);color:var(--ink-2)}
+.side-n2{font-variant-numeric:tabular-nums;color:var(--line-s);flex:none}
+
+/* Số hiệu trước tiêu đề khối, để gọi "mở 4.4" trong họp là ai cũng tới đúng chỗ. */
+.hno{font-variant-numeric:tabular-nums;font-size:.72em;font-weight:600;color:var(--muted);
+  margin-right:9px;letter-spacing:.02em}
+
+/* Nhảy tới neo mà không bị tiêu đề dính che mất. */
+.wrap section[id],.wrap div[id^="s"]{scroll-margin-top:16px}
+
+@media (max-width:1100px){
+  .body{grid-template-columns:1fr;gap:0}
+  .side{position:static;flex-direction:row;flex-wrap:wrap;border-right:0;padding-right:0;
+    border-bottom:1px solid var(--line);margin-bottom:18px}
+  .side-g{flex-direction:row;align-items:center}
+  .side-subs{display:none}
+}
 
 .tabs{display:flex;gap:2px;margin-top:20px;border-bottom:1px solid var(--line);overflow-x:auto}
 .tabs button{font:inherit;font-size:14px;padding:9px 14px;border:0;background:transparent;
