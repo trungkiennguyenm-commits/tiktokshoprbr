@@ -1127,7 +1127,7 @@ export default function Dashboard({
       return n
     })
   const [sortKey, setSortKey] = useState<keyof SkuAgg>('nmv')
-  const [mixMetric, setMixMetric] = useState<'gmv' | 'so_luong'>('gmv')
+  const [mixMetric, setMixMetric] = useState<'gmv' | 'so_luong' | 'cancel'>('gmv')
   /** Bảng model mix: bật thì mỗi ô là % của cột ngày đó thay vì số tuyệt đối. */
   const [mixShare, setMixShare] = useState(false)
   const [modelSel, setModelSel] = useState('')
@@ -1239,28 +1239,39 @@ export default function Dashboard({
     return Array.from(map.values()).sort((a, b) => a.ky.localeCompare(b.ky))
   }, [skuRows])
 
+  /** Model mix: GIỮ ĐỦ mọi model, không gom "Other".
+   *
+   *  Trước đây cắt top 8 cho biểu đồ cột chồng dễ nhìn, nhưng bảng thì khác —
+   *  30 dòng vẫn đọc được, mà gom lại thì đúng những model nhỏ cần soi lại bị
+   *  giấu đi. Ở đây gom số thô theo model × kỳ, phần quy đổi ra con số hiển
+   *  thị để bảng tự lo, vì tỷ lệ huỷ không cộng dồn được như tiền và cái. */
   const mix = useMemo(() => {
-    // Cột chồng đếm theo NET pcs (đã trừ đơn huỷ), khớp với bảng Net pcs bên dưới.
-    const val = (r: SkuPeriod) => Number((mixMetric === 'gmv' ? r.gmv : r.sl_chua_huy) || 0)
-    const totals = new Map<string, number>()
-    for (const r of skuRows) totals.set(r.model, (totals.get(r.model) ?? 0) + val(r))
-    const top = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8).map((e) => e[0])
-    const hasOther = totals.size > top.length
-    const series = [
-      ...top.map((m, i) => ({ ten: m, color: PALETTE[i % PALETTE.length] })),
-      ...(hasOther ? [{ ten: 'Other', color: GREY }] : []),
-    ]
-    const idx = new Map(top.map((m, i) => [m, i]))
-    const byKy = new Map<string, number[]>()
+    type O = { gmv: number; net: number; gross: number; huy: number }
+    const z = (): O => ({ gmv: 0, net: 0, gross: 0, huy: 0 })
+    const tong = new Map<string, O>()
+    const byKy = new Map<string, Map<string, O>>()
     for (const r of skuRows) {
-      const arr = byKy.get(r.ky) ?? new Array(series.length).fill(0)
-      arr[idx.get(r.model) ?? top.length] += val(r)
-      byKy.set(r.ky, arr)
+      const add = (o: O) => {
+        o.gmv += Number(r.gmv || 0)
+        o.net += Number(r.sl_chua_huy || 0)
+        o.gross += Number(r.so_luong || 0)
+        o.huy += Number(r.so_luong || 0) - Number(r.sl_chua_huy || 0)
+      }
+      add(tong.get(r.model) ?? (tong.set(r.model, z()), tong.get(r.model)!))
+      const m = byKy.get(r.ky) ?? new Map<string, O>()
+      add(m.get(r.model) ?? (m.set(r.model, z()), m.get(r.model)!))
+      byKy.set(r.ky, m)
     }
-    const data: PtN[] = Array.from(byKy.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([ky, parts]) => ({ ky, parts }))
-    return { series, data }
+    // Xếp theo chỉ số đang chọn; riêng tỷ lệ huỷ thì xếp theo sản lượng gộp,
+    // nếu xếp theo chính tỷ lệ thì model bán 1 cái mà huỷ 1 cái sẽ đứng đầu.
+    const diem = (o: O) =>
+      mixMetric === 'gmv' ? o.gmv : mixMetric === 'so_luong' ? o.net : o.gross
+    const models = Array.from(tong.entries())
+      .sort((a, b) => diem(b[1]) - diem(a[1]))
+      .map((e) => e[0])
+    const series = models.map((m, i) => ({ ten: m, color: PALETTE[i % PALETTE.length] }))
+    const kys = Array.from(byKy.keys()).sort()
+    return { series, models, kys, byKy, tong, z }
   }, [skuRows, mixMetric])
 
   /* ---- tab Discounts luôn ở mức NGÀY ----
@@ -1545,34 +1556,62 @@ export default function Dashboard({
   const periodWord = byMonth ? 'month' : 'day'
 
   /** Model mix dạng bảng: model xuống dòng, kỳ chạy ngang, thêm cột Total.
-   *  Bảng dễ đọc hơn cột chồng khi có 8 model và ~30 ngày — mắt không phải
-   *  ước lượng chiều cao từng khúc nữa. */
+   *  Bảng dễ đọc hơn cột chồng khi có nhiều model và ~30 ngày — mắt không
+   *  phải ước lượng chiều cao từng khúc nữa. */
   const mixTable = useMemo(() => {
-    const cols = [...mix.data.map((d) => lbl(d.ky)), 'Total']
-    const colTot = mix.data.map((d) => d.parts.reduce((x, y) => x + y, 0))
+    const cols = [...mix.kys.map(lbl), 'Total']
+    const pc = (v: number, t: number) => (t ? Math.round((v / t) * 1000) / 10 : null)
+    const lay = (o: { gmv: number; net: number; gross: number; huy: number } | undefined) => {
+      if (!o) return null
+      if (mixMetric === 'gmv') return o.gmv || null
+      if (mixMetric === 'so_luong') return o.net || null
+      return o.gross > 0 ? pc(o.huy, o.gross) : null
+    }
+    // Tổng mỗi cột, chỉ dùng cho chế độ "% của kỳ" (không áp dụng cho tỷ lệ huỷ).
+    const colTot = mix.kys.map((k) => {
+      let t = 0
+      for (const o of (mix.byKy.get(k) ?? new Map()).values()) {
+        t += mixMetric === 'gmv' ? o.gmv : o.net
+      }
+      return t
+    })
     const grand = colTot.reduce((x, y) => x + y, 0)
-    const pct = (v: number, t: number) => (t ? Math.round((v / t) * 1000) / 10 : null)
-    const rows = [
-      ...mix.series.map((sr, j) => {
-        const vals = mix.data.map((d) => d.parts[j])
-        const tot = vals.reduce((x, y) => x + y, 0)
-        return {
-          label: sr.ten,
-          color: sr.color,
-          vals: mixShare
-            ? [...vals.map((v, i) => pct(v, colTot[i])), pct(tot, grand)]
-            : [...vals.map((v) => (v > 0 ? v : null)), tot],
-        }
-      }),
-      {
-        label: 'Total',
-        vals: mixShare
+
+    const rows = mix.series.map((sr) => {
+      const per = mix.kys.map((k) => mix.byKy.get(k)?.get(sr.ten))
+      const tot = mix.tong.get(sr.ten)
+      const vals =
+        mixMetric !== 'cancel' && mixShare
+          ? [
+            ...per.map((o, i) => pc(o ? (mixMetric === 'gmv' ? o.gmv : o.net) : 0, colTot[i])),
+            pc(tot ? (mixMetric === 'gmv' ? tot.gmv : tot.net) : 0, grand),
+          ]
+          : [...per.map(lay), lay(tot)]
+      return { label: sr.ten, color: sr.color, vals }
+    })
+
+    // Dòng Total: tiền và cái thì cộng, tỷ lệ huỷ thì tính lại trên tổng.
+    const tongKy = mix.kys.map((k) => {
+      const o = mix.z()
+      for (const x of (mix.byKy.get(k) ?? new Map()).values()) {
+        o.gmv += x.gmv; o.net += x.net; o.gross += x.gross; o.huy += x.huy
+      }
+      return o
+    })
+    const tongAll = mix.z()
+    for (const o of mix.tong.values()) {
+      tongAll.gmv += o.gmv; tongAll.net += o.net; tongAll.gross += o.gross; tongAll.huy += o.huy
+    }
+    rows.push({
+      label: 'Total',
+      color: undefined as unknown as string,
+      vals:
+        mixMetric !== 'cancel' && mixShare
           ? [...colTot.map((t) => (t ? 100 : null)), grand ? 100 : null]
-          : [...colTot.map((t) => (t > 0 ? t : null)), grand],
-      },
-    ]
+          : [...tongKy.map(lay), lay(tongAll)],
+    })
     return { cols, rows }
-  }, [mix, mixShare, lbl])
+  }, [mix, mixShare, mixMetric, lbl])
   const dod = byMonth ? 'MoM' : 'DoD'
   const scopeLabel = modelSel || (cat === 'all' ? 'all products' : cat)
   const monthNote = selMonths.size
@@ -2823,25 +2862,36 @@ export default function Dashboard({
             {!modelSel && (
               <section>
                 <h2>Model mix per {periodWord}</h2>
-                <p className="sub">Top 8 models by the chosen metric, the rest folded into &ldquo;Other&rdquo;.</p>
+                <p className="sub">
+                  Every model that sold in the period, biggest first &mdash; nothing folded into
+                  &ldquo;Other&rdquo;. Cancellation rate is cancelled pcs ÷ gross pcs, so it is
+                  recalculated on the totals rather than summed, and the share view does not apply
+                  to it.
+                </p>
                 <div className="seg" style={{ marginTop: 14 }}>
-                  {(['gmv', 'so_luong'] as const).map((k) => (
+                  {(['gmv', 'so_luong', 'cancel'] as const).map((k) => (
                     <button key={k} className={mixMetric === k ? 'on' : ''} onClick={() => setMixMetric(k)}>
-                      {k === 'gmv' ? 'By Seller GMV' : 'By net pcs'}
+                      {k === 'gmv' ? 'By Seller GMV' : k === 'so_luong' ? 'By net pcs' : 'By cancellation rate'}
                     </button>
                   ))}
                 </div>
-                <div className="seg" style={{ marginTop: 8 }}>
-                  {([[false, 'Absolute'], [true, 'Share of period']] as const).map(([k, l]) => (
-                    <button key={l} className={mixShare === k ? 'on' : ''} onClick={() => setMixShare(k)}>{l}</button>
-                  ))}
-                </div>
+                {mixMetric !== 'cancel' && (
+                  <div className="seg" style={{ marginTop: 8 }}>
+                    {([[false, 'Absolute'], [true, 'Share of period']] as const).map(([k, l]) => (
+                      <button key={l} className={mixShare === k ? 'on' : ''} onClick={() => setMixShare(k)}>{l}</button>
+                    ))}
+                  </div>
+                )}
                 <Matrix
-                  corner={`Model · ${mixShare ? '% of ' + periodWord : mixMetric === 'gmv' ? 'VND bn' : 'net pcs'}`}
+                  corner={`Model · ${mixMetric === 'cancel' ? 'cancelled %'
+                    : mixShare ? '% of ' + periodWord
+                      : mixMetric === 'gmv' ? 'VND bn' : 'net pcs'}`}
                   cols={mixTable.cols}
                   rows={mixTable.rows}
-                  heat="high-good"
-                  fmt={mixShare ? (v) => `${v}%` : mixMetric === 'gmv' ? bn : n0}
+                  heat={mixMetric === 'cancel' ? 'high-bad' : 'high-good'}
+                  fmt={mixMetric === 'cancel' ? (v) => `${v}%`
+                    : mixShare ? (v) => `${v}%`
+                      : mixMetric === 'gmv' ? bn : n0}
                 />
               </section>
             )}
