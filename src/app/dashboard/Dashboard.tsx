@@ -2434,9 +2434,13 @@ export default function Dashboard({
               <h2><span className="hno">2.5</span>Valid subsidy against Seller NMV — {periodNote}</h2>
               <p className="sub">
                 Columns are the money that actually came off the price on orders that survived,
-                split by who paid for it: TikTok on the bottom, us on top. The red line is TikTok&rsquo;s
-                valid subsidy as a share of Seller NMV; the green line is TikTok&rsquo;s share of the
-                discount funding.
+                split by who paid for it: TikTok on the bottom, us on top. The two lines answer two
+                different questions. <b style={{ color: 'var(--bad)' }}>Red &mdash; how deep is the
+                discounting?</b> TikTok&rsquo;s subsidy measured against Seller NMV.{' '}
+                <b style={{ color: 'var(--ok)' }}>Green &mdash; who is paying for it?</b> TikTok&rsquo;s
+                share of the whole discount: at 40% TikTok funds 40 đồng of every 100 đồng taken off
+                the price and we fund the other 60. It says nothing about how large the discount is
+                &mdash; only who carries it.
               </p>
               <ComboChart
                 data={shown.map((r) => ({
@@ -2458,6 +2462,7 @@ export default function Dashboard({
                       const t = r.platform_disc_chua_huy + r.seller_disc_chua_huy
                       return t > 0 ? p1(r.platform_disc_chua_huy, t) : null
                     }),
+                    showVals: true, fmtVal: (v) => `${v}%`,
                   },
                 ]}
                 fmt={bn} label={lbl} unit="VND bn"
