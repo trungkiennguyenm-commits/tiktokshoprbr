@@ -182,7 +182,7 @@ const SECTIONS = [
     id: 'Sales', ten: 'Sales',
     groups: [
       { ten: 'Totals', subs: ['Range totals', 'GMV, NMV, cancellations'] },
-      { ten: 'Monthly', subs: ['NMV, ads and ATR', 'LGM vs PGM'] },
+      { ten: 'Daily', subs: ['NMV, ads and ATR', 'LGM vs PGM'] },
       { ten: 'By period', subs: ['Seller NMV', 'Net quantity', 'Robot vs handheld', 'Detail table'] },
     ],
   },
@@ -2014,6 +2014,81 @@ export default function Dashboard({
     </section>
   )
 
+  /* ---- bản THEO NGÀY của hai biểu đồ trên, dùng cho tab Sales ----
+     Tab Summary là nơi đọc theo tháng; Sales chạy theo bộ lọc ngày như mọi
+     phần còn lại của nó. Trước đây Sales cắm luôn bản theo tháng, nên lọc
+     một tháng là cả hai biểu đồ co lại thành đúng MỘT cột — nhìn vô nghĩa. */
+  const chartRevAtrDay = (
+    <section>
+      <h2>Seller NMV, ad spend and ATR — {dayNote}</h2>
+      <p className="sub">
+        Column height is Seller NMV for the day, split into what advertising cost and what was left
+        after it. The two parts add up to Seller NMV, so the coloured share of each column IS the
+        ATR drawn on the red line. All figures in USD.
+      </p>
+      <ComboChart
+        data={adsDays.map((r) => {
+          const cost = Number(r.ads_cost_usd || 0)
+          const nmv = Number(r.nmv_usd || 0)
+          return { ky: r.ngay, a: cost, b: Math.max(0, nmv - cost) }
+        })}
+        names={['Ad spend', 'Seller NMV after ads']}
+        colors={['var(--c2)', 'var(--c1-soft)']}
+        lines={[{
+          ten: 'ATR (right axis)',
+          color: 'var(--bad)', truc: 'pct',
+          vals: adsDays.map((r) =>
+            (Number(r.nmv_usd || 0) > 0 ? p1(Number(r.ads_cost_usd || 0), Number(r.nmv_usd)) : null)),
+          showVals: true,
+          fmtVal: (v) => `${v}%`,
+        }]}
+        fmt={usd} label={ddmm} unit="USD"
+        tip={(d, i) => {
+          const r = adsDays[i]
+          if (!r) return null
+          const cost = Number(r.ads_cost_usd || 0)
+          const nmv = Number(r.nmv_usd || 0)
+          return (
+            <><b>{ddmm(d.ky)}</b><br />
+              Seller NMV {usd(nmv)}<br />
+              · ad spend {usd(cost)}<br />
+              · left after ads {usd(Math.max(0, nmv - cost))}<br />
+              ATR {pct(nmv > 0 ? p1(cost, nmv) : null)}</>
+          )
+        }}
+      />
+    </section>
+  )
+
+  const chartAdsMixDay = (
+    <section>
+      <h2>LIVE vs Product GMV Max — {dayNote}</h2>
+      <p className="sub">
+        Daily budget mix. C-Ads and branding sit on top in grey — small in money, but they are the
+        only spend with no direct sales attribution.
+      </p>
+      <MultiStack
+        data={adsDays.map((r) => ({
+          ky: r.ngay,
+          parts: [Number(r.lgm_usd || 0), Number(r.pgm_usd || 0), Number(r.cads_usd || 0)],
+        }))}
+        series={[
+          { ten: 'LIVE GMV Max', color: 'var(--c1)' },
+          { ten: 'Product GMV Max', color: 'var(--c2)' },
+          { ten: 'C-Ads and branding', color: GREY },
+        ]}
+        fmt={usd} label={ddmm} unit="USD"
+        tip={(d) => (
+          <><b>{ddmm(d.ky)}</b><br />
+            LGM {usd(d.parts[0])}<br />
+            PGM {usd(d.parts[1])}<br />
+            C-Ads {usd(d.parts[2])}<br />
+            Total {usd(d.parts[0] + d.parts[1] + d.parts[2])}</>
+        )}
+      />
+    </section>
+  )
+
   const chartAdsMix = (
     <section>
       <h2>LIVE vs Product GMV Max — {monthNote}</h2>
@@ -2346,9 +2421,9 @@ export default function Dashboard({
               />
             </section>
 
-            <div id="s2-3">{chartRevAtr}</div>
+            <div id="s2-3">{chartRevAtrDay}</div>
 
-            <div id="s2-4">{chartAdsMix}</div>
+            <div id="s2-4">{chartAdsMixDay}</div>
 
             <section id="s2-5">
               <h2><span className="hno">2.5</span>Seller NMV per {periodWord} · {dod}</h2>
