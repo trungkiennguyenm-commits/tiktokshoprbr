@@ -183,6 +183,7 @@ const SECTIONS = [
     groups: [
       { ten: 'Totals', subs: ['Range totals', 'GMV, NMV, cancellations'] },
       { ten: 'Daily', subs: ['NMV, ads and ATR', 'LGM vs PGM'] },
+      { ten: 'Subsidy', subs: ['Valid subsidy vs NMV'] },
       { ten: 'By period', subs: ['Seller NMV', 'Net quantity', 'Robot vs handheld', 'Detail table'] },
     ],
   },
@@ -2387,6 +2388,10 @@ export default function Dashboard({
                 <Tile label="ATR — ad take rate" value={pct(p1(adsSpanUsd, span.cur.nmv / FX))}
                   tone={p1(adsSpanUsd, span.cur.nmv / FX) > 25 ? 'bad' : 'ok'}
                   sub="ad spend ÷ Seller NMV" />
+                <Tile label="Valid subsidy" value={bn(span.cur.platform_disc_chua_huy)} unit=" bn"
+                  sub={`TikTok money on orders that survived · ${pct(p1(span.cur.platform_disc_chua_huy, span.cur.platform_disc))} of what was booked`} />
+                <Tile label="Subsidy rate" value={pct(p1(span.cur.platform_disc_chua_huy, span.cur.nmv))}
+                  sub={`valid subsidy ÷ Seller NMV · we funded ${bn(span.cur.seller_disc_chua_huy)} bn`} />
               </div>
             </section>
 
@@ -2426,7 +2431,94 @@ export default function Dashboard({
             <div id="s2-4">{chartAdsMixDay}</div>
 
             <section id="s2-5">
-              <h2><span className="hno">2.5</span>Seller NMV per {periodWord} · {dod}</h2>
+              <h2><span className="hno">2.5</span>Valid subsidy against Seller NMV — {periodNote}</h2>
+              <p className="sub">
+                Columns are the money that actually came off the price on orders that survived,
+                split by who paid for it: TikTok on the bottom, us on top. The red line is TikTok&rsquo;s
+                valid subsidy as a share of Seller NMV; the green line is TikTok&rsquo;s share of the
+                discount funding.
+              </p>
+              <ComboChart
+                data={shown.map((r) => ({
+                  ky: r.ky, a: r.platform_disc_chua_huy, b: r.seller_disc_chua_huy,
+                }))}
+                names={['TikTok — valid subsidy', 'Us — seller discount']}
+                colors={['var(--c1)', 'var(--c2)']}
+                lines={[
+                  {
+                    ten: 'Subsidy ÷ Seller NMV (right axis)',
+                    color: 'var(--bad)', truc: 'pct',
+                    vals: shown.map((r) => (r.nmv > 0 ? p1(r.platform_disc_chua_huy, r.nmv) : null)),
+                    showVals: true, fmtVal: (v) => `${v}%`,
+                  },
+                  {
+                    ten: 'TikTok share of the discount (right axis)',
+                    color: 'var(--ok)', truc: 'pct',
+                    vals: shown.map((r) => {
+                      const t = r.platform_disc_chua_huy + r.seller_disc_chua_huy
+                      return t > 0 ? p1(r.platform_disc_chua_huy, t) : null
+                    }),
+                  },
+                ]}
+                fmt={bn} label={lbl} unit="VND bn"
+                tip={(d, i2) => {
+                  const r = shown[i2]
+                  if (!r) return null
+                  const t = r.platform_disc_chua_huy + r.seller_disc_chua_huy
+                  return (
+                    <><b>{lbl(d.ky)}</b><br />
+                      Valid subsidy {bn(r.platform_disc_chua_huy)}<br />
+                      · booked {bn(r.platform_disc)} · kept {pct(p1(r.platform_disc_chua_huy, r.platform_disc))}<br />
+                      Our discount {bn(r.seller_disc_chua_huy)}<br />
+                      Seller NMV {bn(r.nmv)}<br />
+                      Subsidy rate {pct(r.nmv > 0 ? p1(r.platform_disc_chua_huy, r.nmv) : null)}<br />
+                      TikTok funded {pct(t > 0 ? p1(r.platform_disc_chua_huy, t) : null)} of the discount</>
+                  )
+                }}
+              />
+              <div className="tablewrap" style={{ marginTop: 18 }}>
+                <table>
+                  <thead><tr>
+                    <th>{periodWord === 'month' ? 'Month' : 'Day'}</th>
+                    <th className="n">Seller NMV</th>
+                    <th className="n">Subsidy booked</th>
+                    <th className="n">Valid subsidy</th>
+                    <th className="n">Kept</th>
+                    <th className="n">Subsidy rate</th>
+                    <th className="n">Our discount</th>
+                    <th className="n">TikTok share</th>
+                  </tr></thead>
+                  <tbody>
+                    {shown.slice().reverse().map((r) => {
+                      const t = r.platform_disc_chua_huy + r.seller_disc_chua_huy
+                      return (
+                        <tr key={r.ky}>
+                          <td>{lbl(r.ky)}</td>
+                          <td className="n">{bn(r.nmv)}</td>
+                          <td className="n muted">{bn(r.platform_disc)}</td>
+                          <td className="n"><b>{bn(r.platform_disc_chua_huy)}</b></td>
+                          <td className="n muted">{pct(p1(r.platform_disc_chua_huy, r.platform_disc))}</td>
+                          <td className="n">{pct(r.nmv > 0 ? p1(r.platform_disc_chua_huy, r.nmv) : null)}</td>
+                          <td className="n">{bn(r.seller_disc_chua_huy)}</td>
+                          <td className="n">{pct(t > 0 ? p1(r.platform_disc_chua_huy, t) : null)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Money in VND bn. <b>Booked</b> is every voucher TikTok attached at checkout;{' '}
+                <b>valid</b> is what remained on orders that were not cancelled &mdash; only the
+                second one is money TikTok really spent, and the gap between them is large because
+                the cancellation rate is high. <b>Kept</b> is valid ÷ booked. Subsidy here is
+                platform voucher money only; it is not the platform fee, which lives on the P&amp;L
+                tab.
+              </p>
+            </section>
+
+            <section id="s2-6">
+              <h2><span className="hno">2.6</span>Seller NMV per {periodWord} · {dod}</h2>
               <p className="sub">Cancelled orders already removed.</p>
               <DeltaChart
                 data={pt((r) => r.nmv)} color="var(--c1)" fmt={bn} label={lbl} unit="VND bn"
@@ -2437,8 +2529,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s2-6">
-              <h2><span className="hno">2.6</span>Net quantity per {periodWord} · {dod}</h2>
+            <section id="s2-7">
+              <h2><span className="hno">2.7</span>Net quantity per {periodWord} · {dod}</h2>
               <p className="sub">Units that have not been cancelled.</p>
               <DeltaChart
                 data={pt((r) => r.sl_chua_huy)} color="var(--c3)" fmt={n0} label={lbl} unit="pcs"
@@ -2449,8 +2541,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s2-7">
-              <h2><span className="hno">2.7</span>Robot vs handheld mix</h2>
+            <section id="s2-8">
+              <h2><span className="hno">2.8</span>Robot vs handheld mix</h2>
               <p className="sub">Stacked net quantity.</p>
               <StackChart
                 data={splitByCat(srcShown, (r) => r.sl_chua_huy)}
@@ -2463,8 +2555,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s2-8">
-              <h2><span className="hno">2.8</span>Detail by {periodWord}</h2>
+            <section id="s2-9">
+              <h2><span className="hno">2.9</span>Detail by {periodWord}</h2>
               <SeriesTable rows={shown} lbl={lbl} />
             </section>
 
