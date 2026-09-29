@@ -233,11 +233,12 @@ const SECTIONS = [
     id: 'Livestream', ten: 'Livestream',
     groups: [
       { ten: '', subs: ['Key numbers', 'Daily overview'] },
-      { ten: 'By room', subs: ['Sales', 'Traffic and engagement', 'Funnel', 'Seller NMV',
-        'SKU by room', 'Hours vs NMV', 'Monthly rhythm'] },
-      { ten: 'Day by day', subs: ['Room by day', 'Daily totals', 'Audience',
-        'Conversion', 'Engagement vs CTR'] },
-      { ten: 'Monthly', subs: ['By month, by room'] },
+      { ten: 'Our revenue', ghi: 'from orders, net of cancellations',
+        subs: ['Revenue by room', 'Products by room', 'Hours and schedule'] },
+      { ten: 'Room performance', ghi: 'from TikTok live reporting, gross GMV',
+        subs: ['Rooms side by side', 'Traffic and engagement', 'Funnel'] },
+      { ten: 'Day by day', ghi: 'TikTok live',
+        subs: ['Room by period', 'Audience', 'Conversion', 'Engagement vs CTR'] },
       { ten: 'Detail', subs: ['Top sessions', 'Creator rooms'] },
     ],
   },
@@ -926,11 +927,20 @@ function StackLine({ rows, series, lines, fmtCot, fmtDuong, label, tip }: {
             ))}
           </div>
           <svg className="sl-line" viewBox="0 0 100 100" preserveAspectRatio="none">
+            {/* Vẽ hai lượt: lượt đầu dày và cùng màu nền để tạo quầng, nhờ đó
+                đường không chìm vào cột cùng màu của chính phòng đó. */}
+            {lines.map((l) => (
+              <polyline key={`halo-${l.ten}`}
+                points={l.vals.map((v, i) => (v == null ? null : `${x(i)},${y(v)}`))
+                  .filter(Boolean).join(' ')}
+                fill="none" stroke="var(--surface)" strokeWidth={6}
+                vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+            ))}
             {lines.map((l) => (
               <polyline key={l.ten}
                 points={l.vals.map((v, i) => (v == null ? null : `${x(i)},${y(v)}`))
                   .filter(Boolean).join(' ')}
-                fill="none" stroke={l.color} strokeWidth={2}
+                fill="none" stroke={l.color} strokeWidth={2.5}
                 vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
             ))}
           </svg>
@@ -938,6 +948,16 @@ function StackLine({ rows, series, lines, fmtCot, fmtDuong, label, tip }: {
             {rows.length <= 20 && lines.map((l) => l.vals.map((v, i) => (v == null ? null : (
               <span key={`${l.ten}-${i}`} className="sl-d"
                 style={{ left: `${x(i)}%`, bottom: `${100 - y(v)}%`, background: l.color }} />
+            ))))}
+            {rows.length <= 14 && lines.map((l, li) => l.vals.map((v, i) => (v == null ? null : (
+              <span key={`v-${l.ten}-${i}`} className="sl-v"
+                style={{
+                  left: `${x(i)}%`,
+                  // Ba đường hay chạm nhau; đẩy nhãn của từng đường lệch nhau
+                  // một nấc để chúng không đè lên nhau.
+                  bottom: `calc(${100 - y(v)}% + ${9 + li * 15}px)`,
+                  color: l.color,
+                }}>{fmtDuong(v)}</span>
             ))))}
           </div>
         </div>
@@ -1349,6 +1369,8 @@ export default function Dashboard({
   const [kenhRoom, setKenhRoom] = useState<string>('all')
   /** Chỉ số ở bảng sản phẩm × phòng. */
   const [skuMetric, setSkuMetric] = useState<'nmv' | 'pcs' | 'cancel' | 'mix'>('nmv')
+  /** Lưới phòng × kỳ: xem theo tháng hay theo ngày. */
+  const [luoiNgay, setLuoiNgay] = useState(false)
   /** Đường cong giờ live: xem tiền mỗi giờ hay tiền mỗi ngày. */
   const [gioMetric, setGioMetric] = useState<'per_hour' | 'per_day'>('per_hour')
   /** Lọc đường cong theo mức chi LGM của ngày đó, để tách ảnh hưởng của
@@ -2841,6 +2863,7 @@ export default function Dashboard({
                       return (
                         <div key={g.ten || gi} className="side-grp">
                           {g.ten && <div className="side-gl">{g.ten}</div>}
+                          {'ghi' in g && g.ghi && <div className="side-gn">{g.ghi}</div>}
                           {g.subs.map((t, i) => (
                             <a key={t} href={`#s${no}-${base + i + 1}`}>
                               <span className="side-n2">{no}.{base + i + 1}</span>{t}
@@ -4001,10 +4024,526 @@ export default function Dashboard({
                 the revenue, which it is not. Three quantities, three honest scales, one row of
                 days. Only our own rooms are counted here.
               </p>
+            
+              <h3 style={{ marginTop: 30 }}>Day by day, room by room</h3>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Day</th>
+                    <th className="n">Sessions</th><th className="n">Hours</th>
+                    {liveDayRoom.names.map((nm) => (
+                      <th className="n" key={nm}>{nm}<div className="uhint">bn</div></th>
+                    ))}
+                    <th className="n">KOC<div className="uhint">bn</div></th>
+                    <th className="n">Total<div className="uhint">bn</div></th>
+                    <th className="n">DoD</th>
+                    <th className="n">Views</th>
+                    <th className="n">GMV / 1k views<div className="uhint">mn</div></th>
+                    <th className="n">CTR</th><th className="n">Units</th>
+                  </tr></thead>
+                  <tbody>
+                    {liveDays.slice().reverse().map((d, i, arr) => {
+                      const tot = d.own + d.koc
+                      const prev = arr[i + 1]
+                      const prevTot = prev ? prev.own + prev.koc : undefined
+                      return (
+                        <tr key={d.ngay}>
+                          <td>{ddmm(d.ngay)}</td>
+                          <td className="n">{n0(d.phien)}</td>
+                          <td className="n">{n0(d.gio)}</td>
+                          {liveDayRoom.names.map((nm, k) => (
+                            <td className="n" key={nm}>{bn(liveDayRoom.get(d.ngay, k))}</td>
+                          ))}
+                          <td className="n muted">{bn(d.koc)}</td>
+                          <td className="n"><b>{bn(tot)}</b></td>
+                          <td className="n"><Dd a={tot} b={prevTot} /></td>
+                          <td className="n">{n0(d.views)}</td>
+                          <td className="n">{mn1(per1k(d.own, d.views))}</td>
+                          <td className="n">{pct(d.imp > 0 ? p1(d.clicks, d.imp) : null)}</td>
+                          <td className="n">{n0(d.pcs)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Newest day first. DoD compares each day with the previous day that had a session,
+                which on a Monday means the weekend, not last Friday &mdash; check the dates before
+                reading a swing as a trend.
+              </p>
             </section>
 
             <section id="s5-3">
-              <h2><span className="hno">5.3</span>Rooms side by side</h2>
+              <h2><span className="hno">5.3</span>Revenue by room — {kenhNgay ? 'DoD' : 'MoM'}</h2>
+              <p className="sub">
+                Everything above this point uses the GMV TikTok books against a live session, gross,
+                before cancellations. This block uses <b>our own order data</b> instead: revenue
+                after cancellations, attributed to a room through the live-room tag TikTok puts on
+                each order line. The two will not tie, and the gap is the cancellation.
+              </p>
+              <div className="seg" style={{ marginTop: 14 }}>
+                {([[false, 'By month'], [true, 'By day']] as const).map(([k, l]) => (
+                  <button key={l} className={kenhNgay === k ? 'on' : ''}
+                    onClick={() => setKenhNgay(k)}>{l}</button>
+                ))}
+              </div>
+              {!kenhBang.thang.length ? (
+                <div className="note warn">
+                  None of the months selected above have enough room tagging on order lines to
+                  split revenue by room. TikTok began tagging in May 2026 and only reached usable
+                  coverage from July &mdash; pick a month from July 2026 onward, or clear the month
+                  filter.
+                </div>
+              ) : (
+                <>
+                  <div className="chips" style={{ marginTop: 16 }}>
+                    <span className="chips-l">Room</span>
+                    {[{ id: 'all', ten: 'All three rooms' },
+                      ...PHONG_NHA.map((t) => ({ id: t, ten: shortRoom(t) }))].map((o) => (
+                      <button key={o.id} className={`chip ${kenhRoom === o.id ? 'on' : ''}`}
+                        onClick={() => setKenhRoom(o.id)}>{o.ten}</button>
+                    ))}
+                  </div>
+                  <ComboChart
+                    data={kenhAtr.map((r) => ({ ky: r.ky, a: r.lgm, b: r.rest }))}
+                    names={['LGM spend', 'Seller NMV after ads']}
+                    colors={['var(--c2)', 'var(--c1-soft)']}
+                    lines={[{
+                      ten: 'ATR on Seller NMV (right axis)',
+                      color: 'var(--bad)', truc: 'pct',
+                      vals: kenhAtr.map((r) => r.atr),
+                      showVals: true,
+                      fmtVal: (v) => `${v}%`,
+                    }]}
+                    fmt={bn} label={kenhNgay ? ddmm : mmyy} unit="VND bn"
+                    tip={(d, i2) => {
+                      const r = kenhAtr[i2]
+                      if (!r) return null
+                      return (
+                        <><b>{(kenhNgay ? ddmm : mmyy)(d.ky)}</b><br />
+                          Seller NMV {bn(r.nmv)}<br />
+                          · LGM spend {bn(r.lgm)}<br />
+                          · left after ads {bn(r.rest)}<br />
+                          ATR {pct(r.atr)}</>
+                      )
+                    }}
+                  />
+                  <p className="foot">
+                    Column height is Seller NMV &mdash; the revenue this room actually kept &mdash;
+                    split into what LIVE GMV Max cost and what was left after it. The two parts add
+                    up to Seller NMV, so the coloured share of each column <i>is</i> the ATR drawn on
+                    the red line.
+                  </p>
+
+                  <div className="chips" style={{ marginTop: 18 }}>
+                    <span className="chips-l">Metric</span>
+                    {KENH_METRICS.map((m) => (
+                      <button key={m.id} className={`chip ${kenhMetric === m.id ? 'on' : ''}`}
+                        onClick={() => setKenhMetric(m.id)}>{m.ten}</button>
+                    ))}
+                  </div>
+                  <Matrix
+                    corner={`Channel · ${kDef.ten}`}
+                    cols={(kenhNgay ? kenhBangNgay.luoi : kenhBang.thang)
+                      .map((k) => (kenhNgay ? ddmm(k) : mmyy(`${k}-01`)))}
+                    fmt={kDef.fmt}
+                    heat={kDef.xau_cao ? 'high-bad' : 'high-good'}
+                    rows={(kenhNgay ? kenhBangNgay : kenhBang).ten.map((t, i2) => ({
+                      label: t,
+                      color: t.startsWith('Roborock') ? PALETTE[i2 % PALETTE.length] : GREY,
+                      vals: (kenhNgay ? kenhBangNgay.luoi : kenhBang.thang).map((k) => {
+                        const r = (kenhNgay ? kenhBangNgay : kenhBang).rows.get(t)?.get(k)
+                        return r ? kDef.lay(r) : null
+                      }),
+                    }))}
+                  />
+                  <p className="foot">
+                    {kDef.ten}{kDef.don_vi ? ` (${kDef.don_vi})` : ''} per channel per{' '}
+                    {kenhNgay ? 'day' : 'month'}.{' '}
+                    {kenhNgay && kenhBangNgay.thang.length > kenhBangNgay.luoi.length &&
+                      `The grid shows the most recent ${kenhBangNgay.luoi.length} of ${kenhBangNgay.thang.length} days; the chart above covers them all. `}
+                    <b>ATR on Seller NMV</b> is that room&rsquo;s LIVE GMV Max spend divided by the
+                    revenue the room actually kept. It runs far above the ATR in section 5.3, which
+                    divides the same spend by TikTok&rsquo;s gross session GMV &mdash; same numerator,
+                    a much bigger denominator. This one is the honest version, because cancelled
+                    orders never paid for the ads.
+                  </p>
+                  <div className="note warn">
+                    Only months where most order lines carry a room tag are included{' '}
+                    ({kenhBang.thang.map((k) => `${mmyy(`${k}-01`)} ${kenhBang.phu.get(k)}%`).join(' · ')}).
+                    TikTok began tagging in May 2026. Roughly a third of lines still carry no tag
+                    and land in &ldquo;Ngoài live&rdquo;, so read that row as an upper bound.
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section id="s5-4">
+              <h2><span className="hno">5.4</span>Products by room</h2>
+              <p className="sub">
+                Which room sells which machine. TikTok&rsquo;s own live reporting cannot answer this
+                &mdash; it gives one GMV figure per session with no product breakdown. This comes
+                from the order lines instead, where each line carries both the model and the live
+                room, so revenue, units and cancellations are all real and all ours.
+              </p>
+              {!skuKenh.models.length ? (
+                <div className="note warn">
+                  None of the months selected above have enough room tagging on order lines to
+                  split products by room. Usable coverage starts in July 2026 &mdash; pick a month
+                  from then onward, or clear the month filter.
+                </div>
+              ) : (
+                <>
+                  <div className="chips" style={{ marginTop: 14 }}>
+                    <span className="chips-l">Metric</span>
+                    {SKU_METRICS.map((m) => (
+                      <button key={m.id} className={`chip ${skuMetric === m.id ? 'on' : ''}`}
+                        onClick={() => setSkuMetric(m.id)}>{m.ten}</button>
+                    ))}
+                  </div>
+                  <Matrix
+                    corner={`Model · ${sDef.ten}`}
+                    cols={[...skuKenh.cot.map(shortRoom), 'All rooms']}
+                    fmt={sDef.fmt}
+                    heat={sDef.xau_cao ? 'high-bad' : 'high-good'}
+                    rows={skuKenh.models.map((m) => {
+                      const per = skuKenh.rows.get(m)
+                      const gop = { nmv: 0, net: 0, gross: 0, huy: 0 }
+                      for (const k of skuKenh.cot) {
+                        const o = per?.get(k)
+                        if (!o) continue
+                        gop.nmv += o.nmv; gop.net += o.net; gop.gross += o.gross; gop.huy += o.huy
+                      }
+                      const oneVal = (k: string) => {
+                        const o = per?.get(k)
+                        if (!o) return null
+                        if (skuMetric === 'mix') {
+                          const t = skuKenh.tongCot.get(k) ?? 0
+                          return t > 0 ? Math.round((o.nmv / t) * 1000) / 10 || null : null
+                        }
+                        return sDef.lay(o)
+                      }
+                      return {
+                        label: m,
+                        vals: [
+                          ...skuKenh.cot.map(oneVal),
+                          skuMetric === 'mix' ? null : sDef.lay(gop),
+                        ],
+                      }
+                    })}
+                  />
+                  <p className="foot">
+                    {sDef.ten}{sDef.don_vi ? ` (${sDef.don_vi})` : ''} per model per room, summed
+                    over the months where order lines carry a room tag{' '}
+                    ({kenhBang.thang.map((k) => mmyy(`${k}-01`)).join(' · ')}).{' '}
+                    <b>Share of room</b> reads down a column: what share of that room&rsquo;s live
+                    revenue each model brought, so it shows the room&rsquo;s product mix rather than
+                    its size. Cancellation rate is recalculated on gross units, never averaged
+                    across cells, and a cell under 5 gross units is left blank &mdash; one unit
+                    sold and cancelled reads as 100% and means nothing. Models are ordered by revenue across the three own rooms, so a
+                    model that only ever sells outside live does not head the table.
+                  </p>
+                </>
+              )}
+            </section>
+
+            <section id="s5-5">
+              <h2><span className="hno">5.5</span>Hours and schedule</h2>
+              <p className="sub">
+                Days are grouped by how long the room streamed that day. The line shows what an
+                hour of streaming was worth inside each group, so it reads left to right as: does
+                the next hour still pay?
+              </p>
+              {!gioNmvNgay.length ? (
+                <div className="note warn">
+                  No day in the selected months has both a live session and room-tagged orders.
+                  Usable coverage starts in July 2026.
+                </div>
+              ) : (
+                <>
+                  <div className="seg" style={{ marginBottom: 4 }}>
+                    {([['per_hour', 'NMV per live hour'], ['per_day', 'NMV per live day']] as const)
+                      .map(([k, l]) => (
+                        <button key={k} className={gioMetric === k ? 'on' : ''}
+                          onClick={() => setGioMetric(k)}>{l}</button>
+                      ))}
+                  </div>
+                  <div className="chips" style={{ marginTop: 12, marginBottom: 6 }}>
+                    <span className="chips-l">Ad budget</span>
+                    {([['all', 'All days'], ['low', 'Low-spend days'],
+                      ['mid', 'Mid-spend days'], ['high', 'High-spend days']] as const).map(([k, l]) => (
+                      <button key={k} className={`chip ${gioAds === k ? 'on' : ''}`}
+                        onClick={() => setGioAds(k)}>{l}</button>
+                    ))}
+                  </div>
+                  <div className="tablewrap" style={{ marginTop: 4, marginBottom: 10 }}>
+                    <table className="mini">
+                      <thead><tr>
+                        <th>Room</th>
+                        <th className="n">Low-spend days<div className="uhint">LGM mn / day</div></th>
+                        <th className="n">Mid-spend days<div className="uhint">LGM mn / day</div></th>
+                        <th className="n">High-spend days<div className="uhint">LGM mn / day</div></th>
+                        <th className="n">In this view<div className="uhint">avg · days</div></th>
+                      </tr></thead>
+                      <tbody>
+                        {gioCurve.series.map((r) => (
+                          <tr key={r.ten}>
+                            <td>
+                              <i className="sw" style={{ background: r.color, marginRight: 7 }} />
+                              {shortRoom(r.ten)}
+                            </td>
+                            <td className="n muted">up to {mn1(r.t1)}</td>
+                            <td className="n muted">{mn1(r.t1)} – {mn1(r.t2)}</td>
+                            <td className="n muted">above {mn1(r.t2)}</td>
+                            <td className="n">
+                              <b>{mn1(r.chiTB)}</b>
+                              <span className="muted"> · {r.chiNgay} days</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="foot" style={{ marginTop: 0, marginBottom: 10 }}>
+                    Each room&rsquo;s own days are sorted by that day&rsquo;s LIVE GMV Max spend and
+                    cut into three equal groups. Thirds are cut per room because the rooms spend on
+                    very different scales &mdash; a cheap day for Official VN would be an expensive
+                    one for Lifestyle. The last column is what a day in the current selection
+                    actually cost on average, so the budget you are holding still is a real number,
+                    not a label.
+                  </p>
+                  <Curve
+                    cols={gioCurve.nhan}
+                    series={gioCurve.series}
+                    fmt={(v) => `${mn1(v)} mn`}
+                    xNhan="Hours streamed in the day"
+                    yNhan={gioMetric === 'per_hour' ? 'VND mn per live hour' : 'VND mn per live day'}
+                    tip={(i2) => (
+                      <><b>{gioCurve.nhan[i2]}</b><br />
+                        {gioCurve.series.map((sr) => {
+                          const o = sr.gom[i2]
+                          if (!o || o.ngay === 0) return null
+                          return (
+                            <span key={sr.ten}>
+                              {shortRoom(sr.ten)}: {o.ngay} day{o.ngay === 1 ? '' : 's'} ·{' '}
+                              {o.gio > 0 ? `${mn1(o.nmv / o.gio)} mn/h` : '—'} ·{' '}
+                              {mn1(o.nmv / o.ngay)} mn/day ·{' '}
+                              LGM {mn1(o.lgm / o.ngay)} mn/day<br />
+                            </span>
+                          )
+                        })}</>
+                    )}
+                  />
+                  <p className="foot">
+                    Days are grouped by how long the room streamed, then each group&rsquo;s total
+                    revenue is divided by its total hours &mdash; not by averaging the daily ratios,
+                    which one short lucky day would distort. <b>Where a line turns down is where an
+                    extra hour stops paying for itself.</b> A hollow dot marks a group with fewer
+                    than 5 days; groups under 2 days are not drawn at all.
+                  </p>
+                  <div className="note warn">
+                    <b>Hours and ad money move together, so the plain curve cannot separate them.</b>{' '}
+                    A long day is usually also a mega-sale day with a big budget behind it, which is
+                    why the line keeps climbing. The spend filter splits each room&rsquo;s days into
+                    its own low, middle and top third by LIVE GMV Max spend &mdash; thirds are cut
+                    per room because the three rooms spend on very different scales. Pick one third
+                    and the budget is roughly held still: whatever slope survives inside it is the
+                    part that hours actually contribute. Even then this is observation, not an
+                    experiment; the only clean test is to hold the budget and change the schedule.
+                  </div>
+
+                  <h3 style={{ marginTop: 26 }}>Hours, revenue and revenue per hour</h3>
+                  <div className="tablewrap">
+                    <table>
+                      <thead><tr>
+                        <th>Room</th>
+                        {kenhBang.thang.map((k) => (
+                          <th className="n" key={k}>{mmyy(`${k}-01`)}
+                            <div className="uhint">hours · bn · mn/h</div></th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {gioNmvThang.map((r) => (
+                          <tr key={r.ten}>
+                            <td>
+                              <i className="sw" style={{ background: r.color, marginRight: 7 }} />
+                              {r.ten}
+                            </td>
+                            {r.o.map((x) => (
+                              <td className="n" key={x.ky}>
+                                {x.gio > 0 ? n0(x.gio) : <span className="muted">—</span>}
+                                <span className="muted" style={{ margin: '0 5px' }}>·</span>
+                                {bn(x.nmv)}
+                                <span className="muted" style={{ margin: '0 5px' }}>·</span>
+                                <b>{x.gio > 0 ? mn1(x.tren_gio) : '—'}</b>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="foot">
+                    Each cell is hours streamed · Seller NMV in VND bn · <b>NMV per live hour in VND
+                    mn</b>. The last one is the number to read across rooms: it says what an hour of
+                    that room is worth, independent of how many hours it ran. Hours come from the
+                    live session table, revenue from room-tagged order lines, so only months with
+                    usable tagging appear{' '}
+                    ({kenhBang.thang.map((k) => mmyy(`${k}-01`)).join(' · ')}).
+                  </p>
+                  <div className="note warn">
+                    An order is tagged to the room, not to the hour, so a day with a late session can
+                    book revenue the next morning. Read a single bubble as a rough pairing; read the
+                    cloud, and the per-hour column, as the real signal.
+                  </div>
+                </>
+              )}
+            
+              <h3 style={{ marginTop: 30 }}>Streaming schedule vs revenue</h3>
+              <p className="sub">
+                A month of streaming is two separate decisions: <b>how many days</b> the room goes
+                live, and <b>how long</b> each of those days runs. Total hours is just the two
+                multiplied, so looking only at the total hides which of the two actually moved.
+              </p>
+              {!nhipThang.length ? (
+                <div className="note warn">
+                  No month in the current filter has both live sessions and room-tagged orders.
+                </div>
+              ) : (
+                <>
+                  <StackLine
+                    rows={nhipKy.map((k) => ({
+                      ky: k,
+                      parts: nhipThang.map((r) => r.thang.get(k)?.gio ?? 0),
+                    }))}
+                    series={nhipThang.map((r) => ({ ten: `${shortRoom(r.ten)} — hours`, color: r.color }))}
+                    lines={nhipThang.map((r) => ({
+                      ten: `${shortRoom(r.ten)} — NMV`,
+                      color: r.color,
+                      vals: nhipKy.map((k) => {
+                        const o = r.thang.get(k)
+                        return o ? o.nmv : null
+                      }),
+                    }))}
+                    fmtCot={(v) => `${n0(v)}h`}
+                    fmtDuong={(v) => `${bn(v)} bn`}
+                    label={(k) => (byMonth ? mmyy(`${k}-01`) : ddmm(k))}
+                    tip={(i2) => {
+                      const k = nhipKy[i2]
+                      let gio = 0
+                      let nmv = 0
+                      for (const r of nhipThang) {
+                        const o = r.thang.get(k)
+                        if (!o) continue
+                        gio += o.gio; nmv += o.nmv
+                      }
+                      return (
+                        <><b>{byMonth ? mmyy(`${k}-01`) : ddmm(k)}</b><br />
+                          {nhipThang.map((r) => {
+                            const o = r.thang.get(k)
+                            if (!o) return null
+                            return (
+                              <span key={r.ten}>
+                                {shortRoom(r.ten)}: {n0(o.gio)}h · {bn(o.nmv)} bn
+                                {byMonth ? ` · ${n0(o.ngay)} days` : ''}<br />
+                              </span>
+                            )
+                          })}
+                          <b>Total {n0(gio)}h · {bn(nmv)} bn</b><br />
+                          {gio > 0 ? `${mn1(nmv / gio)} mn per live hour` : ''}</>
+                      )
+                    }}
+                  />
+                  <p className="foot">
+                    Columns stack the three rooms&rsquo; hours, so their height is the total the shop
+                    streamed; each room also gets its own revenue line in the same colour, all three
+                    sharing one right-hand scale so they stay comparable with each other. Hours run
+                    in the hundreds and revenue in the billions, so columns and lines cannot share an
+                    axis &mdash; only the <i>shape</i> of a line against its own colour of column is
+                    meaningful, never the gap between line and column. The period follows the range
+                    buttons at the top of the page.
+                  </p>
+
+                  <h3 style={{ marginTop: 26 }}>The month broken into its two parts</h3>
+                  <p className="sub" style={{ marginTop: 2 }}>
+                    Always monthly, whatever the range buttons say &mdash; a day has
+                    only one day in it, so days × hours per day only means something
+                    over a month.
+                  </p>
+                  <div className="tablewrap">
+                    <table>
+                      <thead><tr>
+                        <th>Room</th>
+                        {kenhBang.thang.map((k) => (
+                          <th className="n" key={k}>{mmyy(`${k}-01`)}
+                            <div className="uhint">days × h/day = h</div></th>
+                        ))}
+                        <th className="n">Best day length<div className="uhint">by NMV / hour</div></th>
+                        <th className="n">That implies<div className="uhint">hours / month</div></th>
+                      </tr></thead>
+                      <tbody>
+                        {nhipThang.map((r) => (
+                          <tr key={r.ten}>
+                            <td>
+                              <i className="sw" style={{ background: r.color, marginRight: 7 }} />
+                              {r.ten}
+                            </td>
+                            {kenhBang.thang.map((k) => {
+                              const o = r.thang.get(k)
+                              if (!o) return <td className="n muted" key={k}>—</td>
+                              return (
+                                <td className="n" key={k}>
+                                  {n0(o.ngay)}
+                                  <span className="muted" style={{ margin: '0 4px' }}>×</span>
+                                  {(o.gio / o.ngay).toFixed(1)}
+                                  <span className="muted" style={{ margin: '0 4px' }}>=</span>
+                                  <b>{n0(o.gio)}</b>
+                                </td>
+                              )
+                            })}
+                            <td className="n">
+                              {r.bestKhung ?? <span className="muted">—</span>}
+                              {r.bestTrenGio != null && (
+                                <div className="muted" style={{ fontSize: '.85em' }}>
+                                  {mn1(r.bestTrenGio)} mn/h · {r.bestNgay} days
+                                </div>
+                              )}
+                            </td>
+                            <td className="n">
+                              <b>{r.goiY != null ? `≈ ${n0(r.goiY)}h` : '—'}</b>
+                              {r.goiY != null && (
+                                <div className="muted" style={{ fontSize: '.85em' }}>
+                                  at {r.ngayTV} live days
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="foot">
+                    <b>Best day length</b> is the day-length band where an hour of that room earned
+                    the most, counting only bands with at least 5 days behind them. <b>That implies</b>
+                    {' '}multiplies the middle of that band by the room&rsquo;s usual number of live
+                    days per month.
+                  </p>
+                  <div className="note warn">
+                    <b>Read the last two columns as arithmetic, not as a target.</b> They restate what
+                    already happened over three months; they are not a forecast, and they cannot tell
+                    long days apart from big-budget days &mdash; use the ad-budget filter in 5.8 for
+                    that. A room whose best band is the longest one has simply not been run long
+                    enough to find its ceiling, which is a statement about the data, not about the
+                    room. Before changing a schedule on this, check it against the budget-held view
+                    above and run it as a real test for two weeks.
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section id="s5-6">
+              <h2><span className="hno">5.6</span>Rooms side by side</h2>
               <p className="sub">
                 The rooms differ enough in scale that totals alone mislead. GMV per 1k views is the
                 column to read across &mdash; it puts a big room with cheap traffic next to a small
@@ -4085,8 +4624,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-4">
-              <h2><span className="hno">5.4</span>Traffic and engagement by room</h2>
+            <section id="s5-7">
+              <h2><span className="hno">5.7</span>Traffic and engagement by room</h2>
               <p className="sub">
                 Everything here is per 1.000 views rather than a total, because the three rooms pull
                 very different volumes and raw counts only restate that. Views counts every entry
@@ -4260,8 +4799,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-5">
-              <h2><span className="hno">5.5</span>Funnel by room</h2>
+            <section id="s5-8">
+              <h2><span className="hno">5.8</span>Funnel by room</h2>
               <p className="sub">
                 From a view to a paid order. Each percentage is against the step immediately above
                 it, so a weak room shows exactly where it loses people rather than only that it
@@ -4352,484 +4891,20 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-6">
-              <h2><span className="hno">5.6</span>Seller NMV by room — {kenhNgay ? 'DoD' : 'MoM'}</h2>
-              <p className="sub">
-                Everything above this point uses the GMV TikTok books against a live session, gross,
-                before cancellations. This block uses <b>our own order data</b> instead: revenue
-                after cancellations, attributed to a room through the live-room tag TikTok puts on
-                each order line. The two will not tie, and the gap is the cancellation.
-              </p>
-              <div className="seg" style={{ marginTop: 14 }}>
-                {([[false, 'By month'], [true, 'By day']] as const).map(([k, l]) => (
-                  <button key={l} className={kenhNgay === k ? 'on' : ''}
-                    onClick={() => setKenhNgay(k)}>{l}</button>
-                ))}
-              </div>
-              {!kenhBang.thang.length ? (
-                <div className="note warn">
-                  None of the months selected above have enough room tagging on order lines to
-                  split revenue by room. TikTok began tagging in May 2026 and only reached usable
-                  coverage from July &mdash; pick a month from July 2026 onward, or clear the month
-                  filter.
-                </div>
-              ) : (
-                <>
-                  <div className="chips" style={{ marginTop: 16 }}>
-                    <span className="chips-l">Room</span>
-                    {[{ id: 'all', ten: 'All three rooms' },
-                      ...PHONG_NHA.map((t) => ({ id: t, ten: shortRoom(t) }))].map((o) => (
-                      <button key={o.id} className={`chip ${kenhRoom === o.id ? 'on' : ''}`}
-                        onClick={() => setKenhRoom(o.id)}>{o.ten}</button>
-                    ))}
-                  </div>
-                  <ComboChart
-                    data={kenhAtr.map((r) => ({ ky: r.ky, a: r.lgm, b: r.rest }))}
-                    names={['LGM spend', 'Seller NMV after ads']}
-                    colors={['var(--c2)', 'var(--c1-soft)']}
-                    lines={[{
-                      ten: 'ATR on Seller NMV (right axis)',
-                      color: 'var(--bad)', truc: 'pct',
-                      vals: kenhAtr.map((r) => r.atr),
-                      showVals: true,
-                      fmtVal: (v) => `${v}%`,
-                    }]}
-                    fmt={bn} label={kenhNgay ? ddmm : mmyy} unit="VND bn"
-                    tip={(d, i2) => {
-                      const r = kenhAtr[i2]
-                      if (!r) return null
-                      return (
-                        <><b>{(kenhNgay ? ddmm : mmyy)(d.ky)}</b><br />
-                          Seller NMV {bn(r.nmv)}<br />
-                          · LGM spend {bn(r.lgm)}<br />
-                          · left after ads {bn(r.rest)}<br />
-                          ATR {pct(r.atr)}</>
-                      )
-                    }}
-                  />
-                  <p className="foot">
-                    Column height is Seller NMV &mdash; the revenue this room actually kept &mdash;
-                    split into what LIVE GMV Max cost and what was left after it. The two parts add
-                    up to Seller NMV, so the coloured share of each column <i>is</i> the ATR drawn on
-                    the red line.
-                  </p>
-
-                  <div className="chips" style={{ marginTop: 18 }}>
-                    <span className="chips-l">Metric</span>
-                    {KENH_METRICS.map((m) => (
-                      <button key={m.id} className={`chip ${kenhMetric === m.id ? 'on' : ''}`}
-                        onClick={() => setKenhMetric(m.id)}>{m.ten}</button>
-                    ))}
-                  </div>
-                  <Matrix
-                    corner={`Channel · ${kDef.ten}`}
-                    cols={(kenhNgay ? kenhBangNgay.luoi : kenhBang.thang)
-                      .map((k) => (kenhNgay ? ddmm(k) : mmyy(`${k}-01`)))}
-                    fmt={kDef.fmt}
-                    heat={kDef.xau_cao ? 'high-bad' : 'high-good'}
-                    rows={(kenhNgay ? kenhBangNgay : kenhBang).ten.map((t, i2) => ({
-                      label: t,
-                      color: t.startsWith('Roborock') ? PALETTE[i2 % PALETTE.length] : GREY,
-                      vals: (kenhNgay ? kenhBangNgay.luoi : kenhBang.thang).map((k) => {
-                        const r = (kenhNgay ? kenhBangNgay : kenhBang).rows.get(t)?.get(k)
-                        return r ? kDef.lay(r) : null
-                      }),
-                    }))}
-                  />
-                  <p className="foot">
-                    {kDef.ten}{kDef.don_vi ? ` (${kDef.don_vi})` : ''} per channel per{' '}
-                    {kenhNgay ? 'day' : 'month'}.{' '}
-                    {kenhNgay && kenhBangNgay.thang.length > kenhBangNgay.luoi.length &&
-                      `The grid shows the most recent ${kenhBangNgay.luoi.length} of ${kenhBangNgay.thang.length} days; the chart above covers them all. `}
-                    <b>ATR on Seller NMV</b> is that room&rsquo;s LIVE GMV Max spend divided by the
-                    revenue the room actually kept. It runs far above the ATR in section 5.3, which
-                    divides the same spend by TikTok&rsquo;s gross session GMV &mdash; same numerator,
-                    a much bigger denominator. This one is the honest version, because cancelled
-                    orders never paid for the ads.
-                  </p>
-                  <div className="note warn">
-                    Only months where most order lines carry a room tag are included{' '}
-                    ({kenhBang.thang.map((k) => `${mmyy(`${k}-01`)} ${kenhBang.phu.get(k)}%`).join(' · ')}).
-                    TikTok began tagging in May 2026. Roughly a third of lines still carry no tag
-                    and land in &ldquo;Ngoài live&rdquo;, so read that row as an upper bound.
-                  </div>
-                </>
-              )}
-            </section>
-
-            <section id="s5-7">
-              <h2><span className="hno">5.7</span>Products by room</h2>
-              <p className="sub">
-                Which room sells which machine. TikTok&rsquo;s own live reporting cannot answer this
-                &mdash; it gives one GMV figure per session with no product breakdown. This comes
-                from the order lines instead, where each line carries both the model and the live
-                room, so revenue, units and cancellations are all real and all ours.
-              </p>
-              {!skuKenh.models.length ? (
-                <div className="note warn">
-                  None of the months selected above have enough room tagging on order lines to
-                  split products by room. Usable coverage starts in July 2026 &mdash; pick a month
-                  from then onward, or clear the month filter.
-                </div>
-              ) : (
-                <>
-                  <div className="chips" style={{ marginTop: 14 }}>
-                    <span className="chips-l">Metric</span>
-                    {SKU_METRICS.map((m) => (
-                      <button key={m.id} className={`chip ${skuMetric === m.id ? 'on' : ''}`}
-                        onClick={() => setSkuMetric(m.id)}>{m.ten}</button>
-                    ))}
-                  </div>
-                  <Matrix
-                    corner={`Model · ${sDef.ten}`}
-                    cols={[...skuKenh.cot.map(shortRoom), 'All rooms']}
-                    fmt={sDef.fmt}
-                    heat={sDef.xau_cao ? 'high-bad' : 'high-good'}
-                    rows={skuKenh.models.map((m) => {
-                      const per = skuKenh.rows.get(m)
-                      const gop = { nmv: 0, net: 0, gross: 0, huy: 0 }
-                      for (const k of skuKenh.cot) {
-                        const o = per?.get(k)
-                        if (!o) continue
-                        gop.nmv += o.nmv; gop.net += o.net; gop.gross += o.gross; gop.huy += o.huy
-                      }
-                      const oneVal = (k: string) => {
-                        const o = per?.get(k)
-                        if (!o) return null
-                        if (skuMetric === 'mix') {
-                          const t = skuKenh.tongCot.get(k) ?? 0
-                          return t > 0 ? Math.round((o.nmv / t) * 1000) / 10 || null : null
-                        }
-                        return sDef.lay(o)
-                      }
-                      return {
-                        label: m,
-                        vals: [
-                          ...skuKenh.cot.map(oneVal),
-                          skuMetric === 'mix' ? null : sDef.lay(gop),
-                        ],
-                      }
-                    })}
-                  />
-                  <p className="foot">
-                    {sDef.ten}{sDef.don_vi ? ` (${sDef.don_vi})` : ''} per model per room, summed
-                    over the months where order lines carry a room tag{' '}
-                    ({kenhBang.thang.map((k) => mmyy(`${k}-01`)).join(' · ')}).{' '}
-                    <b>Share of room</b> reads down a column: what share of that room&rsquo;s live
-                    revenue each model brought, so it shows the room&rsquo;s product mix rather than
-                    its size. Cancellation rate is recalculated on gross units, never averaged
-                    across cells, and a cell under 5 gross units is left blank &mdash; one unit
-                    sold and cancelled reads as 100% and means nothing. Models are ordered by revenue across the three own rooms, so a
-                    model that only ever sells outside live does not head the table.
-                  </p>
-                </>
-              )}
-            </section>
-
-            <section id="s5-8">
-              <h2><span className="hno">5.8</span>Live hours vs Seller NMV</h2>
-              <p className="sub">
-                Days are grouped by how long the room streamed that day. The line shows what an
-                hour of streaming was worth inside each group, so it reads left to right as: does
-                the next hour still pay?
-              </p>
-              {!gioNmvNgay.length ? (
-                <div className="note warn">
-                  No day in the selected months has both a live session and room-tagged orders.
-                  Usable coverage starts in July 2026.
-                </div>
-              ) : (
-                <>
-                  <div className="seg" style={{ marginBottom: 4 }}>
-                    {([['per_hour', 'NMV per live hour'], ['per_day', 'NMV per live day']] as const)
-                      .map(([k, l]) => (
-                        <button key={k} className={gioMetric === k ? 'on' : ''}
-                          onClick={() => setGioMetric(k)}>{l}</button>
-                      ))}
-                  </div>
-                  <div className="chips" style={{ marginTop: 12, marginBottom: 6 }}>
-                    <span className="chips-l">Ad budget</span>
-                    {([['all', 'All days'], ['low', 'Low-spend days'],
-                      ['mid', 'Mid-spend days'], ['high', 'High-spend days']] as const).map(([k, l]) => (
-                      <button key={k} className={`chip ${gioAds === k ? 'on' : ''}`}
-                        onClick={() => setGioAds(k)}>{l}</button>
-                    ))}
-                  </div>
-                  <div className="tablewrap" style={{ marginTop: 4, marginBottom: 10 }}>
-                    <table className="mini">
-                      <thead><tr>
-                        <th>Room</th>
-                        <th className="n">Low-spend days<div className="uhint">LGM mn / day</div></th>
-                        <th className="n">Mid-spend days<div className="uhint">LGM mn / day</div></th>
-                        <th className="n">High-spend days<div className="uhint">LGM mn / day</div></th>
-                        <th className="n">In this view<div className="uhint">avg · days</div></th>
-                      </tr></thead>
-                      <tbody>
-                        {gioCurve.series.map((r) => (
-                          <tr key={r.ten}>
-                            <td>
-                              <i className="sw" style={{ background: r.color, marginRight: 7 }} />
-                              {shortRoom(r.ten)}
-                            </td>
-                            <td className="n muted">up to {mn1(r.t1)}</td>
-                            <td className="n muted">{mn1(r.t1)} – {mn1(r.t2)}</td>
-                            <td className="n muted">above {mn1(r.t2)}</td>
-                            <td className="n">
-                              <b>{mn1(r.chiTB)}</b>
-                              <span className="muted"> · {r.chiNgay} days</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="foot" style={{ marginTop: 0, marginBottom: 10 }}>
-                    Each room&rsquo;s own days are sorted by that day&rsquo;s LIVE GMV Max spend and
-                    cut into three equal groups. Thirds are cut per room because the rooms spend on
-                    very different scales &mdash; a cheap day for Official VN would be an expensive
-                    one for Lifestyle. The last column is what a day in the current selection
-                    actually cost on average, so the budget you are holding still is a real number,
-                    not a label.
-                  </p>
-                  <Curve
-                    cols={gioCurve.nhan}
-                    series={gioCurve.series}
-                    fmt={(v) => `${mn1(v)} mn`}
-                    xNhan="Hours streamed in the day"
-                    yNhan={gioMetric === 'per_hour' ? 'VND mn per live hour' : 'VND mn per live day'}
-                    tip={(i2) => (
-                      <><b>{gioCurve.nhan[i2]}</b><br />
-                        {gioCurve.series.map((sr) => {
-                          const o = sr.gom[i2]
-                          if (!o || o.ngay === 0) return null
-                          return (
-                            <span key={sr.ten}>
-                              {shortRoom(sr.ten)}: {o.ngay} day{o.ngay === 1 ? '' : 's'} ·{' '}
-                              {o.gio > 0 ? `${mn1(o.nmv / o.gio)} mn/h` : '—'} ·{' '}
-                              {mn1(o.nmv / o.ngay)} mn/day ·{' '}
-                              LGM {mn1(o.lgm / o.ngay)} mn/day<br />
-                            </span>
-                          )
-                        })}</>
-                    )}
-                  />
-                  <p className="foot">
-                    Days are grouped by how long the room streamed, then each group&rsquo;s total
-                    revenue is divided by its total hours &mdash; not by averaging the daily ratios,
-                    which one short lucky day would distort. <b>Where a line turns down is where an
-                    extra hour stops paying for itself.</b> A hollow dot marks a group with fewer
-                    than 5 days; groups under 2 days are not drawn at all.
-                  </p>
-                  <div className="note warn">
-                    <b>Hours and ad money move together, so the plain curve cannot separate them.</b>{' '}
-                    A long day is usually also a mega-sale day with a big budget behind it, which is
-                    why the line keeps climbing. The spend filter splits each room&rsquo;s days into
-                    its own low, middle and top third by LIVE GMV Max spend &mdash; thirds are cut
-                    per room because the three rooms spend on very different scales. Pick one third
-                    and the budget is roughly held still: whatever slope survives inside it is the
-                    part that hours actually contribute. Even then this is observation, not an
-                    experiment; the only clean test is to hold the budget and change the schedule.
-                  </div>
-
-                  <h3 style={{ marginTop: 26 }}>Hours, revenue and revenue per hour</h3>
-                  <div className="tablewrap">
-                    <table>
-                      <thead><tr>
-                        <th>Room</th>
-                        {kenhBang.thang.map((k) => (
-                          <th className="n" key={k}>{mmyy(`${k}-01`)}
-                            <div className="uhint">hours · bn · mn/h</div></th>
-                        ))}
-                      </tr></thead>
-                      <tbody>
-                        {gioNmvThang.map((r) => (
-                          <tr key={r.ten}>
-                            <td>
-                              <i className="sw" style={{ background: r.color, marginRight: 7 }} />
-                              {r.ten}
-                            </td>
-                            {r.o.map((x) => (
-                              <td className="n" key={x.ky}>
-                                {x.gio > 0 ? n0(x.gio) : <span className="muted">—</span>}
-                                <span className="muted" style={{ margin: '0 5px' }}>·</span>
-                                {bn(x.nmv)}
-                                <span className="muted" style={{ margin: '0 5px' }}>·</span>
-                                <b>{x.gio > 0 ? mn1(x.tren_gio) : '—'}</b>
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="foot">
-                    Each cell is hours streamed · Seller NMV in VND bn · <b>NMV per live hour in VND
-                    mn</b>. The last one is the number to read across rooms: it says what an hour of
-                    that room is worth, independent of how many hours it ran. Hours come from the
-                    live session table, revenue from room-tagged order lines, so only months with
-                    usable tagging appear{' '}
-                    ({kenhBang.thang.map((k) => mmyy(`${k}-01`)).join(' · ')}).
-                  </p>
-                  <div className="note warn">
-                    An order is tagged to the room, not to the hour, so a day with a late session can
-                    book revenue the next morning. Read a single bubble as a rough pairing; read the
-                    cloud, and the per-hour column, as the real signal.
-                  </div>
-                </>
-              )}
-            </section>
-
             <section id="s5-9">
-              <h2><span className="hno">5.9</span>Monthly rhythm — how much should a room stream?</h2>
-              <p className="sub">
-                A month of streaming is two separate decisions: <b>how many days</b> the room goes
-                live, and <b>how long</b> each of those days runs. Total hours is just the two
-                multiplied, so looking only at the total hides which of the two actually moved.
-              </p>
-              {!nhipThang.length ? (
-                <div className="note warn">
-                  No month in the current filter has both live sessions and room-tagged orders.
-                </div>
-              ) : (
-                <>
-                  <StackLine
-                    rows={nhipKy.map((k) => ({
-                      ky: k,
-                      parts: nhipThang.map((r) => r.thang.get(k)?.gio ?? 0),
-                    }))}
-                    series={nhipThang.map((r) => ({ ten: `${shortRoom(r.ten)} — hours`, color: r.color }))}
-                    lines={nhipThang.map((r) => ({
-                      ten: `${shortRoom(r.ten)} — NMV`,
-                      color: r.color,
-                      vals: nhipKy.map((k) => {
-                        const o = r.thang.get(k)
-                        return o ? o.nmv : null
-                      }),
-                    }))}
-                    fmtCot={(v) => `${n0(v)}h`}
-                    fmtDuong={(v) => `${bn(v)} bn`}
-                    label={(k) => (byMonth ? mmyy(`${k}-01`) : ddmm(k))}
-                    tip={(i2) => {
-                      const k = nhipKy[i2]
-                      let gio = 0
-                      let nmv = 0
-                      for (const r of nhipThang) {
-                        const o = r.thang.get(k)
-                        if (!o) continue
-                        gio += o.gio; nmv += o.nmv
-                      }
-                      return (
-                        <><b>{byMonth ? mmyy(`${k}-01`) : ddmm(k)}</b><br />
-                          {nhipThang.map((r) => {
-                            const o = r.thang.get(k)
-                            if (!o) return null
-                            return (
-                              <span key={r.ten}>
-                                {shortRoom(r.ten)}: {n0(o.gio)}h · {bn(o.nmv)} bn
-                                {byMonth ? ` · ${n0(o.ngay)} days` : ''}<br />
-                              </span>
-                            )
-                          })}
-                          <b>Total {n0(gio)}h · {bn(nmv)} bn</b><br />
-                          {gio > 0 ? `${mn1(nmv / gio)} mn per live hour` : ''}</>
-                      )
-                    }}
-                  />
-                  <p className="foot">
-                    Columns stack the three rooms&rsquo; hours, so their height is the total the shop
-                    streamed; each room also gets its own revenue line in the same colour, all three
-                    sharing one right-hand scale so they stay comparable with each other. Hours run
-                    in the hundreds and revenue in the billions, so columns and lines cannot share an
-                    axis &mdash; only the <i>shape</i> of a line against its own colour of column is
-                    meaningful, never the gap between line and column. The period follows the range
-                    buttons at the top of the page.
-                  </p>
-
-                  <h3 style={{ marginTop: 26 }}>The month broken into its two parts</h3>
-                  <p className="sub" style={{ marginTop: 2 }}>
-                    Always monthly, whatever the range buttons say &mdash; a day has
-                    only one day in it, so days × hours per day only means something
-                    over a month.
-                  </p>
-                  <div className="tablewrap">
-                    <table>
-                      <thead><tr>
-                        <th>Room</th>
-                        {kenhBang.thang.map((k) => (
-                          <th className="n" key={k}>{mmyy(`${k}-01`)}
-                            <div className="uhint">days × h/day = h</div></th>
-                        ))}
-                        <th className="n">Best day length<div className="uhint">by NMV / hour</div></th>
-                        <th className="n">That implies<div className="uhint">hours / month</div></th>
-                      </tr></thead>
-                      <tbody>
-                        {nhipThang.map((r) => (
-                          <tr key={r.ten}>
-                            <td>
-                              <i className="sw" style={{ background: r.color, marginRight: 7 }} />
-                              {r.ten}
-                            </td>
-                            {kenhBang.thang.map((k) => {
-                              const o = r.thang.get(k)
-                              if (!o) return <td className="n muted" key={k}>—</td>
-                              return (
-                                <td className="n" key={k}>
-                                  {n0(o.ngay)}
-                                  <span className="muted" style={{ margin: '0 4px' }}>×</span>
-                                  {(o.gio / o.ngay).toFixed(1)}
-                                  <span className="muted" style={{ margin: '0 4px' }}>=</span>
-                                  <b>{n0(o.gio)}</b>
-                                </td>
-                              )
-                            })}
-                            <td className="n">
-                              {r.bestKhung ?? <span className="muted">—</span>}
-                              {r.bestTrenGio != null && (
-                                <div className="muted" style={{ fontSize: '.85em' }}>
-                                  {mn1(r.bestTrenGio)} mn/h · {r.bestNgay} days
-                                </div>
-                              )}
-                            </td>
-                            <td className="n">
-                              <b>{r.goiY != null ? `≈ ${n0(r.goiY)}h` : '—'}</b>
-                              {r.goiY != null && (
-                                <div className="muted" style={{ fontSize: '.85em' }}>
-                                  at {r.ngayTV} live days
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="foot">
-                    <b>Best day length</b> is the day-length band where an hour of that room earned
-                    the most, counting only bands with at least 5 days behind them. <b>That implies</b>
-                    {' '}multiplies the middle of that band by the room&rsquo;s usual number of live
-                    days per month.
-                  </p>
-                  <div className="note warn">
-                    <b>Read the last two columns as arithmetic, not as a target.</b> They restate what
-                    already happened over three months; they are not a forecast, and they cannot tell
-                    long days apart from big-budget days &mdash; use the ad-budget filter in 5.8 for
-                    that. A room whose best band is the longest one has simply not been run long
-                    enough to find its ceiling, which is a statement about the data, not about the
-                    room. Before changing a schedule on this, check it against the budget-held view
-                    above and run it as a real test for two weeks.
-                  </div>
-                </>
-              )}
-            </section>
-
-            <section id="s5-10">
-              <h2><span className="hno">5.10</span>Room by day</h2>
+              <h2><span className="hno">5.9</span>Room by period</h2>
               <p className="sub">
                 The same numbers as a grid. Reading along a row shows how steady a room is; reading
                 down a column shows which room carried a given day. Shading is relative to the
                 largest cell.
               </p>
-              <div className="chips" style={{ marginTop: 14 }}>
+              <div className="seg" style={{ marginTop: 14 }}>
+                {([[false, 'By month'], [true, 'By day']] as const).map(([k, l]) => (
+                  <button key={l} className={luoiNgay === k ? 'on' : ''}
+                    onClick={() => setLuoiNgay(k)}>{l}</button>
+                ))}
+              </div>
+              <div className="chips" style={{ marginTop: 8 }}>
                 <span className="chips-l">Metric</span>
                 {ROOM_METRICS.map((m) => (
                   <button key={m.id} className={`chip ${roomMetric === m.id ? 'on' : ''}`}
@@ -4838,71 +4913,72 @@ export default function Dashboard({
               </div>
               <Matrix
                 corner={`Room · ${mDef.ten}`}
-                cols={gridDays.map(ddmm)}
+                cols={luoiNgay ? gridDays.map(ddmm) : liveGrid.months.map((m) => mmyy(`${m}-01`))}
                 fmt={mDef.fmt}
                 heat={mDef.xau_cao ? 'high-bad' : 'high-good'}
-                rows={gridRows(liveGrid.ngay, gridDays)}
+                rows={luoiNgay
+                  ? gridRows(liveGrid.ngay, gridDays)
+                  : gridRows(liveGrid.thang, liveGrid.months)}
               />
               <p className="foot">
-                {mDef.ten}{mDef.don_vi ? ` (${mDef.don_vi})` : ''} per room per day. An empty cell
-                means no session that day.
-                {liveGrid.days.length > gridDays.length &&
+                {mDef.ten}{mDef.don_vi ? ` (${mDef.don_vi})` : ''} per room per {luoiNgay ? 'day' : 'month'}. An empty
+                cell means no session in that period.
+                {luoiNgay && liveGrid.days.length > gridDays.length &&
                   ` Showing the most recent ${gridDays.length} of ${liveGrid.days.length} days — the full history is in the table below.`}
               </p>
-            </section>
-
-            <section id="s5-11">
-              <h2><span className="hno">5.11</span>Daily totals · DoD</h2>
+            
+              <h3 style={{ marginTop: 30 }}>Shop total by month</h3>
+              <p className="sub">
+                The long view behind the daily charts. Six months is all the API allows, so read the
+                trend rather than the level.
+              </p>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
-                    <th>Day</th>
+                    <th>Month</th>
                     <th className="n">Sessions</th><th className="n">Hours</th>
-                    {liveDayRoom.names.map((nm) => (
-                      <th className="n" key={nm}>{nm}<div className="uhint">bn</div></th>
-                    ))}
-                    <th className="n">KOC<div className="uhint">bn</div></th>
+                    <th className="n">Our rooms<div className="uhint">bn</div></th>
+                    <th className="n">Creators<div className="uhint">bn</div></th>
                     <th className="n">Total<div className="uhint">bn</div></th>
-                    <th className="n">DoD</th>
                     <th className="n">Views</th>
                     <th className="n">GMV / 1k views<div className="uhint">mn</div></th>
-                    <th className="n">CTR</th><th className="n">Units</th>
+                    <th className="n">CTR</th>
+                    <th className="n">Watch</th>
+                    <th className="n">Like rate</th>
+                    <th className="n">Comments<div className="uhint">per 1k</div></th>
+                    <th className="n">Follows<div className="uhint">per 1k</div></th>
                   </tr></thead>
                   <tbody>
-                    {liveDays.slice().reverse().map((d, i, arr) => {
-                      const tot = d.own + d.koc
-                      const prev = arr[i + 1]
-                      const prevTot = prev ? prev.own + prev.koc : undefined
+                    {liveMonthRows.map((m, i) => {
+                      const prev = liveMonthRows[i - 1]
                       return (
-                        <tr key={d.ngay}>
-                          <td>{ddmm(d.ngay)}</td>
-                          <td className="n">{n0(d.phien)}</td>
-                          <td className="n">{n0(d.gio)}</td>
-                          {liveDayRoom.names.map((nm, k) => (
-                            <td className="n" key={nm}>{bn(liveDayRoom.get(d.ngay, k))}</td>
-                          ))}
-                          <td className="n muted">{bn(d.koc)}</td>
-                          <td className="n"><b>{bn(tot)}</b></td>
-                          <td className="n"><Dd a={tot} b={prevTot} /></td>
-                          <td className="n">{n0(d.views)}</td>
-                          <td className="n">{mn1(per1k(d.own, d.views))}</td>
-                          <td className="n">{pct(d.imp > 0 ? p1(d.clicks, d.imp) : null)}</td>
-                          <td className="n">{n0(d.pcs)}</td>
+                        <tr key={m.ky}>
+                          <td>{mmyy(m.ky)}</td>
+                          <td className="n">{n0(m.phien)}</td>
+                          <td className="n">{n0(m.gio)}</td>
+                          <td className="n"><b>{bn(m.own)}</b></td>
+                          <td className="n muted">{bn(m.koc)}</td>
+                          <td className="n">
+                            {bn(m.own + m.koc)}{' '}
+                            <Dd a={m.own + m.koc} b={prev ? prev.own + prev.koc : undefined} />
+                          </td>
+                          <td className="n">{n0(m.views)}</td>
+                          <td className="n"><b>{mn1(per1k(m.own, m.views))}</b></td>
+                          <td className="n">{pct(m.imp > 0 ? p1(m.clicks, m.imp) : null)}</td>
+                          <td className="n">{m.gioOwn > 0 ? `${Math.round(m.xemW / m.gioOwn)}s` : '—'}</td>
+                          <td className="n">{pct(p1(m.likes, m.views))}</td>
+                          <td className="n">{k1(m.comments, m.views)}</td>
+                          <td className="n">{k1(m.followers, m.views)}</td>
                         </tr>
                       )
                     })}
                   </tbody>
                 </table>
               </div>
-              <p className="foot">
-                Newest day first. DoD compares each day with the previous day that had a session,
-                which on a Monday means the weekend, not last Friday &mdash; check the dates before
-                reading a swing as a trend.
-              </p>
-            </section>
+                        </section>
 
-            <section id="s5-12">
-              <h2><span className="hno">5.12</span>Audience per day</h2>
+            <section id="s5-10">
+              <h2><span className="hno">5.10</span>Audience per day</h2>
               <p className="sub">
                 Columns split each day&rsquo;s views into people seen for the first time that day
                 and the views they came back for. The red line is the engagement rate &mdash; likes,
@@ -4936,8 +5012,8 @@ export default function Dashboard({
               <p className="foot">Our own rooms only — creator rooms report no engagement data.</p>
             </section>
 
-            <section id="s5-13">
-              <h2><span className="hno">5.13</span>Traffic and conversion per day</h2>
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>Traffic and conversion per day</h2>
               <p className="sub">
                 Columns are live GMV split between our rooms and creator rooms. The red line is the
                 product click-through rate in our rooms &mdash; impressions that turned into a tap
@@ -4970,8 +5046,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-14">
-              <h2><span className="hno">5.14</span>Engagement vs CTR vs GMV</h2>
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>Engagement vs CTR vs GMV</h2>
               <p className="sub">
                 One bubble is one day of one room. Across: engagement rate. Up: product CTR. Size:
                 that day&rsquo;s GMV. If talking to the room is what drives people to tap the
@@ -5030,82 +5106,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-15">
-              <h2><span className="hno">5.15</span>By month, by room</h2>
-              <p className="sub">
-                Same metric picker as the daily grid above, so a pattern spotted in one week can be
-                checked against the six-month trend without changing what is being measured.
-              </p>
-              <div className="chips" style={{ marginTop: 14 }}>
-                <span className="chips-l">Metric</span>
-                {ROOM_METRICS.map((m) => (
-                  <button key={m.id} className={`chip ${roomMetric === m.id ? 'on' : ''}`}
-                    onClick={() => setRoomMetric(m.id)}>{m.ten}</button>
-                ))}
-              </div>
-              <Matrix
-                corner={`Room · ${mDef.ten}`}
-                cols={liveGrid.months.map((m) => mmyy(`${m}-01`))}
-                fmt={mDef.fmt}
-                heat={mDef.xau_cao ? 'high-bad' : 'high-good'}
-                rows={gridRows(liveGrid.thang, liveGrid.months)}
-              />
-              <p className="foot">
-                {mDef.ten}{mDef.don_vi ? ` (${mDef.don_vi})` : ''} per room per month.
-              </p>
-
-              <h3 style={{ marginTop: 30 }}>Shop total by month</h3>
-              <p className="sub">
-                The long view behind the daily charts. Six months is all the API allows, so read the
-                trend rather than the level.
-              </p>
-              <div className="tablewrap">
-                <table>
-                  <thead><tr>
-                    <th>Month</th>
-                    <th className="n">Sessions</th><th className="n">Hours</th>
-                    <th className="n">Our rooms<div className="uhint">bn</div></th>
-                    <th className="n">Creators<div className="uhint">bn</div></th>
-                    <th className="n">Total<div className="uhint">bn</div></th>
-                    <th className="n">Views</th>
-                    <th className="n">GMV / 1k views<div className="uhint">mn</div></th>
-                    <th className="n">CTR</th>
-                    <th className="n">Watch</th>
-                    <th className="n">Like rate</th>
-                    <th className="n">Comments<div className="uhint">per 1k</div></th>
-                    <th className="n">Follows<div className="uhint">per 1k</div></th>
-                  </tr></thead>
-                  <tbody>
-                    {liveMonthRows.map((m, i) => {
-                      const prev = liveMonthRows[i - 1]
-                      return (
-                        <tr key={m.ky}>
-                          <td>{mmyy(m.ky)}</td>
-                          <td className="n">{n0(m.phien)}</td>
-                          <td className="n">{n0(m.gio)}</td>
-                          <td className="n"><b>{bn(m.own)}</b></td>
-                          <td className="n muted">{bn(m.koc)}</td>
-                          <td className="n">
-                            {bn(m.own + m.koc)}{' '}
-                            <Dd a={m.own + m.koc} b={prev ? prev.own + prev.koc : undefined} />
-                          </td>
-                          <td className="n">{n0(m.views)}</td>
-                          <td className="n"><b>{mn1(per1k(m.own, m.views))}</b></td>
-                          <td className="n">{pct(m.imp > 0 ? p1(m.clicks, m.imp) : null)}</td>
-                          <td className="n">{m.gioOwn > 0 ? `${Math.round(m.xemW / m.gioOwn)}s` : '—'}</td>
-                          <td className="n">{pct(p1(m.likes, m.views))}</td>
-                          <td className="n">{k1(m.comments, m.views)}</td>
-                          <td className="n">{k1(m.followers, m.views)}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section id="s5-16">
-              <h2><span className="hno">5.16</span>Top sessions</h2>
+            <section id="s5-13">
+              <h2><span className="hno">5.13</span>Top sessions</h2>
               <p className="sub">
                 The {Math.min(40, liveTop.length)} biggest of {n0(liveTop.length)} sessions in the
                 selected months. Worth reading next to the title &mdash; the stream name is the only
@@ -5146,8 +5148,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-17">
-              <h2><span className="hno">5.17</span>Creator rooms</h2>
+            <section id="s5-14">
+              <h2><span className="hno">5.14</span>Creator rooms</h2>
               <p className="sub">
                 Rooms that sold our products but are not ours. They register themselves the first
                 time one appears, so the list grows on its own as the team works with new creators.
@@ -6139,6 +6141,8 @@ const CSS = `
 
 .side{position:sticky;top:14px;display:flex;flex-direction:column;gap:2px;
   border-right:1px solid var(--line);padding-right:14px}
+.side-gn{font-size:10.5px;color:var(--muted);padding:0 0 4px 14px;line-height:1.35;
+  max-width:190px}
 .side-g{display:flex;flex-direction:column}
 .side-s{display:flex;align-items:baseline;gap:8px;width:100%;text-align:left;font:inherit;
   font-size:14px;padding:7px 9px;border:0;border-radius:6px;background:transparent;
@@ -6296,6 +6300,9 @@ const CSS = `
   border-radius:2px 2px 0 0;min-height:1px}
 .wrap .sl-line,.wrap .sl-dots{position:absolute;inset:0 56px;width:calc(100% - 112px);height:100%;
   pointer-events:none;overflow:visible}
+.wrap .sl-v{position:absolute;transform:translateX(-50%);font-size:10.5px;font-weight:600;
+  font-variant-numeric:tabular-nums;white-space:nowrap;background:var(--surface);
+  border-radius:3px;padding:0 3px;line-height:1.35;pointer-events:none}
 .wrap .sl-d{position:absolute;width:8px;height:8px;margin:0 0 -4px -4px;border-radius:50%;
   background:var(--bad)}
 .wrap .sl-l,.wrap .sl-r{position:absolute;font-size:10.5px;color:var(--muted);
