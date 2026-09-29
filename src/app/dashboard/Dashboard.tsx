@@ -856,23 +856,26 @@ function LiveHead({ rows, series, fmtCot, fmtDuong, fmtAds }: {
   )
 }
 
-/* ------------------- cột chồng + một đường trục phải riêng ------------------- */
+/* ------------------ cột chồng + nhiều đường trục phải riêng ------------------ */
 
 /**
- * Cột chồng n chuỗi, cộng thêm MỘT đường có thang đo riêng bên phải.
+ * Cột chồng n chuỗi, cộng thêm n đường dùng CHUNG một thang đo bên phải.
  *
  * ComboChart sẵn có chỉ nhận đúng hai chuỗi cột, và đường của nó phải dùng
  * chung thang với cột hoặc thang phần trăm 0–100. Ở đây cột là giờ (vài trăm)
  * còn đường là tiền (vài tỷ) — chênh nhau cả triệu lần, buộc phải có trục
  * riêng, nếu không đường sẽ nằm bẹp dưới đáy.
+ *
+ * Các đường dùng chung một thang để so được với nhau; mỗi đường một thang thì
+ * ba phòng nhìn như nhau dù chênh lệch thật rất lớn.
  */
-function StackLine({ rows, series, fmtCot, fmtDuong, label, tenDuong, tip }: {
-  rows: { ky: string; parts: number[]; duong: number | null }[]
+function StackLine({ rows, series, lines, fmtCot, fmtDuong, label, tip }: {
+  rows: { ky: string; parts: number[] }[]
   series: { ten: string; color: string }[]
+  lines: { ten: string; color: string; vals: (number | null)[] }[]
   fmtCot: (v: number) => string
   fmtDuong: (v: number) => string
   label: (k: string) => string
-  tenDuong: string
   tip: (i: number) => React.ReactNode
 }) {
   const [t, setT] = useState<{ on: boolean; x: number; y: number; body: React.ReactNode }>({
@@ -881,7 +884,7 @@ function StackLine({ rows, series, fmtCot, fmtDuong, label, tenDuong, tip }: {
   if (!rows.length) return null
   const tong = rows.map((r) => r.parts.reduce((a2, b) => a2 + b, 0))
   const maxCot = Math.max(1, ...tong)
-  const maxD = Math.max(1, ...rows.map((r) => r.duong ?? 0))
+  const maxD = Math.max(1, ...lines.flatMap((l) => l.vals.map((v) => v ?? 0)))
   const n = rows.length
   const sk = Math.max(1, Math.ceil(n / 13))
   const x = (i: number) => ((i + 0.5) / n) * 100
@@ -898,7 +901,9 @@ function StackLine({ rows, series, fmtCot, fmtDuong, label, tenDuong, tip }: {
         {series.map((sv) => (
           <span key={sv.ten}><i className="sw" style={{ background: sv.color }} />{sv.ten}</span>
         ))}
-        <span><i className="swl" style={{ background: 'var(--bad)' }} />{tenDuong}</span>
+        {lines.map((l) => (
+          <span key={l.ten}><i className="swl" style={{ background: l.color }} />{l.ten}</span>
+        ))}
       </div>
       <div className="sl">
         <div className="sl-plot">
@@ -910,7 +915,7 @@ function StackLine({ rows, series, fmtCot, fmtDuong, label, tenDuong, tip }: {
             {rows.map((r, i) => (
               <div className="sl-col" key={r.ky} {...hover(i)}>
                 <div className="sl-stack" style={{ height: `${(tong[i] / maxCot) * 100}%` }}>
-                  {series.map((sv, j) => ({ sv, v: r.parts[j] || 0 }))
+                  {series.map((sv, j2) => ({ sv, v: r.parts[j2] || 0 }))
                     .filter((z) => z.v > 0)
                     .reverse()
                     .map((z) => (
@@ -921,17 +926,19 @@ function StackLine({ rows, series, fmtCot, fmtDuong, label, tenDuong, tip }: {
             ))}
           </div>
           <svg className="sl-line" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <polyline
-              points={rows.map((r, i) => (r.duong == null ? null : `${x(i)},${y(r.duong)}`))
-                .filter(Boolean).join(' ')}
-              fill="none" stroke="var(--bad)" strokeWidth={2}
-              vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+            {lines.map((l) => (
+              <polyline key={l.ten}
+                points={l.vals.map((v, i) => (v == null ? null : `${x(i)},${y(v)}`))
+                  .filter(Boolean).join(' ')}
+                fill="none" stroke={l.color} strokeWidth={2}
+                vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+            ))}
           </svg>
           <div className="sl-dots">
-            {rows.map((r, i) => (r.duong == null ? null : (
-              <span key={r.ky} className="sl-d"
-                style={{ left: `${x(i)}%`, bottom: `${100 - y(r.duong)}%` }} />
-            )))}
+            {rows.length <= 20 && lines.map((l) => l.vals.map((v, i) => (v == null ? null : (
+              <span key={`${l.ten}-${i}`} className="sl-d"
+                style={{ left: `${x(i)}%`, bottom: `${100 - y(v)}%`, background: l.color }} />
+            ))))}
           </div>
         </div>
         <div className="sl-x">
@@ -1347,8 +1354,6 @@ export default function Dashboard({
   /** Lọc đường cong theo mức chi LGM của ngày đó, để tách ảnh hưởng của
    *  tiền quảng cáo ra khỏi ảnh hưởng của số giờ live. */
   const [gioAds, setGioAds] = useState<'all' | 'low' | 'mid' | 'high'>('all')
-  /** Chỉ số ở đường cong nhịp live theo tháng. */
-  const [nhipMetric, setNhipMetric] = useState<'gio' | 'ngay'>('gio')
 
   const toggleClosed = (c: string) =>
     setClosed((p) => {
@@ -2527,6 +2532,12 @@ export default function Dashboard({
    *  Tách "số ngày lên sóng" khỏi "độ dài mỗi ngày" là chủ ý: tổng giờ tháng
    *  là tích của hai thứ đó, mà hai thứ đó chịu hai quyết định vận hành khác
    *  nhau — bao nhiêu buổi, và mỗi buổi kéo bao lâu. */
+  /** Các kỳ của phần 5.9: tháng hay ngày, theo nút kỳ chung. */
+  const nhipKy = useMemo(
+    () => (byMonth ? kenhBang.thang : kenhBangNgay.thang),
+    [byMonth, kenhBang, kenhBangNgay],
+  )
+
   const nhipThang = useMemo(() => {
     const rooms = PHONG_NHA.filter((t) => kenhBangNgay.ten.includes(t))
     // Khung giờ cho điểm ngọt: cùng cách chia với đường cong ở trên.
@@ -2539,9 +2550,11 @@ export default function Dashboard({
 
     return rooms.map((ten, i) => {
       const mine = gioNmvNgay.filter((x) => x.ten === ten)
+      // Gom theo THÁNG hay theo NGÀY tuỳ nút kỳ chung ở đầu trang, để phần này
+      // đổi theo cùng lúc với mọi phần khác thay vì cố định ở tháng.
       const thang = new Map<string, { ngay: number; gio: number; nmv: number; phien: number }>()
       for (const x of mine) {
-        const k = x.ngay.slice(0, 7)
+        const k = byMonth ? x.ngay.slice(0, 7) : x.ngay
         const o = thang.get(k) ?? { ngay: 0, gio: 0, nmv: 0, phien: 0 }
         o.ngay += 1; o.gio += x.gio; o.nmv += x.nmv; o.phien += x.phien
         thang.set(k, o)
@@ -2574,7 +2587,7 @@ export default function Dashboard({
         goiY: best >= 0 && ngayTV > 0 ? giua(best) * ngayTV : null,
       }
     })
-  }, [gioNmvNgay, kenhBangNgay])
+  }, [gioNmvNgay, kenhBangNgay, byMonth])
 
   /** Cùng phép ghép nhưng theo tháng, để có bảng NMV trên mỗi giờ live. */
   const gioNmvThang = useMemo(() => PHONG_NHA
@@ -4679,30 +4692,25 @@ export default function Dashboard({
                 </div>
               ) : (
                 <>
-                  <div className="seg" style={{ marginTop: 14, marginBottom: 6 }}>
-                    {([['gio', 'Columns: hours'], ['ngay', 'Columns: days live']] as const)
-                      .map(([k, l]) => (
-                        <button key={k} className={nhipMetric === k ? 'on' : ''}
-                          onClick={() => setNhipMetric(k)}>{l}</button>
-                      ))}
-                  </div>
                   <StackLine
-                    rows={kenhBang.thang.map((k) => ({
+                    rows={nhipKy.map((k) => ({
                       ky: k,
-                      parts: nhipThang.map((r) => {
-                        const o = r.thang.get(k)
-                        if (!o) return 0
-                        return nhipMetric === 'gio' ? o.gio : o.ngay
-                      }),
-                      duong: nhipThang.reduce((t2, r) => t2 + (r.thang.get(k)?.nmv ?? 0), 0) || null,
+                      parts: nhipThang.map((r) => r.thang.get(k)?.gio ?? 0),
                     }))}
-                    series={nhipThang.map((r) => ({ ten: r.ten, color: r.color }))}
-                    fmtCot={(v) => (nhipMetric === 'gio' ? `${n0(v)}h` : `${n0(v)} days`)}
+                    series={nhipThang.map((r) => ({ ten: `${shortRoom(r.ten)} — hours`, color: r.color }))}
+                    lines={nhipThang.map((r) => ({
+                      ten: `${shortRoom(r.ten)} — NMV`,
+                      color: r.color,
+                      vals: nhipKy.map((k) => {
+                        const o = r.thang.get(k)
+                        return o ? o.nmv : null
+                      }),
+                    }))}
+                    fmtCot={(v) => `${n0(v)}h`}
                     fmtDuong={(v) => `${bn(v)} bn`}
-                    label={(k) => mmyy(`${k}-01`)}
-                    tenDuong="Seller NMV, three rooms (right axis)"
+                    label={(k) => (byMonth ? mmyy(`${k}-01`) : ddmm(k))}
                     tip={(i2) => {
-                      const k = kenhBang.thang[i2]
+                      const k = nhipKy[i2]
                       let gio = 0
                       let nmv = 0
                       for (const r of nhipThang) {
@@ -4711,14 +4719,14 @@ export default function Dashboard({
                         gio += o.gio; nmv += o.nmv
                       }
                       return (
-                        <><b>{mmyy(`${k}-01`)}</b><br />
+                        <><b>{byMonth ? mmyy(`${k}-01`) : ddmm(k)}</b><br />
                           {nhipThang.map((r) => {
                             const o = r.thang.get(k)
                             if (!o) return null
                             return (
                               <span key={r.ten}>
-                                {shortRoom(r.ten)}: {n0(o.ngay)} days · {n0(o.gio)}h ·{' '}
-                                {bn(o.nmv)} bn<br />
+                                {shortRoom(r.ten)}: {n0(o.gio)}h · {bn(o.nmv)} bn
+                                {byMonth ? ` · ${n0(o.ngay)} days` : ''}<br />
                               </span>
                             )
                           })}
@@ -4728,15 +4736,21 @@ export default function Dashboard({
                     }}
                   />
                   <p className="foot">
-                    Columns stack the three rooms, so their height is the total the shop streamed
-                    that month; the red line is the Seller NMV those three rooms kept, on its own
-                    right-hand scale. Hours run in the hundreds and revenue in the billions, so they
-                    cannot share an axis &mdash; the two scales are independent, and only the{' '}
-                    <i>shape</i> of the line against the columns is meaningful, never the gap
-                    between them.
+                    Columns stack the three rooms&rsquo; hours, so their height is the total the shop
+                    streamed; each room also gets its own revenue line in the same colour, all three
+                    sharing one right-hand scale so they stay comparable with each other. Hours run
+                    in the hundreds and revenue in the billions, so columns and lines cannot share an
+                    axis &mdash; only the <i>shape</i> of a line against its own colour of column is
+                    meaningful, never the gap between line and column. The period follows the range
+                    buttons at the top of the page.
                   </p>
 
                   <h3 style={{ marginTop: 26 }}>The month broken into its two parts</h3>
+                  <p className="sub" style={{ marginTop: 2 }}>
+                    Always monthly, whatever the range buttons say &mdash; a day has
+                    only one day in it, so days × hours per day only means something
+                    over a month.
+                  </p>
                   <div className="tablewrap">
                     <table>
                       <thead><tr>
