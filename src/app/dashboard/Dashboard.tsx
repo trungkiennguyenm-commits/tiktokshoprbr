@@ -218,7 +218,8 @@ const SECTIONS = [
     groups: [
       { ten: 'Category', subs: ['Cards', 'Seller NMV', 'Cancellation rate', 'Detail table'] },
       { ten: 'Price band', subs: ['Net quantity', 'Cancellation rate'] },
-      { ten: 'Models', subs: ['Gross vs net', 'By month', 'Top models', 'Full table'] },
+      { ten: 'Models', subs: ['Gross vs net', 'By month', 'Model mix', 'Top models',
+        'Full table'] },
     ],
   },
   {
@@ -2628,9 +2629,9 @@ export default function Dashboard({
      Cùng một biểu đồ đặt ở ba chỗ thì phải là MỘT đoạn mã, không phải ba bản
      sao — sửa một lần là cả ba đổi theo, không có chuyện lệch nhau. Cả hai
      luôn chạy theo tháng, chỉ nghe bộ lọc chip tháng. */
-  const chartRevAtr = (
+  const chartRevAtr = (no: string) => (
     <section>
-      <h2>Seller NMV, ad spend and ATR by month — {monthNote}</h2>
+      <h2><span className="hno">{no}</span>Seller NMV, ad spend and ATR by month — {monthNote}</h2>
       <p className="sub">
         Column height is Seller NMV, split into what advertising cost and what was left after it.
         The two parts add up to Seller NMV, so the coloured share of each column IS the ATR drawn
@@ -2667,9 +2668,9 @@ export default function Dashboard({
      Tab Summary là nơi đọc theo tháng; Sales chạy theo bộ lọc ngày như mọi
      phần còn lại của nó. Trước đây Sales cắm luôn bản theo tháng, nên lọc
      một tháng là cả hai biểu đồ co lại thành đúng MỘT cột — nhìn vô nghĩa. */
-  const chartRevAtrDay = (
+  const chartRevAtrDay = (no: string) => (
     <section>
-      <h2>Seller NMV, ad spend and ATR — {dayNote}</h2>
+      <h2><span className="hno">{no}</span>Seller NMV, ad spend and ATR — {dayNote}</h2>
       <p className="sub">
         Column height is Seller NMV for the day, split into what advertising cost and what was left
         after it. The two parts add up to Seller NMV, so the coloured share of each column IS the
@@ -2709,9 +2710,9 @@ export default function Dashboard({
     </section>
   )
 
-  const chartAdsMixDay = (
+  const chartAdsMixDay = (no: string) => (
     <section>
-      <h2>LIVE vs Product GMV Max — {dayNote}</h2>
+      <h2><span className="hno">{no}</span>LIVE vs Product GMV Max — {dayNote}</h2>
       <p className="sub">
         Daily budget mix. C-Ads and branding sit on top in grey — small in money, but they are the
         only spend with no direct sales attribution.
@@ -2738,9 +2739,9 @@ export default function Dashboard({
     </section>
   )
 
-  const chartAdsMix = (
+  const chartAdsMix = (no: string) => (
     <section>
-      <h2>LIVE vs Product GMV Max — {monthNote}</h2>
+      <h2><span className="hno">{no}</span>LIVE vs Product GMV Max — {monthNote}</h2>
       <p className="sub">
         Always monthly, so the shift in budget mix is readable. C-Ads and branding sit on top in
         grey — small in money, but they are the only spend with no direct sales attribution.
@@ -2963,9 +2964,9 @@ export default function Dashboard({
               />
             </section>
 
-            <div id="s1-3">{chartRevAtr}</div>
+            <div id="s1-3">{chartRevAtr('1.3')}</div>
 
-            <div id="s1-4">{chartAdsMix}</div>
+            <div id="s1-4">{chartAdsMix('1.4')}</div>
 
             <section id="s1-5">
               <h2><span className="hno">1.5</span>Headline numbers by month</h2>
@@ -3183,9 +3184,9 @@ export default function Dashboard({
               />
             </section>
 
-            <div id="s2-3">{chartRevAtrDay}</div>
+            <div id="s2-3">{chartRevAtrDay('2.3')}</div>
 
-            <div id="s2-4">{chartAdsMixDay}</div>
+            <div id="s2-4">{chartAdsMixDay('2.4')}</div>
 
             <section id="s2-5">
               <h2><span className="hno">2.5</span>Valid subsidy against Seller NMV — {periodNote}</h2>
@@ -3334,7 +3335,9 @@ export default function Dashboard({
         {/* ===================== PRODUCTS ===================== */}
         {sec === 'Products' && (
           <>
-            <section id="s3-1" className="cards">
+            <section id="s3-1">
+              <h2><span className="hno">3.1</span>Robot and handheld side by side — {periodNote}</h2>
+              <div className="cards">
               {(['robot', 'handheld'] as const).map((c, i) => {
                 const rows = srcShown.filter((r) => r.category === c)
                 const s = (f: (r: Monthly | Daily) => number) =>
@@ -3361,6 +3364,7 @@ export default function Dashboard({
                   </div>
                 )
               })}
+              </div>
             </section>
 
             <section id="s3-2">
@@ -3578,8 +3582,8 @@ export default function Dashboard({
             </section>
 
             {!modelSel && (
-              <section>
-                <h2>Model mix per {periodWord}</h2>
+              <section id="s3-9">
+                <h2><span className="hno">3.9</span>Model mix per {periodWord}</h2>
                 <p className="sub">
                   Every model that sold in the period, biggest first &mdash; nothing folded into
                   &ldquo;Other&rdquo;. Cancellation rate is cancelled pcs ÷ gross pcs, so it is
@@ -3614,8 +3618,8 @@ export default function Dashboard({
               </section>
             )}
 
-            <section id="s3-9">
-              <h2><span className="hno">3.9</span>Top models by Seller NMV — {periodNote}</h2>
+            <section id="s3-10">
+              <h2><span className="hno">3.10</span>Top models by Seller NMV — {periodNote}</h2>
               <RowBars
                 rows={skuF.slice().sort((a, b) => b.nmv - a.nmv).slice(0, 15).map((s) => ({
                   nhan: s.model,
@@ -3625,8 +3629,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s3-10">
-              <h2><span className="hno">3.10</span>Full table, grouped by category</h2>
+            <section id="s3-11">
+              <h2><span className="hno">3.11</span>Full table, grouped by category</h2>
               <p className="sub">
                 Covers {periodNote}. The bold row is the category total — click it to collapse.
                 Click a column header to re-sort. Currently sorted by <b>{String(sortKey)}</b>.
@@ -3825,9 +3829,9 @@ export default function Dashboard({
               </p>
             </section>
 
-            <div id="s4-4">{chartRevAtr}</div>
+            <div id="s4-4">{chartRevAtr('4.4')}</div>
 
-            <div id="s4-5">{chartAdsMix}</div>
+            <div id="s4-5">{chartAdsMix('4.5')}</div>
 
             <section id="s4-6">
               <h2><span className="hno">4.6</span>Ad spend by month — {monthNote}</h2>
