@@ -110,6 +110,17 @@ export type LiveRoomMonth = LiveBase & {
  *  v_live_lgm_daily. */
 export type LiveLgm = { ten: string; ngay: string; lgm_vnd: number }
 
+/** Hiệu quả theo kênh bán, theo tháng. `kenh` là tên phòng live, 'Creator live',
+ *  'Ngoài live' hoặc 'Live (không rõ phòng)'. `phu_song` là % line item của
+ *  tháng đó có room_id — dưới ngưỡng thì cách chia kênh không đáng tin. */
+export type KenhMonth = {
+  thang: string; kenh: string; phu_song: number
+  so_luong: number; sl_chua_huy: number; sl_huy: number; cancel_rate: number
+  gmv: number; nmv: number; khach_tra: number
+  seller_disc_chua_huy: number; platform_disc_chua_huy: number
+  pcs_robot: number; pcs_handheld: number
+}
+
 export type LiveSession = {
   session_id: string; ngay: string; username: string; ten: string; nhom: string
   title: string | null; duration_phut: number; gmv: number; items_sold: number
@@ -126,6 +137,7 @@ type Props = {
   adsVs: AdsVs[]; adsMonthly: AdsMonth[]; adsCampaigns: AdsCampaign[]
   liveDaily: LiveDaily[]; liveMonthly: LiveMonth[]
   liveRooms: LiveRoomMonth[]; liveSessions: LiveSession[]; liveLgm: LiveLgm[]
+  kenhMonthly: KenhMonth[]
 }
 
 /* ============================== helpers ============================== */
@@ -176,7 +188,8 @@ type RangeKey = (typeof RANGES)[number]['key']
 const SECTIONS = [
   {
     id: 'Summary', ten: 'Summary',
-    groups: [{ ten: '', subs: ['At a glance', 'GMV, NMV, cancellations', 'NMV, ads and ATR', 'LGM vs PGM', 'Headline table'] }],
+    groups: [{ ten: '', subs: ['At a glance', 'GMV, NMV, cancellations', 'NMV, ads and ATR',
+      'LGM vs PGM', 'Headline table', 'By channel'] }],
   },
   {
     id: 'Sales', ten: 'Sales',
@@ -1113,7 +1126,7 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
 export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, lapseDaily, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
-  liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm,
+  liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly,
 }: Props) {
   const [sec, setSec] = useState<Sec>('Summary')
   const [cat, setCat] = useState<CatKey>('all')
@@ -2015,6 +2028,55 @@ export default function Dashboard({
   /** Số lần trên 1.000 lượt xem — dùng cho comment, share, follow. */
   const k1 = (v: number, views: number) => (views > 0 ? Math.round((v / views) * 1000 * 10) / 10 : 0)
 
+  /* ---- hiệu quả theo kênh bán ----
+     Ngưỡng phủ sóng 60%: TikTok chỉ trả room_id trên line item từ 05/2026, và
+     tới 07/2026 mới phủ ổn định ~65–70%. Tháng nào dưới ngưỡng thì null KHÔNG
+     có nghĩa là "ngoài live" mà là "không biết" — vẽ ra chỉ gây hiểu sai, nên
+     cắt hẳn khỏi bảng thay vì để người đọc tự đoán. */
+  const KENH_NGUONG = 60
+  const kenhThang = useMemo(() => {
+    const ok = new Set<string>()
+    for (const r of kenhMonthly) {
+      if (Number(r.phu_song || 0) >= KENH_NGUONG) ok.add(String(r.thang).slice(0, 7))
+    }
+    return Array.from(ok).sort()
+  }, [kenhMonthly])
+
+  const kenhBang = useMemo(() => {
+    const keep = new Set(kenhThang)
+    // Ba phòng nhà trước, rồi tới các kênh còn lại — thứ tự cố định để bảng
+    // không nhảy khi một kênh trống tháng.
+    const uu = ['Roborock Official VN', 'Roborock Máy lau sàn', 'Roborock Lifestyle VN']
+    const rows = new Map<string, Map<string, KenhMonth>>()
+    for (const r of kenhMonthly) {
+      const k = String(r.thang).slice(0, 7)
+      if (!keep.has(k)) continue
+      const m = rows.get(r.kenh) ?? new Map<string, KenhMonth>()
+      m.set(k, r)
+      rows.set(r.kenh, m)
+    }
+    const ten = [
+      ...uu.filter((x) => rows.has(x)),
+      ...Array.from(rows.keys()).filter((x) => !uu.includes(x)).sort(),
+    ]
+    const tong = new Map<string, { nmv: number; net: number; gross: number }>()
+    for (const k of kenhThang) {
+      let nmv = 0; let net = 0; let gross = 0
+      for (const m of rows.values()) {
+        const r = m.get(k)
+        if (!r) continue
+        nmv += Number(r.nmv || 0); net += Number(r.sl_chua_huy || 0); gross += Number(r.so_luong || 0)
+      }
+      tong.set(k, { nmv, net, gross })
+    }
+    const phu = new Map<string, number>()
+    for (const r of kenhMonthly) {
+      const k = String(r.thang).slice(0, 7)
+      if (keep.has(k)) phu.set(k, Number(r.phu_song || 0))
+    }
+    return { ten, rows, tong, phu, thang: kenhThang }
+  }, [kenhMonthly, kenhThang])
+
   /* ---- hai biểu đồ dùng chung cho MoM Summary, Overview và Advertising ----
      Cùng một biểu đồ đặt ở ba chỗ thì phải là MỘT đoạn mã, không phải ba bản
      sao — sửa một lần là cả ba đổi theo, không có chuyện lệch nhau. Cả hai
@@ -2395,6 +2457,114 @@ export default function Dashboard({
                 </table>
               </div>
               <p className="foot">Money in VND bn.</p>
+            </section>
+
+            <section id="s1-6">
+              <h2><span className="hno">1.6</span>Seller NMV by channel — MoM</h2>
+              <p className="sub">
+                Our own revenue, after cancellations, split by the live room that produced the
+                order. TikTok tags each order line with the live room it came from, so this is the
+                shop&rsquo;s real money per channel &mdash; not the gross GMV TikTok reports against
+                a session.
+              </p>
+              {!kenhBang.thang.length ? (
+                <div className="note warn">
+                  No month yet has enough room tagging to split channels. TikTok only began
+                  returning the live room on order lines in May 2026.
+                </div>
+              ) : (
+                <>
+                  <div className="tablewrap">
+                    <table>
+                      <thead><tr>
+                        <th>Channel</th>
+                        {kenhBang.thang.map((k) => (
+                          <th className="n" key={k}>{mmyy(`${k}-01`)}<div className="uhint">bn</div></th>
+                        ))}
+                        <th className="n">Share</th>
+                      </tr></thead>
+                      <tbody>
+                        {kenhBang.ten.map((ten, i2) => {
+                          const cuoi = kenhBang.thang[kenhBang.thang.length - 1]
+                          const r = kenhBang.rows.get(ten)?.get(cuoi)
+                          const t = kenhBang.tong.get(cuoi)
+                          const own = ten.startsWith('Roborock')
+                          return (
+                            <tr key={ten}>
+                              <td>
+                                {own && <i className="sw" style={{ background: PALETTE[i2 % PALETTE.length], marginRight: 7 }} />}
+                                <span className={own ? '' : 'muted'}>{ten}</span>
+                              </td>
+                              {kenhBang.thang.map((k, ki) => {
+                                const cur = kenhBang.rows.get(ten)?.get(k)
+                                const pre = ki > 0 ? kenhBang.rows.get(ten)?.get(kenhBang.thang[ki - 1]) : undefined
+                                return (
+                                  <td className="n" key={k}>
+                                    {cur ? bn(Number(cur.nmv)) : <span className="muted">—</span>}{' '}
+                                    <Dd a={cur ? Number(cur.nmv) : undefined} b={pre ? Number(pre.nmv) : undefined} />
+                                  </td>
+                                )
+                              })}
+                              <td className="n"><b>{pct(p1(Number(r?.nmv ?? 0), t?.nmv ?? 0))}</b></td>
+                            </tr>
+                          )
+                        })}
+                        <tr className="tot">
+                          <td><b>All channels</b></td>
+                          {kenhBang.thang.map((k) => (
+                            <td className="n" key={k}><b>{bn(kenhBang.tong.get(k)?.nmv ?? 0)}</b></td>
+                          ))}
+                          <td className="n">100%</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <h3 style={{ marginTop: 26 }}>Net pcs and cancellation rate</h3>
+                  <div className="tablewrap">
+                    <table>
+                      <thead><tr>
+                        <th>Channel</th>
+                        {kenhBang.thang.map((k) => (
+                          <th className="n" key={k}>{mmyy(`${k}-01`)}<div className="uhint">net pcs · cancel</div></th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {kenhBang.ten.map((ten) => (
+                          <tr key={ten}>
+                            <td><span className={ten.startsWith('Roborock') ? '' : 'muted'}>{ten}</span></td>
+                            {kenhBang.thang.map((k) => {
+                              const r = kenhBang.rows.get(ten)?.get(k)
+                              if (!r) return <td className="n muted" key={k}>—</td>
+                              return (
+                                <td className="n" key={k}>
+                                  {n0(Number(r.sl_chua_huy))}
+                                  <span className="muted" style={{ marginLeft: 6 }}>
+                                    {pct(Number(r.cancel_rate))}
+                                  </span>
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="note warn">
+                    <b>Only months where most order lines carry a room tag are shown.</b> TikTok
+                    started returning the live room on order lines in May 2026 and reached steady
+                    coverage from July{' '}
+                    ({kenhBang.thang.map((k) => `${mmyy(`${k}-01`)} ${kenhBang.phu.get(k)}%`).join(' · ')}).
+                    Anything earlier is left out rather than shown as &ldquo;outside live&rdquo;,
+                    because an untagged line back then means <i>unknown</i>, not <i>not from a
+                    live</i>. Even in the months shown, roughly a third of lines carry no tag; those
+                    sit in &ldquo;Ngoài live&rdquo;, so treat that row as an upper bound.
+                    &ldquo;Live (không rõ phòng)&rdquo; is a tagged line whose room is older than the
+                    175-day live history we can pull.
+                  </div>
+                </>
+              )}
             </section>
 
           </>

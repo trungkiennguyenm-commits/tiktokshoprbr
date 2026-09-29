@@ -36,6 +36,8 @@ type TtsLineItem = {
   sale_price?: string
   seller_discount?: string
   platform_discount?: string
+  /** Phiên live sinh ra dòng hàng này. Có từ 05/2026, không phải dòng nào cũng có. */
+  room_id?: string
 }
 
 type TtsOrder = {
@@ -174,6 +176,10 @@ export const ordersAdapter: SyncAdapter<TtsOrder> = {
         sale_price: toNumber(li.sale_price),
         seller_discount: toNumber(li.seller_discount),
         platform_discount: toNumber(li.platform_discount),
+        // Phiên live sinh ra đơn này. TikTok chỉ bắt đầu trả field này từ
+        // 05/2026 và phủ ~65–70% line item, nên null KHÔNG chắc là "không
+        // qua live" ở các tháng cũ — xem cột phu_song trong v_kenh_monthly.
+        room_id: li.room_id ?? null,
       })),
     )
 
