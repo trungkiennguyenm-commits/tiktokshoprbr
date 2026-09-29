@@ -856,6 +856,95 @@ function LiveHead({ rows, series, fmtCot, fmtDuong, fmtAds }: {
   )
 }
 
+/* ------------------- cột chồng + một đường trục phải riêng ------------------- */
+
+/**
+ * Cột chồng n chuỗi, cộng thêm MỘT đường có thang đo riêng bên phải.
+ *
+ * ComboChart sẵn có chỉ nhận đúng hai chuỗi cột, và đường của nó phải dùng
+ * chung thang với cột hoặc thang phần trăm 0–100. Ở đây cột là giờ (vài trăm)
+ * còn đường là tiền (vài tỷ) — chênh nhau cả triệu lần, buộc phải có trục
+ * riêng, nếu không đường sẽ nằm bẹp dưới đáy.
+ */
+function StackLine({ rows, series, fmtCot, fmtDuong, label, tenDuong, tip }: {
+  rows: { ky: string; parts: number[]; duong: number | null }[]
+  series: { ten: string; color: string }[]
+  fmtCot: (v: number) => string
+  fmtDuong: (v: number) => string
+  label: (k: string) => string
+  tenDuong: string
+  tip: (i: number) => React.ReactNode
+}) {
+  const [t, setT] = useState<{ on: boolean; x: number; y: number; body: React.ReactNode }>({
+    on: false, x: 0, y: 0, body: null,
+  })
+  if (!rows.length) return null
+  const tong = rows.map((r) => r.parts.reduce((a2, b) => a2 + b, 0))
+  const maxCot = Math.max(1, ...tong)
+  const maxD = Math.max(1, ...rows.map((r) => r.duong ?? 0))
+  const n = rows.length
+  const sk = Math.max(1, Math.ceil(n / 13))
+  const x = (i: number) => ((i + 0.5) / n) * 100
+  const y = (v: number) => 100 - (v / maxD) * 100
+  const hover = (i: number) => ({
+    onMouseMove: (e: React.MouseEvent) =>
+      setT({ on: true, x: e.clientX + 14, y: e.clientY - 8, body: tip(i) }),
+    onMouseLeave: () => setT((q) => ({ ...q, on: false })),
+  })
+
+  return (
+    <>
+      <div className="legend">
+        {series.map((sv) => (
+          <span key={sv.ten}><i className="sw" style={{ background: sv.color }} />{sv.ten}</span>
+        ))}
+        <span><i className="swl" style={{ background: 'var(--bad)' }} />{tenDuong}</span>
+      </div>
+      <div className="sl">
+        <div className="sl-plot">
+          <span className="sl-l sl-t">{fmtCot(maxCot)}</span>
+          <span className="sl-l sl-m">{fmtCot(maxCot / 2)}</span>
+          <span className="sl-r sl-t">{fmtDuong(maxD)}</span>
+          <span className="sl-r sl-m">{fmtDuong(maxD / 2)}</span>
+          <div className="sl-cols">
+            {rows.map((r, i) => (
+              <div className="sl-col" key={r.ky} {...hover(i)}>
+                <div className="sl-stack" style={{ height: `${(tong[i] / maxCot) * 100}%` }}>
+                  {series.map((sv, j) => ({ sv, v: r.parts[j] || 0 }))
+                    .filter((z) => z.v > 0)
+                    .reverse()
+                    .map((z) => (
+                      <div key={z.sv.ten} style={{ flexGrow: z.v, background: z.sv.color }} />
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <svg className="sl-line" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <polyline
+              points={rows.map((r, i) => (r.duong == null ? null : `${x(i)},${y(r.duong)}`))
+                .filter(Boolean).join(' ')}
+              fill="none" stroke="var(--bad)" strokeWidth={2}
+              vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+          </svg>
+          <div className="sl-dots">
+            {rows.map((r, i) => (r.duong == null ? null : (
+              <span key={r.ky} className="sl-d"
+                style={{ left: `${x(i)}%`, bottom: `${100 - y(r.duong)}%` }} />
+            )))}
+          </div>
+        </div>
+        <div className="sl-x">
+          {rows.map((r, i) => (
+            <div key={r.ky}>{i % sk === 0 ? label(r.ky) : ''}</div>
+          ))}
+        </div>
+      </div>
+      {t.on && <div className="tip" style={{ left: t.x, top: t.y }}>{t.body}</div>}
+    </>
+  )
+}
+
 /* ------------------------- đường cong nhiều chuỗi ------------------------- */
 
 /**
@@ -1259,7 +1348,7 @@ export default function Dashboard({
    *  tiền quảng cáo ra khỏi ảnh hưởng của số giờ live. */
   const [gioAds, setGioAds] = useState<'all' | 'low' | 'mid' | 'high'>('all')
   /** Chỉ số ở đường cong nhịp live theo tháng. */
-  const [nhipMetric, setNhipMetric] = useState<'gio' | 'tren_gio' | 'ngay'>('gio')
+  const [nhipMetric, setNhipMetric] = useState<'gio' | 'ngay'>('gio')
 
   const toggleClosed = (c: string) =>
     setClosed((p) => {
@@ -4556,30 +4645,36 @@ export default function Dashboard({
               ) : (
                 <>
                   <div className="seg" style={{ marginTop: 14, marginBottom: 6 }}>
-                    {([['gio', 'Hours per month'], ['ngay', 'Days live per month'],
-                      ['tren_gio', 'NMV per live hour']] as const).map(([k, l]) => (
-                      <button key={k} className={nhipMetric === k ? 'on' : ''}
-                        onClick={() => setNhipMetric(k)}>{l}</button>
-                    ))}
+                    {([['gio', 'Columns: hours'], ['ngay', 'Columns: days live']] as const)
+                      .map(([k, l]) => (
+                        <button key={k} className={nhipMetric === k ? 'on' : ''}
+                          onClick={() => setNhipMetric(k)}>{l}</button>
+                      ))}
                   </div>
-                  <Curve
-                    cols={kenhBang.thang.map((k) => mmyy(`${k}-01`))}
-                    series={nhipThang.map((r) => ({
-                      ten: r.ten, color: r.color,
-                      vals: kenhBang.thang.map((k) => {
+                  <StackLine
+                    rows={kenhBang.thang.map((k) => ({
+                      ky: k,
+                      parts: nhipThang.map((r) => {
                         const o = r.thang.get(k)
-                        if (!o) return null
-                        if (nhipMetric === 'gio') return o.gio
-                        if (nhipMetric === 'ngay') return o.ngay
-                        return o.gio > 0 ? o.nmv / o.gio / 1e6 : null
+                        if (!o) return 0
+                        return nhipMetric === 'gio' ? o.gio : o.ngay
                       }),
+                      duong: nhipThang.reduce((t2, r) => t2 + (r.thang.get(k)?.nmv ?? 0), 0) || null,
                     }))}
-                    fmt={(v) => (nhipMetric === 'tren_gio' ? `${v.toFixed(1)} mn` : n0(v))}
-                    xNhan="Month"
-                    yNhan={nhipMetric === 'gio' ? 'hours streamed'
-                      : nhipMetric === 'ngay' ? 'days with a session' : 'VND mn per live hour'}
+                    series={nhipThang.map((r) => ({ ten: r.ten, color: r.color }))}
+                    fmtCot={(v) => (nhipMetric === 'gio' ? `${n0(v)}h` : `${n0(v)} days`)}
+                    fmtDuong={(v) => `${bn(v)} bn`}
+                    label={(k) => mmyy(`${k}-01`)}
+                    tenDuong="Seller NMV, three rooms (right axis)"
                     tip={(i2) => {
                       const k = kenhBang.thang[i2]
+                      let gio = 0
+                      let nmv = 0
+                      for (const r of nhipThang) {
+                        const o = r.thang.get(k)
+                        if (!o) continue
+                        gio += o.gio; nmv += o.nmv
+                      }
                       return (
                         <><b>{mmyy(`${k}-01`)}</b><br />
                           {nhipThang.map((r) => {
@@ -4588,14 +4683,23 @@ export default function Dashboard({
                             return (
                               <span key={r.ten}>
                                 {shortRoom(r.ten)}: {n0(o.ngay)} days · {n0(o.gio)}h ·{' '}
-                                {(o.gio / o.ngay).toFixed(1)}h per day ·{' '}
-                                {o.gio > 0 ? `${mn1(o.nmv / o.gio)} mn/h` : '—'}<br />
+                                {bn(o.nmv)} bn<br />
                               </span>
                             )
-                          })}</>
+                          })}
+                          <b>Total {n0(gio)}h · {bn(nmv)} bn</b><br />
+                          {gio > 0 ? `${mn1(nmv / gio)} mn per live hour` : ''}</>
                       )
                     }}
                   />
+                  <p className="foot">
+                    Columns stack the three rooms, so their height is the total the shop streamed
+                    that month; the red line is the Seller NMV those three rooms kept, on its own
+                    right-hand scale. Hours run in the hundreds and revenue in the billions, so they
+                    cannot share an axis &mdash; the two scales are independent, and only the{' '}
+                    <i>shape</i> of the line against the columns is meaningful, never the gap
+                    between them.
+                  </p>
 
                   <h3 style={{ marginTop: 26 }}>The month broken into its two parts</h3>
                   <div className="tablewrap">
@@ -6133,6 +6237,27 @@ const CSS = `
 .wrap .lh-x{position:static;display:flex;gap:1px;padding:5px 46px 0;height:auto}
 .wrap .lh-x .lh-col{height:auto;font-size:10.5px;color:var(--muted);white-space:nowrap;
   font-variant-numeric:tabular-nums;align-items:center}
+.wrap .sl{margin-top:14px}
+.wrap .sl-plot{position:relative;height:300px;padding:0 56px;
+  border-left:1px solid var(--line-s);border-bottom:1px solid var(--line-s);
+  background:linear-gradient(var(--line),var(--line)) 0 50%/100% 1px no-repeat}
+.wrap .sl-cols{position:absolute;inset:0;padding:0 56px;display:flex;gap:2px;align-items:flex-end}
+.wrap .sl-col{flex:1;min-width:0;height:100%;display:flex;align-items:flex-end}
+.wrap .sl-stack{width:100%;display:flex;flex-direction:column-reverse;overflow:hidden;
+  border-radius:2px 2px 0 0;min-height:1px}
+.wrap .sl-line,.wrap .sl-dots{position:absolute;inset:0 56px;width:calc(100% - 112px);height:100%;
+  pointer-events:none;overflow:visible}
+.wrap .sl-d{position:absolute;width:8px;height:8px;margin:0 0 -4px -4px;border-radius:50%;
+  background:var(--bad)}
+.wrap .sl-l,.wrap .sl-r{position:absolute;font-size:10.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.wrap .sl-l{left:5px}
+.wrap .sl-r{right:5px;color:var(--bad)}
+.wrap .sl-t{top:-2px}
+.wrap .sl-m{top:calc(50% - 7px)}
+.wrap .sl-x{display:flex;gap:2px;padding:5px 56px 0}
+.wrap .sl-x>div{flex:1;text-align:center;font-size:10.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
 .wrap .cur{margin-top:14px}
 .wrap .cur-plot{position:relative;height:300px;padding:0 52px;
   border-left:1px solid var(--line-s);border-bottom:1px solid var(--line-s);
