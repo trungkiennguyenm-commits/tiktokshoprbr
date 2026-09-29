@@ -1158,6 +1158,8 @@ export default function Dashboard({
   const [kenhMetric, setKenhMetric] = useState<'nmv' | 'cancel' | 'atr' | 'pcs'>('nmv')
   /** Phần 5.6 xem theo tháng hay theo ngày. */
   const [kenhNgay, setKenhNgay] = useState(false)
+  /** Phòng đang xem ở biểu đồ NMV vs ATR. 'all' = gộp ba phòng nhà. */
+  const [kenhRoom, setKenhRoom] = useState<string>('all')
 
   const toggleClosed = (c: string) =>
     setClosed((p) => {
@@ -2157,18 +2159,33 @@ export default function Dashboard({
   )
 
   /** Cột chồng Seller NMV theo tháng, tách theo kênh. */
-  const kenhMix = useMemo(() => {
+  /** Ba phòng chính chủ, theo đúng thứ tự dùng ở mọi nơi khác. */
+  const PHONG_NHA = ['Roborock Official VN', 'Roborock Máy lau sàn', 'Roborock Lifestyle VN']
+
+  /** NMV tách làm hai phần: tiền LGM và phần còn lại sau quảng cáo.
+   *  Hai phần cộng lại đúng bằng NMV, nên phần màu chiếm bao nhiêu của cột
+   *  CHÍNH LÀ ATR vẽ trên đường — hình và đường tự kiểm tra lẫn nhau. */
+  const kenhAtr = useMemo(() => {
     const kb = kenhNgay ? kenhBangNgay : kenhBang
-    const series = kb.ten.map((t, i) => ({
-      ten: t,
-      color: t.startsWith('Roborock') ? PALETTE[i % PALETTE.length] : GREY,
-    }))
-    const data = kb.thang.map((k) => ({
-      ky: kenhNgay ? k : `${k}-01`,
-      parts: kb.ten.map((t) => Number(kb.rows.get(t)?.get(k)?.nmv ?? 0)),
-    }))
-    return { series, data }
-  }, [kenhBang, kenhBangNgay, kenhNgay])
+    const lgmMap = kenhNgay ? lgmKenhNgay : lgmKenhThang
+    const phong = kenhRoom === 'all'
+      ? PHONG_NHA.filter((t) => kb.ten.includes(t))
+      : [kenhRoom]
+    return kb.thang.map((k) => {
+      let nmv = 0
+      let lgm = 0
+      for (const t of phong) {
+        nmv += Number(kb.rows.get(t)?.get(k)?.nmv ?? 0)
+        lgm += lgmMap.get(`${t}|${k}`) ?? 0
+      }
+      return {
+        ky: kenhNgay ? k : `${k}-01`,
+        nmv, lgm,
+        rest: Math.max(0, nmv - lgm),
+        atr: nmv > 0 && lgm > 0 ? Math.round((lgm / nmv) * 1000) / 10 : null,
+      }
+    })
+  }, [kenhBang, kenhBangNgay, kenhNgay, kenhRoom, lgmKenhThang, lgmKenhNgay])
 
   /* ---- hai biểu đồ dùng chung cho MoM Summary, Overview và Advertising ----
      Cùng một biểu đồ đặt ở ba chỗ thì phải là MỘT đoạn mã, không phải ba bản
@@ -3940,23 +3957,44 @@ export default function Dashboard({
                 </div>
               ) : (
                 <>
-                  <MultiStack
-                    data={kenhMix.data}
-                    series={kenhMix.series}
+                  <div className="chips" style={{ marginTop: 16 }}>
+                    <span className="chips-l">Room</span>
+                    {[{ id: 'all', ten: 'All three rooms' },
+                      ...PHONG_NHA.map((t) => ({ id: t, ten: shortRoom(t) }))].map((o) => (
+                      <button key={o.id} className={`chip ${kenhRoom === o.id ? 'on' : ''}`}
+                        onClick={() => setKenhRoom(o.id)}>{o.ten}</button>
+                    ))}
+                  </div>
+                  <ComboChart
+                    data={kenhAtr.map((r) => ({ ky: r.ky, a: r.lgm, b: r.rest }))}
+                    names={['LGM spend', 'Seller NMV after ads']}
+                    colors={['var(--c2)', 'var(--c1-soft)']}
+                    lines={[{
+                      ten: 'ATR on Seller NMV (right axis)',
+                      color: 'var(--bad)', truc: 'pct',
+                      vals: kenhAtr.map((r) => r.atr),
+                      showVals: true,
+                      fmtVal: (v) => `${v}%`,
+                    }]}
                     fmt={bn} label={kenhNgay ? ddmm : mmyy} unit="VND bn"
-                    tip={(d) => {
-                      const tot = d.parts.reduce((a, b2) => a + b2, 0)
+                    tip={(d, i2) => {
+                      const r = kenhAtr[i2]
+                      if (!r) return null
                       return (
                         <><b>{(kenhNgay ? ddmm : mmyy)(d.ky)}</b><br />
-                          {kenhMix.series.map((sv, i2) => (
-                            d.parts[i2] > 0
-                              ? <span key={sv.ten}>{sv.ten}: {bn(d.parts[i2])}<br /></span>
-                              : null
-                          ))}
-                          Total {bn(tot)}</>
+                          Seller NMV {bn(r.nmv)}<br />
+                          · LGM spend {bn(r.lgm)}<br />
+                          · left after ads {bn(r.rest)}<br />
+                          ATR {pct(r.atr)}</>
                       )
                     }}
                   />
+                  <p className="foot">
+                    Column height is Seller NMV &mdash; the revenue this room actually kept &mdash;
+                    split into what LIVE GMV Max cost and what was left after it. The two parts add
+                    up to Seller NMV, so the coloured share of each column <i>is</i> the ATR drawn on
+                    the red line.
+                  </p>
 
                   <div className="chips" style={{ marginTop: 18 }}>
                     <span className="chips-l">Metric</span>
