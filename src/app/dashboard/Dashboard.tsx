@@ -234,7 +234,7 @@ const SECTIONS = [
     groups: [
       { ten: '', subs: ['Key numbers', 'Daily overview'] },
       { ten: 'By room', subs: ['Sales', 'Traffic and engagement', 'Funnel', 'Seller NMV',
-        'SKU by room', 'Hours vs NMV'] },
+        'SKU by room', 'Hours vs NMV', 'Monthly rhythm'] },
       { ten: 'Day by day', subs: ['Room by day', 'Daily totals', 'Audience',
         'Conversion', 'Engagement vs CTR'] },
       { ten: 'Monthly', subs: ['By month, by room'] },
@@ -1258,6 +1258,8 @@ export default function Dashboard({
   /** Lọc đường cong theo mức chi LGM của ngày đó, để tách ảnh hưởng của
    *  tiền quảng cáo ra khỏi ảnh hưởng của số giờ live. */
   const [gioAds, setGioAds] = useState<'all' | 'low' | 'mid' | 'high'>('all')
+  /** Chỉ số ở đường cong nhịp live theo tháng. */
+  const [nhipMetric, setNhipMetric] = useState<'gio' | 'tren_gio' | 'ngay'>('gio')
 
   const toggleClosed = (c: string) =>
     setClosed((p) => {
@@ -2423,6 +2425,61 @@ export default function Dashboard({
     })
     return { nhan, series }
   }, [gioNmvNgay, kenhBangNgay, gioMetric, gioAds])
+
+  /** Nhịp live theo tháng: mỗi tháng phòng lên sóng bao nhiêu NGÀY, mỗi ngày
+   *  dài bao nhiêu, và một giờ đáng bao nhiêu tiền.
+   *
+   *  Tách "số ngày lên sóng" khỏi "độ dài mỗi ngày" là chủ ý: tổng giờ tháng
+   *  là tích của hai thứ đó, mà hai thứ đó chịu hai quyết định vận hành khác
+   *  nhau — bao nhiêu buổi, và mỗi buổi kéo bao lâu. */
+  const nhipThang = useMemo(() => {
+    const rooms = PHONG_NHA.filter((t) => kenhBangNgay.ten.includes(t))
+    // Khung giờ cho điểm ngọt: cùng cách chia với đường cong ở trên.
+    const canh = [0, 2, 4, 6, 8, 10, 12, 14, 16]
+    const oNao = (g: number) => {
+      for (let i = canh.length - 1; i >= 0; i--) if (g >= canh[i]) return i
+      return 0
+    }
+    const giua = (i: number) => (i === canh.length - 1 ? 18 : canh[i] + 1)
+
+    return rooms.map((ten, i) => {
+      const mine = gioNmvNgay.filter((x) => x.ten === ten)
+      const thang = new Map<string, { ngay: number; gio: number; nmv: number; phien: number }>()
+      for (const x of mine) {
+        const k = x.ngay.slice(0, 7)
+        const o = thang.get(k) ?? { ngay: 0, gio: 0, nmv: 0, phien: 0 }
+        o.ngay += 1; o.gio += x.gio; o.nmv += x.nmv; o.phien += x.phien
+        thang.set(k, o)
+      }
+      // Khung giờ/ngày cho tiền mỗi giờ cao nhất, chỉ xét khung có từ 5 ngày.
+      const gom = canh.map(() => ({ nmv: 0, gio: 0, n: 0 }))
+      for (const x of mine) {
+        const o = gom[oNao(x.gio)]
+        o.nmv += x.nmv; o.gio += x.gio; o.n += 1
+      }
+      let best = -1
+      let bestV = -1
+      gom.forEach((o, j) => {
+        if (o.n < 5 || o.gio <= 0) return
+        const v = o.nmv / o.gio
+        if (v > bestV) { bestV = v; best = j }
+      })
+      const ngayList = Array.from(thang.values()).map((o) => o.ngay).sort((m, n2) => m - n2)
+      const ngayTV = ngayList.length
+        ? ngayList[Math.floor((ngayList.length - 1) / 2)]
+        : 0
+      return {
+        ten, color: PALETTE[i % PALETTE.length], thang,
+        bestKhung: best >= 0
+          ? (best === canh.length - 1 ? '16h+' : `${canh[best]}–${canh[best + 1]}h`)
+          : null,
+        bestTrenGio: bestV > 0 ? bestV : null,
+        bestNgay: bestV > 0 ? gom[best].n : 0,
+        ngayTV,
+        goiY: best >= 0 && ngayTV > 0 ? giua(best) * ngayTV : null,
+      }
+    })
+  }, [gioNmvNgay, kenhBangNgay])
 
   /** Cùng phép ghép nhưng theo tháng, để có bảng NMV trên mỗi giờ live. */
   const gioNmvThang = useMemo(() => PHONG_NHA
@@ -4364,10 +4421,9 @@ export default function Dashboard({
             <section id="s5-8">
               <h2><span className="hno">5.8</span>Live hours vs Seller NMV</h2>
               <p className="sub">
-                One bubble is one day of one room. Across: hours streamed that day. Up: the revenue
-                the room kept from it. Size: net units. If hours are what produce revenue, the cloud
-                climbs left to right; where it flattens is the point past which another hour buys
-                nothing.
+                Days are grouped by how long the room streamed that day. The line shows what an
+                hour of streaming was worth inside each group, so it reads left to right as: does
+                the next hour still pay?
               </p>
               {!gioNmvNgay.length ? (
                 <div className="note warn">
@@ -4384,13 +4440,20 @@ export default function Dashboard({
                       ))}
                   </div>
                   <div className="chips" style={{ marginTop: 12, marginBottom: 6 }}>
-                    <span className="chips-l">LGM spend</span>
-                    {([['all', 'All levels'], ['low', 'Low third'],
-                      ['mid', 'Middle third'], ['high', 'Top third']] as const).map(([k, l]) => (
+                    <span className="chips-l">Ad budget</span>
+                    {([['all', 'All days'], ['low', 'Low-spend days'],
+                      ['mid', 'Mid-spend days'], ['high', 'High-spend days']] as const).map(([k, l]) => (
                       <button key={k} className={`chip ${gioAds === k ? 'on' : ''}`}
                         onClick={() => setGioAds(k)}>{l}</button>
                     ))}
                   </div>
+                  <p className="foot" style={{ marginTop: 0, marginBottom: 10 }}>
+                    Each room&rsquo;s own days are sorted by that day&rsquo;s LIVE GMV Max spend and
+                    cut into three equal groups &mdash; its cheapest third, middle third and
+                    priciest third. Thirds are cut per room because the rooms spend on very
+                    different scales. Picking one holds the budget roughly still, so the slope left
+                    inside it is the part hours contribute rather than money.
+                  </p>
                   <Curve
                     cols={gioCurve.nhan}
                     series={gioCurve.series}
@@ -4480,7 +4543,134 @@ export default function Dashboard({
             </section>
 
             <section id="s5-9">
-              <h2><span className="hno">5.9</span>Room by day</h2>
+              <h2><span className="hno">5.9</span>Monthly rhythm — how much should a room stream?</h2>
+              <p className="sub">
+                A month of streaming is two separate decisions: <b>how many days</b> the room goes
+                live, and <b>how long</b> each of those days runs. Total hours is just the two
+                multiplied, so looking only at the total hides which of the two actually moved.
+              </p>
+              {!nhipThang.length ? (
+                <div className="note warn">
+                  No month in the current filter has both live sessions and room-tagged orders.
+                </div>
+              ) : (
+                <>
+                  <div className="seg" style={{ marginTop: 14, marginBottom: 6 }}>
+                    {([['gio', 'Hours per month'], ['ngay', 'Days live per month'],
+                      ['tren_gio', 'NMV per live hour']] as const).map(([k, l]) => (
+                      <button key={k} className={nhipMetric === k ? 'on' : ''}
+                        onClick={() => setNhipMetric(k)}>{l}</button>
+                    ))}
+                  </div>
+                  <Curve
+                    cols={kenhBang.thang.map((k) => mmyy(`${k}-01`))}
+                    series={nhipThang.map((r) => ({
+                      ten: r.ten, color: r.color,
+                      vals: kenhBang.thang.map((k) => {
+                        const o = r.thang.get(k)
+                        if (!o) return null
+                        if (nhipMetric === 'gio') return o.gio
+                        if (nhipMetric === 'ngay') return o.ngay
+                        return o.gio > 0 ? o.nmv / o.gio / 1e6 : null
+                      }),
+                    }))}
+                    fmt={(v) => (nhipMetric === 'tren_gio' ? `${v.toFixed(1)} mn` : n0(v))}
+                    xNhan="Month"
+                    yNhan={nhipMetric === 'gio' ? 'hours streamed'
+                      : nhipMetric === 'ngay' ? 'days with a session' : 'VND mn per live hour'}
+                    tip={(i2) => {
+                      const k = kenhBang.thang[i2]
+                      return (
+                        <><b>{mmyy(`${k}-01`)}</b><br />
+                          {nhipThang.map((r) => {
+                            const o = r.thang.get(k)
+                            if (!o) return null
+                            return (
+                              <span key={r.ten}>
+                                {shortRoom(r.ten)}: {n0(o.ngay)} days · {n0(o.gio)}h ·{' '}
+                                {(o.gio / o.ngay).toFixed(1)}h per day ·{' '}
+                                {o.gio > 0 ? `${mn1(o.nmv / o.gio)} mn/h` : '—'}<br />
+                              </span>
+                            )
+                          })}</>
+                      )
+                    }}
+                  />
+
+                  <h3 style={{ marginTop: 26 }}>The month broken into its two parts</h3>
+                  <div className="tablewrap">
+                    <table>
+                      <thead><tr>
+                        <th>Room</th>
+                        {kenhBang.thang.map((k) => (
+                          <th className="n" key={k}>{mmyy(`${k}-01`)}
+                            <div className="uhint">days × h/day = h</div></th>
+                        ))}
+                        <th className="n">Best day length<div className="uhint">by NMV / hour</div></th>
+                        <th className="n">That implies<div className="uhint">hours / month</div></th>
+                      </tr></thead>
+                      <tbody>
+                        {nhipThang.map((r) => (
+                          <tr key={r.ten}>
+                            <td>
+                              <i className="sw" style={{ background: r.color, marginRight: 7 }} />
+                              {r.ten}
+                            </td>
+                            {kenhBang.thang.map((k) => {
+                              const o = r.thang.get(k)
+                              if (!o) return <td className="n muted" key={k}>—</td>
+                              return (
+                                <td className="n" key={k}>
+                                  {n0(o.ngay)}
+                                  <span className="muted" style={{ margin: '0 4px' }}>×</span>
+                                  {(o.gio / o.ngay).toFixed(1)}
+                                  <span className="muted" style={{ margin: '0 4px' }}>=</span>
+                                  <b>{n0(o.gio)}</b>
+                                </td>
+                              )
+                            })}
+                            <td className="n">
+                              {r.bestKhung ?? <span className="muted">—</span>}
+                              {r.bestTrenGio != null && (
+                                <div className="muted" style={{ fontSize: '.85em' }}>
+                                  {mn1(r.bestTrenGio)} mn/h · {r.bestNgay} days
+                                </div>
+                              )}
+                            </td>
+                            <td className="n">
+                              <b>{r.goiY != null ? `≈ ${n0(r.goiY)}h` : '—'}</b>
+                              {r.goiY != null && (
+                                <div className="muted" style={{ fontSize: '.85em' }}>
+                                  at {r.ngayTV} live days
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="foot">
+                    <b>Best day length</b> is the day-length band where an hour of that room earned
+                    the most, counting only bands with at least 5 days behind them. <b>That implies</b>
+                    {' '}multiplies the middle of that band by the room&rsquo;s usual number of live
+                    days per month.
+                  </p>
+                  <div className="note warn">
+                    <b>Read the last two columns as arithmetic, not as a target.</b> They restate what
+                    already happened over three months; they are not a forecast, and they cannot tell
+                    long days apart from big-budget days &mdash; use the ad-budget filter in 5.8 for
+                    that. A room whose best band is the longest one has simply not been run long
+                    enough to find its ceiling, which is a statement about the data, not about the
+                    room. Before changing a schedule on this, check it against the budget-held view
+                    above and run it as a real test for two weeks.
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section id="s5-10">
+              <h2><span className="hno">5.10</span>Room by day</h2>
               <p className="sub">
                 The same numbers as a grid. Reading along a row shows how steady a room is; reading
                 down a column shows which room carried a given day. Shading is relative to the
@@ -4508,8 +4698,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-10">
-              <h2><span className="hno">5.10</span>Daily totals · DoD</h2>
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>Daily totals · DoD</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -4558,8 +4748,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-11">
-              <h2><span className="hno">5.11</span>Audience per day</h2>
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>Audience per day</h2>
               <p className="sub">
                 Columns split each day&rsquo;s views into people seen for the first time that day
                 and the views they came back for. The red line is the engagement rate &mdash; likes,
@@ -4593,8 +4783,8 @@ export default function Dashboard({
               <p className="foot">Our own rooms only — creator rooms report no engagement data.</p>
             </section>
 
-            <section id="s5-12">
-              <h2><span className="hno">5.12</span>Traffic and conversion per day</h2>
+            <section id="s5-13">
+              <h2><span className="hno">5.13</span>Traffic and conversion per day</h2>
               <p className="sub">
                 Columns are live GMV split between our rooms and creator rooms. The red line is the
                 product click-through rate in our rooms &mdash; impressions that turned into a tap
@@ -4627,8 +4817,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-13">
-              <h2><span className="hno">5.13</span>Engagement vs CTR vs GMV</h2>
+            <section id="s5-14">
+              <h2><span className="hno">5.14</span>Engagement vs CTR vs GMV</h2>
               <p className="sub">
                 One bubble is one day of one room. Across: engagement rate. Up: product CTR. Size:
                 that day&rsquo;s GMV. If talking to the room is what drives people to tap the
@@ -4687,8 +4877,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-14">
-              <h2><span className="hno">5.14</span>By month, by room</h2>
+            <section id="s5-15">
+              <h2><span className="hno">5.15</span>By month, by room</h2>
               <p className="sub">
                 Same metric picker as the daily grid above, so a pattern spotted in one week can be
                 checked against the six-month trend without changing what is being measured.
@@ -4761,8 +4951,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-15">
-              <h2><span className="hno">5.15</span>Top sessions</h2>
+            <section id="s5-16">
+              <h2><span className="hno">5.16</span>Top sessions</h2>
               <p className="sub">
                 The {Math.min(40, liveTop.length)} biggest of {n0(liveTop.length)} sessions in the
                 selected months. Worth reading next to the title &mdash; the stream name is the only
@@ -4803,8 +4993,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-16">
-              <h2><span className="hno">5.16</span>Creator rooms</h2>
+            <section id="s5-17">
+              <h2><span className="hno">5.17</span>Creator rooms</h2>
               <p className="sub">
                 Rooms that sold our products but are not ours. They register themselves the first
                 time one appears, so the list grows on its own as the team works with new creators.
