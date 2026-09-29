@@ -234,7 +234,7 @@ const SECTIONS = [
     groups: [
       { ten: '', subs: ['Key numbers', 'Daily overview'] },
       { ten: 'By room', subs: ['Sales', 'Traffic and engagement', 'Funnel', 'Seller NMV',
-        'SKU by room'] },
+        'SKU by room', 'Hours vs NMV'] },
       { ten: 'Day by day', subs: ['Room by day', 'Daily totals', 'Audience',
         'Conversion', 'Engagement vs CTR'] },
       { ten: 'Monthly', subs: ['By month, by room'] },
@@ -2256,6 +2256,49 @@ export default function Dashboard({
     [skuMetric],
   )
 
+  /** Giờ live đặt cạnh doanh thu THẬT của chính phòng đó.
+   *
+   *  Hai nguồn khác nhau ghép lại: số giờ lấy từ bảng phiên live, NMV lấy từ
+   *  đơn hàng có gắn phòng. Chỉ giữ những ngày có cả hai — ngày phòng có live
+   *  nhưng tag phòng chưa phủ thì bỏ, không vẽ thành "live mà không ra đồng
+   *  nào". */
+  const gioNmvNgay = useMemo(() => {
+    const out: {
+      key: string; ten: string; ngay: string; gio: number; nmv: number
+      pcs: number; phien: number; color: string
+    }[] = []
+    PHONG_NHA.forEach((ten, i) => {
+      if (!kenhBangNgay.ten.includes(ten)) return
+      for (const d of kenhBangNgay.thang) {
+        const live = liveGrid.ngay.get(ten)?.get(d)
+        const don = kenhBangNgay.rows.get(ten)?.get(d)
+        if (!live || live.gio <= 0) continue
+        out.push({
+          key: `${ten}-${d}`, ten, ngay: d,
+          gio: live.gio,
+          nmv: Number(don?.nmv ?? 0),
+          pcs: Number(don?.sl_chua_huy ?? 0),
+          phien: live.phien,
+          color: PALETTE[i % PALETTE.length],
+        })
+      }
+    })
+    return out
+  }, [kenhBangNgay, liveGrid])
+
+  /** Cùng phép ghép nhưng theo tháng, để có bảng NMV trên mỗi giờ live. */
+  const gioNmvThang = useMemo(() => PHONG_NHA
+    .filter((t) => kenhBang.ten.includes(t))
+    .map((ten, i) => ({
+      ten, color: PALETTE[i % PALETTE.length],
+      o: kenhBang.thang.map((k) => {
+        const gio = liveGrid.thang.get(ten)?.get(k)?.gio ?? 0
+        const nmv = Number(kenhBang.rows.get(ten)?.get(k)?.nmv ?? 0)
+        const phien = liveGrid.thang.get(ten)?.get(k)?.phien ?? 0
+        return { ky: k, gio, nmv, phien, tren_gio: gio > 0 ? nmv / gio : 0 }
+      }),
+    })), [kenhBang, liveGrid])
+
   /* ---- hai biểu đồ dùng chung cho MoM Summary, Overview và Advertising ----
      Cùng một biểu đồ đặt ở ba chỗ thì phải là MỘT đoạn mã, không phải ba bản
      sao — sửa một lần là cả ba đổi theo, không có chuyện lệch nhau. Cả hai
@@ -4181,7 +4224,89 @@ export default function Dashboard({
             </section>
 
             <section id="s5-8">
-              <h2><span className="hno">5.8</span>Room by day</h2>
+              <h2><span className="hno">5.8</span>Live hours vs Seller NMV</h2>
+              <p className="sub">
+                One bubble is one day of one room. Across: hours streamed that day. Up: the revenue
+                the room kept from it. Size: net units. If hours are what produce revenue, the cloud
+                climbs left to right; where it flattens is the point past which another hour buys
+                nothing.
+              </p>
+              {!gioNmvNgay.length ? (
+                <div className="note warn">
+                  No day in the selected months has both a live session and room-tagged orders.
+                  Usable coverage starts in July 2026.
+                </div>
+              ) : (
+                <>
+                  <Bubbles
+                    pts={gioNmvNgay.map((b) => ({
+                      key: b.key, x: b.gio, y: b.nmv, v: Math.max(b.pcs, 1), color: b.color,
+                      body: (
+                        <><b>{b.ten}</b> · {ddmm(b.ngay)}<br />
+                          {b.gio.toFixed(1)} hours · {b.phien} session{b.phien === 1 ? '' : 's'}<br />
+                          Seller NMV {bn(b.nmv)} bn<br />
+                          {n0(b.pcs)} net pcs<br />
+                          {b.gio > 0 ? `${mn1(b.nmv / b.gio)} mn per hour` : ''}</>
+                      ),
+                    }))}
+                    series={PHONG_NHA.filter((t) => kenhBangNgay.ten.includes(t))
+                      .map((t, i2) => ({ ten: t, color: PALETTE[i2 % PALETTE.length] }))}
+                    xNhan="Hours streamed that day"
+                    yNhan="Seller NMV that day"
+                    fmtX={(v) => `${v.toFixed(1)}h`}
+                    fmtY={(v) => `${bn(v)} bn`}
+                  />
+
+                  <h3 style={{ marginTop: 26 }}>Hours, revenue and revenue per hour</h3>
+                  <div className="tablewrap">
+                    <table>
+                      <thead><tr>
+                        <th>Room</th>
+                        {kenhBang.thang.map((k) => (
+                          <th className="n" key={k}>{mmyy(`${k}-01`)}
+                            <div className="uhint">hours · bn · mn/h</div></th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {gioNmvThang.map((r) => (
+                          <tr key={r.ten}>
+                            <td>
+                              <i className="sw" style={{ background: r.color, marginRight: 7 }} />
+                              {r.ten}
+                            </td>
+                            {r.o.map((x) => (
+                              <td className="n" key={x.ky}>
+                                {x.gio > 0 ? n0(x.gio) : <span className="muted">—</span>}
+                                <span className="muted" style={{ margin: '0 5px' }}>·</span>
+                                {bn(x.nmv)}
+                                <span className="muted" style={{ margin: '0 5px' }}>·</span>
+                                <b>{x.gio > 0 ? mn1(x.tren_gio) : '—'}</b>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="foot">
+                    Each cell is hours streamed · Seller NMV in VND bn · <b>NMV per live hour in VND
+                    mn</b>. The last one is the number to read across rooms: it says what an hour of
+                    that room is worth, independent of how many hours it ran. Hours come from the
+                    live session table, revenue from room-tagged order lines, so only months with
+                    usable tagging appear{' '}
+                    ({kenhBang.thang.map((k) => mmyy(`${k}-01`)).join(' · ')}).
+                  </p>
+                  <div className="note warn">
+                    An order is tagged to the room, not to the hour, so a day with a late session can
+                    book revenue the next morning. Read a single bubble as a rough pairing; read the
+                    cloud, and the per-hour column, as the real signal.
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section id="s5-9">
+              <h2><span className="hno">5.9</span>Room by day</h2>
               <p className="sub">
                 The same numbers as a grid. Reading along a row shows how steady a room is; reading
                 down a column shows which room carried a given day. Shading is relative to the
@@ -4209,8 +4334,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-9">
-              <h2><span className="hno">5.9</span>Daily totals · DoD</h2>
+            <section id="s5-10">
+              <h2><span className="hno">5.10</span>Daily totals · DoD</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -4259,8 +4384,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-10">
-              <h2><span className="hno">5.10</span>Audience per day</h2>
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>Audience per day</h2>
               <p className="sub">
                 Columns split each day&rsquo;s views into people seen for the first time that day
                 and the views they came back for. The red line is the engagement rate &mdash; likes,
@@ -4294,8 +4419,8 @@ export default function Dashboard({
               <p className="foot">Our own rooms only — creator rooms report no engagement data.</p>
             </section>
 
-            <section id="s5-11">
-              <h2><span className="hno">5.11</span>Traffic and conversion per day</h2>
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>Traffic and conversion per day</h2>
               <p className="sub">
                 Columns are live GMV split between our rooms and creator rooms. The red line is the
                 product click-through rate in our rooms &mdash; impressions that turned into a tap
@@ -4328,8 +4453,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-12">
-              <h2><span className="hno">5.12</span>Engagement vs CTR vs GMV</h2>
+            <section id="s5-13">
+              <h2><span className="hno">5.13</span>Engagement vs CTR vs GMV</h2>
               <p className="sub">
                 One bubble is one day of one room. Across: engagement rate. Up: product CTR. Size:
                 that day&rsquo;s GMV. If talking to the room is what drives people to tap the
@@ -4387,8 +4512,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-13">
-              <h2><span className="hno">5.13</span>By month, by room</h2>
+            <section id="s5-14">
+              <h2><span className="hno">5.14</span>By month, by room</h2>
               <p className="sub">
                 Same metric picker as the daily grid above, so a pattern spotted in one week can be
                 checked against the six-month trend without changing what is being measured.
@@ -4461,8 +4586,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-14">
-              <h2><span className="hno">5.14</span>Top sessions</h2>
+            <section id="s5-15">
+              <h2><span className="hno">5.15</span>Top sessions</h2>
               <p className="sub">
                 The {Math.min(40, liveTop.length)} biggest of {n0(liveTop.length)} sessions in the
                 selected months. Worth reading next to the title &mdash; the stream name is the only
@@ -4503,8 +4628,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-15">
-              <h2><span className="hno">5.15</span>Creator rooms</h2>
+            <section id="s5-16">
+              <h2><span className="hno">5.16</span>Creator rooms</h2>
               <p className="sub">
                 Rooms that sold our products but are not ours. They register themselves the first
                 time one appears, so the list grows on its own as the team works with new creators.
