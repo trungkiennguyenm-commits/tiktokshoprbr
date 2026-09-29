@@ -870,13 +870,17 @@ function LiveHead({ rows, series, fmtCot, fmtDuong, fmtAds }: {
  * còn lại vào một góc; những chấm vượt ngưỡng được ghim vào mép và viền đậm
  * lên để biết là đang bị cắt, chứ không im lặng giấu đi.
  */
-function Bubbles({ pts, series, xNhan, yNhan, fmtX, fmtY }: {
+function Bubbles({ pts, series, xNhan, yNhan, fmtX, fmtY, kichThuoc }: {
   pts: { key: string; x: number; y: number; v: number; color: string; body: React.ReactNode }[]
   series: { ten: string; color: string }[]
   xNhan: string
   yNhan: string
   fmtX: (v: number) => string
   fmtY: (v: number) => string
+  /** Kích thước bong bóng đang biểu thị cái gì — in vào chú giải. Bắt buộc
+   *  truyền: trước đây ghi cứng "GMV" nên mục 5.8 (kích thước là net pcs)
+   *  chú thích sai suốt. */
+  kichThuoc: string
 }) {
   const [t, setT] = useState<{ on: boolean; x: number; y: number; body: React.ReactNode }>({
     on: false, x: 0, y: 0, body: null,
@@ -898,7 +902,7 @@ function Bubbles({ pts, series, xNhan, yNhan, fmtX, fmtY }: {
         {series.map((sv) => (
           <span key={sv.ten}><i className="sw" style={{ background: sv.color }} />{sv.ten}</span>
         ))}
-        <span className="unit-inline">bubble size = GMV</span>
+        <span className="unit-inline">bubble size = {kichThuoc}</span>
       </div>
       <div className="bub">
         <div className="bub-yl">{yNhan}</div>
@@ -4253,6 +4257,7 @@ export default function Dashboard({
                       .map((t, i2) => ({ ten: t, color: PALETTE[i2 % PALETTE.length] }))}
                     xNhan="Hours streamed that day"
                     yNhan="Seller NMV that day"
+                    kichThuoc="net pcs"
                     fmtX={(v) => `${v.toFixed(1)}h`}
                     fmtY={(v) => `${bn(v)} bn`}
                   />
@@ -4476,6 +4481,7 @@ export default function Dashboard({
                 }))}
                 xNhan="Engagement rate — (likes + comments + shares) ÷ views"
                 yNhan="Product CTR — clicks ÷ impressions"
+                kichThuoc="live GMV"
                 fmtX={(v) => `${Math.round(v)}%`}
                 fmtY={(v) => `${v.toFixed(2)}%`}
               />
