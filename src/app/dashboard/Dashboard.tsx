@@ -2313,6 +2313,10 @@ export default function Dashboard({
    *  ATR ở phần 5.3 tính trên GMV gộp TikTok báo cho phiên live; cái này tính
    *  trên Seller NMV của chính shop nên luôn cao hơn, và nó mới là con số
    *  đúng nghĩa "quảng cáo ăn bao nhiêu phần doanh thu". */
+  /** Bảng LGM gọi nhóm creator là 'KOC', bảng kênh gọi là 'Creator live'.
+   *  Dịch một chỗ ở đây thay vì nhớ quy đổi ở mọi nơi tra cứu. */
+  const khoaLgm = (ten: string) => (ten === 'Creator live' ? 'KOC' : ten)
+
   const lgmKenhThang = useMemo(() => {
     const m = new Map<string, number>()
     for (const r of liveLgm) {
@@ -2365,8 +2369,8 @@ export default function Dashboard({
     { id: 'atr' as const, ten: 'ATR on Seller NMV', don_vi: '%', xau_cao: true,
       lay: (r: KenhMonth | KenhDay) => {
         const khoa = 'thang' in r
-          ? `${r.kenh}|${String(r.thang).slice(0, 7)}`
-          : `${r.kenh}|${String((r as KenhDay).ngay)}`
+          ? `${khoaLgm(r.kenh)}|${String(r.thang).slice(0, 7)}`
+          : `${khoaLgm(r.kenh)}|${String((r as KenhDay).ngay)}`
         const lgm = ('thang' in r ? lgmKenhThang : lgmKenhNgay).get(khoa) ?? 0
         const nmv = Number(r.nmv || 0)
         return lgm > 0 && nmv > 0 ? Math.round((lgm / nmv) * 1000) / 10 : null
@@ -3099,6 +3103,77 @@ export default function Dashboard({
                       </tbody>
                     </table>
                   </div>
+
+                  <h3 style={{ marginTop: 26 }}>LIVE GMV Max spend and ATR</h3>
+                  <div className="tablewrap">
+                    <table>
+                      <thead><tr>
+                        <th>Channel</th>
+                        {kenhBang.thang.map((k) => (
+                          <th className="n" key={k}>{mmyy(`${k}-01`)}
+                            <div className="uhint">LGM mn · ATR</div></th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {kenhBang.ten.map((ten) => {
+                          // Chỉ ba phòng nhà và KOC mới có chi tiêu LGM. "Ngoài live"
+                          // và "Live (không rõ phòng)" không gắn được ngân sách nào,
+                          // để trống thay vì in 0% — 0% trông như quảng cáo miễn phí.
+                          const coAds = kenhBang.thang.some(
+                            (k) => (lgmKenhThang.get(`${khoaLgm(ten)}|${k}`) ?? 0) > 0)
+                          return (
+                            <tr key={ten}>
+                              <td><span className={ten.startsWith('Roborock') ? '' : 'muted'}>{ten}</span></td>
+                              {kenhBang.thang.map((k) => {
+                                const lgm = lgmKenhThang.get(`${khoaLgm(ten)}|${k}`) ?? 0
+                                const nmv = Number(kenhBang.rows.get(ten)?.get(k)?.nmv ?? 0)
+                                if (!coAds) return <td className="n muted" key={k}>—</td>
+                                return (
+                                  <td className="n" key={k}>
+                                    {lgm > 0 ? mn1(lgm) : <span className="muted">—</span>}
+                                    <span className="muted" style={{ margin: '0 5px' }}>·</span>
+                                    <b style={{
+                                      color: lgm > 0 && nmv > 0 && p1(lgm, nmv) > 25
+                                        ? 'var(--bad)' : 'inherit',
+                                    }}>
+                                      {lgm > 0 && nmv > 0 ? pct(p1(lgm, nmv)) : '—'}
+                                    </b>
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          )
+                        })}
+                        <tr className="tot">
+                          <td><b>All live channels</b></td>
+                          {kenhBang.thang.map((k) => {
+                            let lgm = 0
+                            let nmv = 0
+                            for (const ten of kenhBang.ten) {
+                              const x = lgmKenhThang.get(`${khoaLgm(ten)}|${k}`) ?? 0
+                              if (x <= 0) continue
+                              lgm += x
+                              nmv += Number(kenhBang.rows.get(ten)?.get(k)?.nmv ?? 0)
+                            }
+                            return (
+                              <td className="n" key={k}>
+                                {mn1(lgm)}
+                                <span className="muted" style={{ margin: '0 5px' }}>·</span>
+                                <b>{nmv > 0 ? pct(p1(lgm, nmv)) : '—'}</b>
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="foot">
+                    <b>ATR</b> here is that channel&rsquo;s LIVE GMV Max spend divided by the revenue
+                    that channel actually kept, so it is ads measured against real money rather than
+                    against gross session GMV. Red above 25%. The total row covers only the channels
+                    that carry ad spend &mdash; &ldquo;Ngoài live&rdquo; has no live budget to
+                    attribute, so it is left blank rather than shown as 0%.
+                  </p>
 
                   <div className="note warn">
                     <b>Only months where most order lines carry a room tag are shown.</b> TikTok
