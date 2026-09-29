@@ -856,6 +856,85 @@ function LiveHead({ rows, series, fmtCot, fmtDuong, fmtAds }: {
   )
 }
 
+/* ------------------------- đường cong nhiều chuỗi ------------------------- */
+
+/**
+ * Nhiều đường trên một trục, trục ngang là các nhóm rời rạc.
+ *
+ * Dùng cho đường cong phản hồi: nhóm ngày theo số giờ live rồi xem mỗi giờ
+ * mang về bao nhiêu ở từng mức. Chỗ đường gãy xuống là chỗ thêm giờ không
+ * còn đáng — thứ mà biểu đồ phân tán không chỉ ra được.
+ *
+ * Điểm có mẫu quá mỏng vẽ rỗng ruột thay vì tô đặc, để không ai đọc một
+ * nhóm có 2 ngày như một nhóm có 30 ngày.
+ */
+function Curve({ cols, series, fmt, xNhan, yNhan, tip }: {
+  cols: string[]
+  series: { ten: string; color: string; vals: (number | null)[]; n?: number[] }[]
+  fmt: (v: number) => string
+  xNhan: string
+  yNhan: string
+  tip?: (i: number) => React.ReactNode
+}) {
+  const [t, setT] = useState<{ on: boolean; x: number; y: number; body: React.ReactNode }>({
+    on: false, x: 0, y: 0, body: null,
+  })
+  const all = series.flatMap((sr) => sr.vals).filter((v): v is number => v != null)
+  if (!all.length || !cols.length) return null
+  const max = Math.max(...all) * 1.08
+  const n = cols.length
+  const x = (i: number) => ((i + 0.5) / n) * 100
+  const y = (v: number) => 100 - (v / max) * 100
+
+  return (
+    <>
+      <div className="legend">
+        {series.map((sr) => (
+          <span key={sr.ten}><i className="swl" style={{ background: sr.color }} />{sr.ten}</span>
+        ))}
+        <span className="unit-inline">{yNhan}</span>
+      </div>
+      <div className="cur">
+        <div className="cur-plot">
+          <span className="cur-l cur-t">{fmt(max)}</span>
+          <span className="cur-l cur-m">{fmt(max / 2)}</span>
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="cur-svg">
+            {series.map((sr) => (
+              <polyline key={sr.ten}
+                points={sr.vals.map((v, i) => (v == null ? null : `${x(i)},${y(v)}`))
+                  .filter(Boolean).join(' ')}
+                fill="none" stroke={sr.color} strokeWidth={2}
+                vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+            ))}
+          </svg>
+          <div className="cur-dots">
+            {series.map((sr) => sr.vals.map((v, i) => (v == null ? null : (
+              <span key={`${sr.ten}-${i}`} className="cur-d"
+                style={{
+                  left: `${x(i)}%`, bottom: `${100 - y(v)}%`,
+                  background: (sr.n?.[i] ?? 99) < 5 ? 'var(--surface)' : sr.color,
+                  borderColor: sr.color,
+                }} />
+            ))))}
+          </div>
+          <div className="cur-hit">
+            {cols.map((c, i) => (
+              <div key={c}
+                onMouseMove={(e) => setT({
+                  on: true, x: e.clientX + 14, y: e.clientY - 8, body: tip ? tip(i) : c,
+                })}
+                onMouseLeave={() => setT((q) => ({ ...q, on: false }))} />
+            ))}
+          </div>
+        </div>
+        <div className="cur-x">{cols.map((c) => <div key={c}>{c}</div>)}</div>
+        <div className="cur-xl">{xNhan}</div>
+      </div>
+      {t.on && <div className="tip" style={{ left: t.x, top: t.y }}>{t.body}</div>}
+    </>
+  )
+}
+
 /* ----------------------------- bubble scatter ----------------------------- */
 
 /**
@@ -1174,6 +1253,11 @@ export default function Dashboard({
   const [kenhRoom, setKenhRoom] = useState<string>('all')
   /** Chỉ số ở bảng sản phẩm × phòng. */
   const [skuMetric, setSkuMetric] = useState<'nmv' | 'pcs' | 'cancel' | 'mix'>('nmv')
+  /** Đường cong giờ live: xem tiền mỗi giờ hay tiền mỗi ngày. */
+  const [gioMetric, setGioMetric] = useState<'per_hour' | 'per_day'>('per_hour')
+  /** Lọc đường cong theo mức chi LGM của ngày đó, để tách ảnh hưởng của
+   *  tiền quảng cáo ra khỏi ảnh hưởng của số giờ live. */
+  const [gioAds, setGioAds] = useState<'all' | 'low' | 'mid' | 'high'>('all')
 
   const toggleClosed = (c: string) =>
     setClosed((p) => {
@@ -2269,7 +2353,7 @@ export default function Dashboard({
   const gioNmvNgay = useMemo(() => {
     const out: {
       key: string; ten: string; ngay: string; gio: number; nmv: number
-      pcs: number; phien: number; color: string
+      pcs: number; phien: number; lgm: number; color: string
     }[] = []
     PHONG_NHA.forEach((ten, i) => {
       if (!kenhBangNgay.ten.includes(ten)) return
@@ -2283,12 +2367,62 @@ export default function Dashboard({
           nmv: Number(don?.nmv ?? 0),
           pcs: Number(don?.sl_chua_huy ?? 0),
           phien: live.phien,
+          lgm: lgmKenhNgay.get(`${ten}|${d}`) ?? 0,
           color: PALETTE[i % PALETTE.length],
         })
       }
     })
     return out
-  }, [kenhBangNgay, liveGrid])
+  }, [kenhBangNgay, liveGrid, lgmKenhNgay])
+
+  /** Đường cong phản hồi: gom ngày theo số giờ live rồi tính tiền trên mỗi
+   *  giờ ở từng mức. Đây mới là thứ chỉ ra điểm gãy — phân tán từng ngày
+   *  nhiễu quá, không đọc ra xu hướng.
+   *
+   *  Tiền mỗi giờ tính bằng TỔNG NMV chia TỔNG GIỜ của nhóm, không phải trung
+   *  bình của các tỷ lệ ngày: một ngày live 1 tiếng bán được 1 máy sẽ kéo lệch
+   *  trung bình cộng rất mạnh. */
+  const gioCurve = useMemo(() => {
+    const canh = [0, 2, 4, 6, 8, 10, 12, 14, 16]
+    const nhan = canh.map((c, i) =>
+      (i === canh.length - 1 ? `${c}h+` : `${c}–${canh[i + 1]}h`))
+    const oNao = (g: number) => {
+      for (let i = canh.length - 1; i >= 0; i--) if (g >= canh[i]) return i
+      return 0
+    }
+    const rooms = PHONG_NHA.filter((t) => kenhBangNgay.ten.includes(t))
+    const series = rooms.map((ten, i) => {
+      // Ngưỡng chi chia theo TỪNG PHÒNG: ba phòng tiêu ở ba mức rất khác nhau,
+      // lấy chung một ngưỡng thì "chi cao" sẽ toàn là Official.
+      const chi = gioNmvNgay.filter((x) => x.ten === ten).map((x) => x.lgm).sort((m, n2) => m - n2)
+      const q = (p2: number) => (chi.length ? chi[Math.floor((chi.length - 1) * p2)] : 0)
+      const t1 = q(1 / 3)
+      const t2 = q(2 / 3)
+      const hop = (v: number) =>
+        gioAds === 'all' ? true
+          : gioAds === 'low' ? v <= t1
+            : gioAds === 'mid' ? v > t1 && v <= t2
+              : v > t2
+      const gom = canh.map(() => ({ nmv: 0, gio: 0, ngay: 0, lgm: 0 }))
+      for (const b2 of gioNmvNgay) {
+        if (b2.ten !== ten) continue
+        if (!hop(b2.lgm)) continue
+        const o = gom[oNao(b2.gio)]
+        o.nmv += b2.nmv; o.gio += b2.gio; o.ngay += 1; o.lgm += b2.lgm
+      }
+      return {
+        ten, color: PALETTE[i % PALETTE.length], gom,
+        vals: gom.map((o) => {
+          if (o.ngay < 2) return null
+          return gioMetric === 'per_hour'
+            ? (o.gio > 0 ? o.nmv / o.gio : null)
+            : o.nmv / o.ngay
+        }),
+        n: gom.map((o) => o.ngay),
+      }
+    })
+    return { nhan, series }
+  }, [gioNmvNgay, kenhBangNgay, gioMetric, gioAds])
 
   /** Cùng phép ghép nhưng theo tháng, để có bảng NMV trên mỗi giờ live. */
   const gioNmvThang = useMemo(() => PHONG_NHA
@@ -4242,25 +4376,60 @@ export default function Dashboard({
                 </div>
               ) : (
                 <>
-                  <Bubbles
-                    pts={gioNmvNgay.map((b) => ({
-                      key: b.key, x: b.gio, y: b.nmv, v: Math.max(b.pcs, 1), color: b.color,
-                      body: (
-                        <><b>{b.ten}</b> · {ddmm(b.ngay)}<br />
-                          {b.gio.toFixed(1)} hours · {b.phien} session{b.phien === 1 ? '' : 's'}<br />
-                          Seller NMV {bn(b.nmv)} bn<br />
-                          {n0(b.pcs)} net pcs<br />
-                          {b.gio > 0 ? `${mn1(b.nmv / b.gio)} mn per hour` : ''}</>
-                      ),
-                    }))}
-                    series={PHONG_NHA.filter((t) => kenhBangNgay.ten.includes(t))
-                      .map((t, i2) => ({ ten: t, color: PALETTE[i2 % PALETTE.length] }))}
-                    xNhan="Hours streamed that day"
-                    yNhan="Seller NMV that day"
-                    kichThuoc="net pcs"
-                    fmtX={(v) => `${v.toFixed(1)}h`}
-                    fmtY={(v) => `${bn(v)} bn`}
+                  <div className="seg" style={{ marginBottom: 4 }}>
+                    {([['per_hour', 'NMV per live hour'], ['per_day', 'NMV per live day']] as const)
+                      .map(([k, l]) => (
+                        <button key={k} className={gioMetric === k ? 'on' : ''}
+                          onClick={() => setGioMetric(k)}>{l}</button>
+                      ))}
+                  </div>
+                  <div className="chips" style={{ marginTop: 12, marginBottom: 6 }}>
+                    <span className="chips-l">LGM spend</span>
+                    {([['all', 'All levels'], ['low', 'Low third'],
+                      ['mid', 'Middle third'], ['high', 'Top third']] as const).map(([k, l]) => (
+                      <button key={k} className={`chip ${gioAds === k ? 'on' : ''}`}
+                        onClick={() => setGioAds(k)}>{l}</button>
+                    ))}
+                  </div>
+                  <Curve
+                    cols={gioCurve.nhan}
+                    series={gioCurve.series}
+                    fmt={(v) => `${mn1(v)} mn`}
+                    xNhan="Hours streamed in the day"
+                    yNhan={gioMetric === 'per_hour' ? 'VND mn per live hour' : 'VND mn per live day'}
+                    tip={(i2) => (
+                      <><b>{gioCurve.nhan[i2]}</b><br />
+                        {gioCurve.series.map((sr) => {
+                          const o = sr.gom[i2]
+                          if (!o || o.ngay === 0) return null
+                          return (
+                            <span key={sr.ten}>
+                              {shortRoom(sr.ten)}: {o.ngay} day{o.ngay === 1 ? '' : 's'} ·{' '}
+                              {o.gio > 0 ? `${mn1(o.nmv / o.gio)} mn/h` : '—'} ·{' '}
+                              {mn1(o.nmv / o.ngay)} mn/day ·{' '}
+                              LGM {mn1(o.lgm / o.ngay)} mn/day<br />
+                            </span>
+                          )
+                        })}</>
+                    )}
                   />
+                  <p className="foot">
+                    Days are grouped by how long the room streamed, then each group&rsquo;s total
+                    revenue is divided by its total hours &mdash; not by averaging the daily ratios,
+                    which one short lucky day would distort. <b>Where a line turns down is where an
+                    extra hour stops paying for itself.</b> A hollow dot marks a group with fewer
+                    than 5 days; groups under 2 days are not drawn at all.
+                  </p>
+                  <div className="note warn">
+                    <b>Hours and ad money move together, so the plain curve cannot separate them.</b>{' '}
+                    A long day is usually also a mega-sale day with a big budget behind it, which is
+                    why the line keeps climbing. The spend filter splits each room&rsquo;s days into
+                    its own low, middle and top third by LIVE GMV Max spend &mdash; thirds are cut
+                    per room because the three rooms spend on very different scales. Pick one third
+                    and the budget is roughly held still: whatever slope survives inside it is the
+                    part that hours actually contribute. Even then this is observation, not an
+                    experiment; the only clean test is to hold the budget and change the schedule.
+                  </div>
 
                   <h3 style={{ marginTop: 26 }}>Hours, revenue and revenue per hour</h3>
                   <div className="tablewrap">
@@ -5774,6 +5943,26 @@ const CSS = `
 .wrap .lh-x{position:static;display:flex;gap:1px;padding:5px 46px 0;height:auto}
 .wrap .lh-x .lh-col{height:auto;font-size:10.5px;color:var(--muted);white-space:nowrap;
   font-variant-numeric:tabular-nums;align-items:center}
+.wrap .cur{margin-top:14px}
+.wrap .cur-plot{position:relative;height:300px;padding:0 52px;
+  border-left:1px solid var(--line-s);border-bottom:1px solid var(--line-s);
+  background:linear-gradient(var(--line),var(--line)) 0 50%/100% 1px no-repeat}
+.wrap .cur-svg{position:absolute;inset:0 52px;width:calc(100% - 104px);height:100%;overflow:visible}
+.wrap .cur-dots{position:absolute;inset:0 52px;width:calc(100% - 104px);height:100%;
+  pointer-events:none}
+.wrap .cur-d{position:absolute;width:8px;height:8px;margin:0 0 -4px -4px;border-radius:50%;
+  border:2px solid}
+.wrap .cur-hit{position:absolute;inset:0 52px;width:calc(100% - 104px);height:100%;display:flex}
+.wrap .cur-hit>div{flex:1}
+.wrap .cur-l{position:absolute;left:5px;font-size:10.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.wrap .cur-t{top:-2px}
+.wrap .cur-m{top:calc(50% - 7px)}
+.wrap .cur-x{display:flex;padding:5px 52px 0}
+.wrap .cur-x>div{flex:1;text-align:center;font-size:10.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.wrap .cur-xl{text-align:center;font-size:11px;color:var(--muted);padding-top:4px;
+  letter-spacing:.04em}
 .wrap .bub{display:flex;gap:8px;margin-top:16px}
 .wrap .bub-yl{writing-mode:vertical-rl;transform:rotate(180deg);font-size:11px;
   color:var(--muted);text-align:center;padding:6px 0;letter-spacing:.04em}
