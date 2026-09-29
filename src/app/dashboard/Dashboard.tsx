@@ -2495,14 +2495,20 @@ export default function Dashboard({
             : gioAds === 'mid' ? v > t1 && v <= t2
               : v > t2
       const gom = canh.map(() => ({ nmv: 0, gio: 0, ngay: 0, lgm: 0 }))
+      let chiTong = 0
+      let chiNgay = 0
       for (const b2 of gioNmvNgay) {
         if (b2.ten !== ten) continue
         if (!hop(b2.lgm)) continue
         const o = gom[oNao(b2.gio)]
         o.nmv += b2.nmv; o.gio += b2.gio; o.ngay += 1; o.lgm += b2.lgm
+        chiTong += b2.lgm; chiNgay += 1
       }
       return {
         ten, color: PALETTE[i % PALETTE.length], gom,
+        // Ngưỡng cắt và mức chi trung bình của đúng nhóm đang chọn, để chú
+        // thích bên dưới nói được "một ngày ở nhóm này tiêu khoảng bao nhiêu".
+        t1, t2, chiTB: chiNgay > 0 ? chiTong / chiNgay : 0, chiNgay,
         vals: gom.map((o) => {
           if (o.ngay < 2) return null
           return gioMetric === 'per_hour'
@@ -4536,12 +4542,41 @@ export default function Dashboard({
                         onClick={() => setGioAds(k)}>{l}</button>
                     ))}
                   </div>
+                  <div className="tablewrap" style={{ marginTop: 4, marginBottom: 10 }}>
+                    <table className="mini">
+                      <thead><tr>
+                        <th>Room</th>
+                        <th className="n">Low-spend days<div className="uhint">LGM mn / day</div></th>
+                        <th className="n">Mid-spend days<div className="uhint">LGM mn / day</div></th>
+                        <th className="n">High-spend days<div className="uhint">LGM mn / day</div></th>
+                        <th className="n">In this view<div className="uhint">avg · days</div></th>
+                      </tr></thead>
+                      <tbody>
+                        {gioCurve.series.map((r) => (
+                          <tr key={r.ten}>
+                            <td>
+                              <i className="sw" style={{ background: r.color, marginRight: 7 }} />
+                              {shortRoom(r.ten)}
+                            </td>
+                            <td className="n muted">up to {mn1(r.t1)}</td>
+                            <td className="n muted">{mn1(r.t1)} – {mn1(r.t2)}</td>
+                            <td className="n muted">above {mn1(r.t2)}</td>
+                            <td className="n">
+                              <b>{mn1(r.chiTB)}</b>
+                              <span className="muted"> · {r.chiNgay} days</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                   <p className="foot" style={{ marginTop: 0, marginBottom: 10 }}>
                     Each room&rsquo;s own days are sorted by that day&rsquo;s LIVE GMV Max spend and
-                    cut into three equal groups &mdash; its cheapest third, middle third and
-                    priciest third. Thirds are cut per room because the rooms spend on very
-                    different scales. Picking one holds the budget roughly still, so the slope left
-                    inside it is the part hours contribute rather than money.
+                    cut into three equal groups. Thirds are cut per room because the rooms spend on
+                    very different scales &mdash; a cheap day for Official VN would be an expensive
+                    one for Lifestyle. The last column is what a day in the current selection
+                    actually cost on average, so the budget you are holding still is a real number,
+                    not a label.
                   </p>
                   <Curve
                     cols={gioCurve.nhan}
