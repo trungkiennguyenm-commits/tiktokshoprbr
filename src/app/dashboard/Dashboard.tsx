@@ -1156,6 +1156,8 @@ export default function Dashboard({
   const [roomMetric, setRoomMetric] = useState<RoomMetric>('gmv')
   /** Chỉ số đang xem ở lưới kênh × tháng (doanh thu thật của shop). */
   const [kenhMetric, setKenhMetric] = useState<'nmv' | 'cancel' | 'atr' | 'pcs'>('nmv')
+  /** Phần 5.6 xem theo tháng hay theo ngày. */
+  const [kenhNgay, setKenhNgay] = useState(false)
 
   const toggleClosed = (c: string) =>
     setClosed((p) => {
@@ -2098,19 +2100,51 @@ export default function Dashboard({
     return m
   }, [liveLgm])
 
+  /** LGM theo kênh × NGÀY — cùng nguồn với bản tháng, chỉ khác độ chia. */
+  const lgmKenhNgay = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of liveLgm) m.set(`${r.ten}|${r.ngay}`, (m.get(`${r.ten}|${r.ngay}`) ?? 0) + Number(r.lgm_vnd || 0))
+    return m
+  }, [liveLgm])
+
+  /** Khuôn dữ liệu kênh theo ngày, cùng hình dạng với kenhBang để hai chế độ
+   *  tháng/ngày dùng chung một đoạn vẽ. Lưới ngày cắt 45 ngày gần nhất. */
+  const kenhBangNgay = useMemo(() => {
+    const uu = ['Roborock Official VN', 'Roborock Máy lau sàn', 'Roborock Lifestyle VN']
+    const rows = new Map<string, Map<string, KenhDay>>()
+    const ngays = new Set<string>()
+    for (const r of kenhDaily) {
+      if (Number(r.phu_song || 0) < KENH_NGUONG) continue
+      const d = String(r.ngay)
+      ngays.add(d)
+      const m = rows.get(r.kenh) ?? new Map<string, KenhDay>()
+      m.set(d, r)
+      rows.set(r.kenh, m)
+    }
+    const ten = [
+      ...uu.filter((x) => rows.has(x)),
+      ...Array.from(rows.keys()).filter((x) => !uu.includes(x)).sort(),
+    ]
+    const tatCa = Array.from(ngays).sort()
+    return { ten, rows, thang: tatCa, luoi: tatCa.slice(-45) }
+  }, [kenhDaily])
+
   const KENH_METRICS = useMemo(() => ([
     { id: 'nmv' as const, ten: 'Seller NMV', don_vi: 'VND bn', xau_cao: false,
-      lay: (r: KenhMonth) => Number(r.nmv || 0) || null,
+      lay: (r: KenhMonth | KenhDay) => Number(r.nmv || 0) || null,
       fmt: (v: number) => ((v || 0) / 1e9).toFixed(2) },
     { id: 'pcs' as const, ten: 'Net pcs', don_vi: '', xau_cao: false,
-      lay: (r: KenhMonth) => Number(r.sl_chua_huy || 0) || null,
+      lay: (r: KenhMonth | KenhDay) => Number(r.sl_chua_huy || 0) || null,
       fmt: (v: number) => n0(v) },
     { id: 'cancel' as const, ten: 'Cancellation rate', don_vi: '%', xau_cao: true,
-      lay: (r: KenhMonth) => Number(r.cancel_rate || 0) || null,
+      lay: (r: KenhMonth | KenhDay) => Number(r.cancel_rate || 0) || null,
       fmt: (v: number) => `${v}%` },
     { id: 'atr' as const, ten: 'ATR on Seller NMV', don_vi: '%', xau_cao: true,
-      lay: (r: KenhMonth) => {
-        const lgm = lgmKenhThang.get(`${r.kenh}|${String(r.thang).slice(0, 7)}`) ?? 0
+      lay: (r: KenhMonth | KenhDay) => {
+        const khoa = 'thang' in r
+          ? `${r.kenh}|${String(r.thang).slice(0, 7)}`
+          : `${r.kenh}|${String((r as KenhDay).ngay)}`
+        const lgm = ('thang' in r ? lgmKenhThang : lgmKenhNgay).get(khoa) ?? 0
         const nmv = Number(r.nmv || 0)
         return lgm > 0 && nmv > 0 ? Math.round((lgm / nmv) * 1000) / 10 : null
       },
@@ -2124,16 +2158,17 @@ export default function Dashboard({
 
   /** Cột chồng Seller NMV theo tháng, tách theo kênh. */
   const kenhMix = useMemo(() => {
-    const series = kenhBang.ten.map((t, i) => ({
+    const kb = kenhNgay ? kenhBangNgay : kenhBang
+    const series = kb.ten.map((t, i) => ({
       ten: t,
       color: t.startsWith('Roborock') ? PALETTE[i % PALETTE.length] : GREY,
     }))
-    const data = kenhBang.thang.map((k) => ({
-      ky: `${k}-01`,
-      parts: kenhBang.ten.map((t) => Number(kenhBang.rows.get(t)?.get(k)?.nmv ?? 0)),
+    const data = kb.thang.map((k) => ({
+      ky: kenhNgay ? k : `${k}-01`,
+      parts: kb.ten.map((t) => Number(kb.rows.get(t)?.get(k)?.nmv ?? 0)),
     }))
     return { series, data }
-  }, [kenhBang])
+  }, [kenhBang, kenhBangNgay, kenhNgay])
 
   /* ---- hai biểu đồ dùng chung cho MoM Summary, Overview và Advertising ----
      Cùng một biểu đồ đặt ở ba chỗ thì phải là MỘT đoạn mã, không phải ba bản
@@ -3886,13 +3921,19 @@ export default function Dashboard({
             </section>
 
             <section id="s5-6">
-              <h2><span className="hno">5.6</span>Seller NMV by room — MoM</h2>
+              <h2><span className="hno">5.6</span>Seller NMV by room — {kenhNgay ? 'DoD' : 'MoM'}</h2>
               <p className="sub">
                 Everything above this point uses the GMV TikTok books against a live session, gross,
                 before cancellations. This block uses <b>our own order data</b> instead: revenue
                 after cancellations, attributed to a room through the live-room tag TikTok puts on
                 each order line. The two will not tie, and the gap is the cancellation.
               </p>
+              <div className="seg" style={{ marginTop: 14 }}>
+                {([[false, 'By month'], [true, 'By day']] as const).map(([k, l]) => (
+                  <button key={l} className={kenhNgay === k ? 'on' : ''}
+                    onClick={() => setKenhNgay(k)}>{l}</button>
+                ))}
+              </div>
               {!kenhBang.thang.length ? (
                 <div className="note warn">
                   No month yet has enough room tagging on order lines to split revenue by room.
@@ -3902,11 +3943,11 @@ export default function Dashboard({
                   <MultiStack
                     data={kenhMix.data}
                     series={kenhMix.series}
-                    fmt={bn} label={mmyy} unit="VND bn"
+                    fmt={bn} label={kenhNgay ? ddmm : mmyy} unit="VND bn"
                     tip={(d) => {
                       const tot = d.parts.reduce((a, b2) => a + b2, 0)
                       return (
-                        <><b>{mmyy(d.ky)}</b><br />
+                        <><b>{(kenhNgay ? ddmm : mmyy)(d.ky)}</b><br />
                           {kenhMix.series.map((sv, i2) => (
                             d.parts[i2] > 0
                               ? <span key={sv.ten}>{sv.ten}: {bn(d.parts[i2])}<br /></span>
@@ -3926,20 +3967,24 @@ export default function Dashboard({
                   </div>
                   <Matrix
                     corner={`Channel · ${kDef.ten}`}
-                    cols={kenhBang.thang.map((k) => mmyy(`${k}-01`))}
+                    cols={(kenhNgay ? kenhBangNgay.luoi : kenhBang.thang)
+                      .map((k) => (kenhNgay ? ddmm(k) : mmyy(`${k}-01`)))}
                     fmt={kDef.fmt}
                     heat={kDef.xau_cao ? 'high-bad' : 'high-good'}
-                    rows={kenhBang.ten.map((t, i2) => ({
+                    rows={(kenhNgay ? kenhBangNgay : kenhBang).ten.map((t, i2) => ({
                       label: t,
                       color: t.startsWith('Roborock') ? PALETTE[i2 % PALETTE.length] : GREY,
-                      vals: kenhBang.thang.map((k) => {
-                        const r = kenhBang.rows.get(t)?.get(k)
+                      vals: (kenhNgay ? kenhBangNgay.luoi : kenhBang.thang).map((k) => {
+                        const r = (kenhNgay ? kenhBangNgay : kenhBang).rows.get(t)?.get(k)
                         return r ? kDef.lay(r) : null
                       }),
                     }))}
                   />
                   <p className="foot">
-                    {kDef.ten}{kDef.don_vi ? ` (${kDef.don_vi})` : ''} per channel per month.{' '}
+                    {kDef.ten}{kDef.don_vi ? ` (${kDef.don_vi})` : ''} per channel per{' '}
+                    {kenhNgay ? 'day' : 'month'}.{' '}
+                    {kenhNgay && kenhBangNgay.thang.length > kenhBangNgay.luoi.length &&
+                      `The grid shows the most recent ${kenhBangNgay.luoi.length} of ${kenhBangNgay.thang.length} days; the chart above covers them all. `}
                     <b>ATR on Seller NMV</b> is that room&rsquo;s LIVE GMV Max spend divided by the
                     revenue the room actually kept. It runs far above the ATR in section 5.3, which
                     divides the same spend by TikTok&rsquo;s gross session GMV &mdash; same numerator,
