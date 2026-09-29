@@ -2059,10 +2059,13 @@ export default function Dashboard({
   const kenhThang = useMemo(() => {
     const ok = new Set<string>()
     for (const r of kenhMonthly) {
-      if (Number(r.phu_song || 0) >= KENH_NGUONG) ok.add(String(r.thang).slice(0, 7))
+      const k = String(r.thang).slice(0, 7)
+      // Hai điều kiện: đủ phủ sóng tag phòng, VÀ nằm trong các tháng đang chọn
+      // ở thanh chip phía trên. Thiếu vế sau thì phần này đứng yên khi lọc.
+      if (Number(r.phu_song || 0) >= KENH_NGUONG && liveKeep.has(k)) ok.add(k)
     }
     return Array.from(ok).sort()
-  }, [kenhMonthly])
+  }, [kenhMonthly, liveKeep])
 
   const kenhBang = useMemo(() => {
     const keep = new Set(kenhThang)
@@ -2128,6 +2131,7 @@ export default function Dashboard({
     for (const r of kenhDaily) {
       if (Number(r.phu_song || 0) < KENH_NGUONG) continue
       const d = String(r.ngay)
+      if (!liveKeep.has(d.slice(0, 7))) continue
       ngays.add(d)
       const m = rows.get(r.kenh) ?? new Map<string, KenhDay>()
       m.set(d, r)
@@ -2139,7 +2143,7 @@ export default function Dashboard({
     ]
     const tatCa = Array.from(ngays).sort()
     return { ten, rows, thang: tatCa, luoi: tatCa.slice(-45) }
-  }, [kenhDaily])
+  }, [kenhDaily, liveKeep])
 
   const KENH_METRICS = useMemo(() => ([
     { id: 'nmv' as const, ten: 'Seller NMV', don_vi: 'VND bn', xau_cao: false,
@@ -2208,6 +2212,7 @@ export default function Dashboard({
     const tongCot = new Map<string, number>()
     for (const r of kenhSku) {
       if (Number(r.phu_song || 0) < KENH_NGUONG) continue
+      if (!liveKeep.has(String(r.thang).slice(0, 7))) continue
       if (!cot.includes(r.kenh)) continue
       const m = rows.get(r.model) ?? new Map()
       const cur = m.get(r.kenh) ?? { nmv: 0, net: 0, gross: 0, huy: 0 }
@@ -2228,7 +2233,7 @@ export default function Dashboard({
       .sort((x, y) => diem(y[1]) - diem(x[1]))
       .map((e) => e[0])
     return { cot, rows, models, tongCot }
-  }, [kenhSku])
+  }, [kenhSku, liveKeep])
 
   const SKU_METRICS = [
     { id: 'nmv' as const, ten: 'Seller NMV', don_vi: 'VND bn', xau_cao: false,
@@ -4017,7 +4022,10 @@ export default function Dashboard({
               </div>
               {!kenhBang.thang.length ? (
                 <div className="note warn">
-                  No month yet has enough room tagging on order lines to split revenue by room.
+                  None of the months selected above have enough room tagging on order lines to
+                  split revenue by room. TikTok began tagging in May 2026 and only reached usable
+                  coverage from July &mdash; pick a month from July 2026 onward, or clear the month
+                  filter.
                 </div>
               ) : (
                 <>
@@ -4113,7 +4121,9 @@ export default function Dashboard({
               </p>
               {!skuKenh.models.length ? (
                 <div className="note warn">
-                  No month yet has enough room tagging on order lines to split products by room.
+                  None of the months selected above have enough room tagging on order lines to
+                  split products by room. Usable coverage starts in July 2026 &mdash; pick a month
+                  from then onward, or clear the month filter.
                 </div>
               ) : (
                 <>
