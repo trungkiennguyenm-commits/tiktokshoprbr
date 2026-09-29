@@ -127,6 +127,13 @@ export type KenhDay = {
   gmv: number; nmv: number; pcs_robot: number; pcs_handheld: number
 }
 
+/** Sản phẩm × kênh bán × tháng. */
+export type KenhSku = {
+  thang: string; kenh: string; model: string; category: string; phu_song: number
+  so_luong: number; sl_chua_huy: number; sl_huy: number; cancel_rate: number
+  gmv: number; nmv: number
+}
+
 export type LiveSession = {
   session_id: string; ngay: string; username: string; ten: string; nhom: string
   title: string | null; duration_phut: number; gmv: number; items_sold: number
@@ -143,7 +150,7 @@ type Props = {
   adsVs: AdsVs[]; adsMonthly: AdsMonth[]; adsCampaigns: AdsCampaign[]
   liveDaily: LiveDaily[]; liveMonthly: LiveMonth[]
   liveRooms: LiveRoomMonth[]; liveSessions: LiveSession[]; liveLgm: LiveLgm[]
-  kenhMonthly: KenhMonth[]; kenhDaily: KenhDay[]
+  kenhMonthly: KenhMonth[]; kenhDaily: KenhDay[]; kenhSku: KenhSku[]
 }
 
 /* ============================== helpers ============================== */
@@ -226,7 +233,8 @@ const SECTIONS = [
     id: 'Livestream', ten: 'Livestream',
     groups: [
       { ten: '', subs: ['Key numbers', 'Daily overview'] },
-      { ten: 'By room', subs: ['Sales', 'Traffic and engagement', 'Funnel', 'Seller NMV'] },
+      { ten: 'By room', subs: ['Sales', 'Traffic and engagement', 'Funnel', 'Seller NMV',
+        'SKU by room'] },
       { ten: 'Day by day', subs: ['Room by day', 'Daily totals', 'Audience',
         'Conversion', 'Engagement vs CTR'] },
       { ten: 'Monthly', subs: ['By month, by room'] },
@@ -1132,7 +1140,7 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
 export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, lapseDaily, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
-  liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily,
+  liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
 }: Props) {
   const [sec, setSec] = useState<Sec>('Summary')
   const [cat, setCat] = useState<CatKey>('all')
@@ -1160,6 +1168,8 @@ export default function Dashboard({
   const [kenhNgay, setKenhNgay] = useState(false)
   /** Phòng đang xem ở biểu đồ NMV vs ATR. 'all' = gộp ba phòng nhà. */
   const [kenhRoom, setKenhRoom] = useState<string>('all')
+  /** Chỉ số ở bảng sản phẩm × phòng. */
+  const [skuMetric, setSkuMetric] = useState<'nmv' | 'pcs' | 'cancel' | 'mix'>('nmv')
 
   const toggleClosed = (c: string) =>
     setClosed((p) => {
@@ -2186,6 +2196,60 @@ export default function Dashboard({
       }
     })
   }, [kenhBang, kenhBangNgay, kenhNgay, kenhRoom, lgmKenhThang, lgmKenhNgay])
+
+  /** Sản phẩm × phòng, gộp các tháng đủ phủ sóng tag phòng.
+   *
+   *  Bảng này trả lời "phòng nào bán được model nào" — thứ mà GMV phiên live
+   *  của TikTok không nói được, vì nó không tách theo sản phẩm. Ở đây tách
+   *  được là nhờ đi từ đơn hàng: mỗi dòng hàng có cả model lẫn room_id. */
+  const skuKenh = useMemo(() => {
+    const cot = [...PHONG_NHA, 'Ngoài live']
+    const rows = new Map<string, Map<string, { nmv: number; net: number; gross: number; huy: number }>>()
+    const tongCot = new Map<string, number>()
+    for (const r of kenhSku) {
+      if (Number(r.phu_song || 0) < KENH_NGUONG) continue
+      if (!cot.includes(r.kenh)) continue
+      const m = rows.get(r.model) ?? new Map()
+      const cur = m.get(r.kenh) ?? { nmv: 0, net: 0, gross: 0, huy: 0 }
+      cur.nmv += Number(r.nmv || 0)
+      cur.net += Number(r.sl_chua_huy || 0)
+      cur.gross += Number(r.so_luong || 0)
+      cur.huy += Number(r.sl_huy || 0)
+      m.set(r.kenh, cur)
+      rows.set(r.model, m)
+      tongCot.set(r.kenh, (tongCot.get(r.kenh) ?? 0) + Number(r.nmv || 0))
+    }
+    // Xếp model theo NMV của ba phòng nhà, không tính "Ngoài live" — bảng này
+    // để soi phòng live, model chỉ bán ngoài live không nên đứng đầu.
+    const diem = (m: Map<string, { nmv: number }>) =>
+      PHONG_NHA.reduce((t, k) => t + (m.get(k)?.nmv ?? 0), 0)
+    const models = Array.from(rows.entries())
+      .filter(([, m]) => diem(m) > 0)
+      .sort((x, y) => diem(y[1]) - diem(x[1]))
+      .map((e) => e[0])
+    return { cot, rows, models, tongCot }
+  }, [kenhSku])
+
+  const SKU_METRICS = [
+    { id: 'nmv' as const, ten: 'Seller NMV', don_vi: 'VND bn', xau_cao: false,
+      lay: (o: { nmv: number }) => o.nmv || null,
+      fmt: (v: number) => ((v || 0) / 1e9).toFixed(2) },
+    { id: 'pcs' as const, ten: 'Net pcs', don_vi: '', xau_cao: false,
+      lay: (o: { net: number }) => o.net || null,
+      fmt: (v: number) => n0(v) },
+    // Ô dưới 5 pcs gộp thì bỏ trống: bán 1 cái huỷ 1 cái ra "100%" trông y hệt
+    // một vấn đề thật, mà thực ra chẳng nói lên gì.
+    { id: 'cancel' as const, ten: 'Cancellation rate', don_vi: '%', xau_cao: true,
+      lay: (o: { gross: number; huy: number }) =>
+        (o.gross >= 5 ? Math.round((o.huy / o.gross) * 1000) / 10 : null),
+      fmt: (v: number) => `${v}%` },
+    { id: 'mix' as const, ten: 'Share of room', don_vi: '%', xau_cao: false,
+      lay: () => null, fmt: (v: number) => `${v}%` },
+  ]
+  const sDef = useMemo(
+    () => SKU_METRICS.find((m) => m.id === skuMetric) ?? SKU_METRICS[0],
+    [skuMetric],
+  )
 
   /* ---- hai biểu đồ dùng chung cho MoM Summary, Overview và Advertising ----
      Cùng một biểu đồ đặt ở ba chỗ thì phải là MỘT đoạn mã, không phải ba bản
@@ -4040,7 +4104,74 @@ export default function Dashboard({
             </section>
 
             <section id="s5-7">
-              <h2><span className="hno">5.7</span>Room by day</h2>
+              <h2><span className="hno">5.7</span>Products by room</h2>
+              <p className="sub">
+                Which room sells which machine. TikTok&rsquo;s own live reporting cannot answer this
+                &mdash; it gives one GMV figure per session with no product breakdown. This comes
+                from the order lines instead, where each line carries both the model and the live
+                room, so revenue, units and cancellations are all real and all ours.
+              </p>
+              {!skuKenh.models.length ? (
+                <div className="note warn">
+                  No month yet has enough room tagging on order lines to split products by room.
+                </div>
+              ) : (
+                <>
+                  <div className="chips" style={{ marginTop: 14 }}>
+                    <span className="chips-l">Metric</span>
+                    {SKU_METRICS.map((m) => (
+                      <button key={m.id} className={`chip ${skuMetric === m.id ? 'on' : ''}`}
+                        onClick={() => setSkuMetric(m.id)}>{m.ten}</button>
+                    ))}
+                  </div>
+                  <Matrix
+                    corner={`Model · ${sDef.ten}`}
+                    cols={[...skuKenh.cot.map(shortRoom), 'All rooms']}
+                    fmt={sDef.fmt}
+                    heat={sDef.xau_cao ? 'high-bad' : 'high-good'}
+                    rows={skuKenh.models.map((m) => {
+                      const per = skuKenh.rows.get(m)
+                      const gop = { nmv: 0, net: 0, gross: 0, huy: 0 }
+                      for (const k of skuKenh.cot) {
+                        const o = per?.get(k)
+                        if (!o) continue
+                        gop.nmv += o.nmv; gop.net += o.net; gop.gross += o.gross; gop.huy += o.huy
+                      }
+                      const oneVal = (k: string) => {
+                        const o = per?.get(k)
+                        if (!o) return null
+                        if (skuMetric === 'mix') {
+                          const t = skuKenh.tongCot.get(k) ?? 0
+                          return t > 0 ? Math.round((o.nmv / t) * 1000) / 10 || null : null
+                        }
+                        return sDef.lay(o)
+                      }
+                      return {
+                        label: m,
+                        vals: [
+                          ...skuKenh.cot.map(oneVal),
+                          skuMetric === 'mix' ? null : sDef.lay(gop),
+                        ],
+                      }
+                    })}
+                  />
+                  <p className="foot">
+                    {sDef.ten}{sDef.don_vi ? ` (${sDef.don_vi})` : ''} per model per room, summed
+                    over the months where order lines carry a room tag{' '}
+                    ({kenhBang.thang.map((k) => mmyy(`${k}-01`)).join(' · ')}).{' '}
+                    <b>Share of room</b> reads down a column: what share of that room&rsquo;s live
+                    revenue each model brought, so it shows the room&rsquo;s product mix rather than
+                    its size. Cancellation rate is recalculated on gross units, never averaged
+                    across cells, and a cell under 5 gross units is left blank &mdash; one unit
+                    sold and cancelled reads as 100% and means nothing. Models are ordered by revenue across the three own rooms, so a
+                    model that only ever sells outside live does not head the table.
+                  </p>
+                </>
+              )}
+            </section>
+
+            <section id="s5-8">
+              <h2><span className="hno">5.8</span>Room by day</h2>
               <p className="sub">
                 The same numbers as a grid. Reading along a row shows how steady a room is; reading
                 down a column shows which room carried a given day. Shading is relative to the
@@ -4068,8 +4199,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-8">
-              <h2><span className="hno">5.8</span>Daily totals · DoD</h2>
+            <section id="s5-9">
+              <h2><span className="hno">5.9</span>Daily totals · DoD</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -4118,8 +4249,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-9">
-              <h2><span className="hno">5.9</span>Audience per day</h2>
+            <section id="s5-10">
+              <h2><span className="hno">5.10</span>Audience per day</h2>
               <p className="sub">
                 Columns split each day&rsquo;s views into people seen for the first time that day
                 and the views they came back for. The red line is the engagement rate &mdash; likes,
@@ -4153,8 +4284,8 @@ export default function Dashboard({
               <p className="foot">Our own rooms only — creator rooms report no engagement data.</p>
             </section>
 
-            <section id="s5-10">
-              <h2><span className="hno">5.10</span>Traffic and conversion per day</h2>
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>Traffic and conversion per day</h2>
               <p className="sub">
                 Columns are live GMV split between our rooms and creator rooms. The red line is the
                 product click-through rate in our rooms &mdash; impressions that turned into a tap
@@ -4187,8 +4318,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-11">
-              <h2><span className="hno">5.11</span>Engagement vs CTR vs GMV</h2>
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>Engagement vs CTR vs GMV</h2>
               <p className="sub">
                 One bubble is one day of one room. Across: engagement rate. Up: product CTR. Size:
                 that day&rsquo;s GMV. If talking to the room is what drives people to tap the
@@ -4246,8 +4377,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-12">
-              <h2><span className="hno">5.12</span>By month, by room</h2>
+            <section id="s5-13">
+              <h2><span className="hno">5.13</span>By month, by room</h2>
               <p className="sub">
                 Same metric picker as the daily grid above, so a pattern spotted in one week can be
                 checked against the six-month trend without changing what is being measured.
@@ -4320,8 +4451,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-13">
-              <h2><span className="hno">5.13</span>Top sessions</h2>
+            <section id="s5-14">
+              <h2><span className="hno">5.14</span>Top sessions</h2>
               <p className="sub">
                 The {Math.min(40, liveTop.length)} biggest of {n0(liveTop.length)} sessions in the
                 selected months. Worth reading next to the title &mdash; the stream name is the only
@@ -4362,8 +4493,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-14">
-              <h2><span className="hno">5.14</span>Creator rooms</h2>
+            <section id="s5-15">
+              <h2><span className="hno">5.15</span>Creator rooms</h2>
               <p className="sub">
                 Rooms that sold our products but are not ours. They register themselves the first
                 time one appears, so the list grows on its own as the team works with new creators.

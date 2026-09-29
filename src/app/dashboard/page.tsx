@@ -4,7 +4,7 @@ import Dashboard, {
   type Segment, type LapseRow, type Ship,
   type AdsVs, type AdsMonth, type AdsCampaign,
   type LiveDaily, type LiveMonth, type LiveRoomMonth, type LiveSession, type LiveLgm,
-  type KenhMonth, type KenhDay,
+  type KenhMonth, type KenhDay, type KenhSku,
 } from './Dashboard'
 
 export const dynamic = 'force-dynamic'
@@ -37,7 +37,7 @@ export default async function Page() {
   const db = supabaseAdmin()
 
   try {
-    const [m, d, s, sm, sd, seg, lap, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd] = await Promise.all([
+    const [m, d, s, sm, sd, seg, lap, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd, ks] = await Promise.all([
       fetchAll<Monthly>(db, 'v_perf_monthly'),
       fetchAll<Daily>(db, 'v_perf_daily'),
       fetchAll<Sku>(db, 'v_sku_perf'),
@@ -56,6 +56,7 @@ export default async function Page() {
       fetchAll<LiveLgm>(db, 'v_live_lgm_daily'),
       fetchAll<KenhMonth>(db, 'v_kenh_monthly'),
       fetchAll<KenhDay>(db, 'v_kenh_daily'),
+      fetchAll<KenhSku>(db, 'v_kenh_sku_monthly'),
     ])
 
     return (
@@ -66,7 +67,7 @@ export default async function Page() {
         adsVs={num(av)} adsMonthly={num(am)} adsCampaigns={num(ac)}
         liveDaily={num(ld)} liveMonthly={num(lm)}
         liveRooms={num(lr)} liveSessions={num(ls)} liveLgm={num(lg)}
-        kenhMonthly={num(kn)} kenhDaily={num(kd)}
+        kenhMonthly={num(kn)} kenhDaily={num(kd)} kenhSku={num(ks)}
       />
     )
   } catch (e) {
