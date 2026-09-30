@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart, StackChart, DeltaChart, RowBars, ComboChart, MultiStack,
   type Pt, type PtN,
@@ -67,6 +67,30 @@ export type HuyChiTiet = {
   ly_do: string; thu_tu_ly_do: number; nguoi_huy: string
   so_luong: number; nmv_huy: number; gio_tong: number; sl_co_gio: number
   gio_tu_luc_lay: number | null; sl_co_lay: number
+}
+/** v_don_hanh_trinh — mốc thời gian của một đơn, theo kết cục.
+ *  thang null = toàn kỳ, category null = gộp hai ngành. Trung vị không cộng
+ *  được nên DB tính sẵn từng tổ hợp; giao diện chỉ nhặt đúng dòng. */
+export type HanhTrinh = {
+  thang: string | null; category: string | null; ket_cuc: string
+  so_don: number
+  lay_tv: number | null; lay_tb: number | null
+  giao_tv: number | null; giao_tb: number | null
+  huy_tv: number | null; huy_tb: number | null
+  transit_p25: number | null; transit_tv: number | null
+  transit_p75: number | null; transit_tb: number | null
+}
+/** v_transit_model — số giờ hàng nằm ngoài kho trước khi đơn bị huỷ. */
+export type TransitModel = {
+  thang: string | null; category: string | null; model: string
+  so_don: number; transit_tv: number | null; transit_tb: number | null
+}
+/** v_huy_model — huỷ theo model, tách trước/sau khi shipper lấy hàng. */
+export type HuyModel = {
+  ngay: string; category: string; model: string
+  tong_item: number; huy: number; huy_instant: number
+  huy_truoc: number; huy_sau: number
+  nmv_dat: number; nmv_huy_sau: number; nmv_huy_truoc: number
 }
 export type CampMatrix = {
   ngay: string; category: string
@@ -172,12 +196,18 @@ type Props = {
   liveRooms: LiveRoomMonth[]; liveSessions: LiveSession[]; liveLgm: LiveLgm[]
   kenhMonthly: KenhMonth[]; kenhDaily: KenhDay[]; kenhSku: KenhSku[]
   campTong: CampTong[]; campMatrix: CampMatrix[]; huyChiTiet: HuyChiTiet[]
+  huyModel: HuyModel[]; hanhTrinh: HanhTrinh[]; transitModel: TransitModel[]
 }
 
 /* ============================== helpers ============================== */
 
 const n0 = (v: number) => new Intl.NumberFormat('en-US').format(Math.round(v || 0))
 const bn = (v: number) => ((v || 0) / 1e9).toFixed(2)
+/** Số giờ -> chuỗi dễ đọc. Dưới 48h vẫn để theo giờ vì đó là thang mà
+ *  người vận hành nghĩ; từ 48h trở lên đổi sang ngày cho đỡ phải nhẩm. */
+const gioNgay = (h: number) => (h < 1 ? `${Math.round(h * 60)} min`
+  : h < 48 ? `${Math.round(h * 10) / 10}h`
+    : `${Math.round((h / 24) * 10) / 10} days`)
 const mn = (v: number) => ((v || 0) / 1e6).toFixed(0)
 /** Triệu VND, một chữ số lẻ. Dùng cho các tỷ suất nhỏ — GMV trên 1.000
  *  lượt xem hay GMV mỗi giờ live rơi vào vài triệu, in ra theo tỷ thì
@@ -287,13 +317,14 @@ const SECTIONS = [
   {
     id: 'Cancellations', ten: 'Cancellations',
     groups: [
-      { ten: '', subs: ['Key numbers', 'Rate per period'] },
+      { ten: '', subs: ['Key numbers', 'Journey of an order', 'Rate per period'] },
       { ten: 'When they die', ghi: 'and what each one costs',
         subs: ['Time to cancel', 'Before or after pickup'] },
       { ten: 'Why they die', subs: ['Reason mix'] },
       { ten: 'Where in the month', ghi: 'sale calendar',
         subs: ['Across the month', 'Reason by campaign day', 'Order day vs cancel day'] },
-      { ten: 'Which products', subs: ['By model', 'Worst models', 'Detail table'] },
+      { ten: 'Which products',
+        subs: ['By model', 'Worst models', 'Before vs after pickup', 'Detail table'] },
     ],
   },
   {
@@ -1059,12 +1090,12 @@ function StackLine({ rows, series, lines, fmtCot, fmtDuong, label, tip, moiNhan 
             ))}
           </svg>
           <div className="sl-dots">
-            {rows.length <= 20 && lines.map((l) => l.vals.map((v, i) => (v == null ? null : (
+            {rows.length <= 31 && lines.map((l) => l.vals.map((v, i) => (v == null ? null : (
               <span key={`${l.ten}-${i}`} className="sl-d"
                 style={{ left: `${x(i)}%`, bottom: `${100 - y(v)}%`, background: l.color }} />
             ))))}
-            {rows.length <= 14 && lines.map((l, li) => l.vals.map((v, i) => (v == null ? null : (
-              <span key={`v-${l.ten}-${i}`} className="sl-v"
+            {rows.length <= 31 && lines.map((l, li) => l.vals.map((v, i) => (v == null ? null : (
+              <span key={`v-${l.ten}-${i}`} className={`sl-v${rows.length > 14 ? ' sm' : ''}`}
                 style={{
                   left: `${x(i)}%`,
                   // Ba đường hay chạm nhau; đẩy nhãn của từng đường lệch nhau
@@ -1345,6 +1376,86 @@ function Funnel({ rooms }: {
   )
 }
 
+/* ---------------------- hành trình một đơn hàng ----------------------- */
+
+/**
+ * Ba đường đời của một đơn, vẽ trên cùng một trục thời gian thật.
+ *
+ * Trục để TUYẾN TÍNH chứ không log, dù đường "huỷ trước lấy hàng" vì thế co
+ * lại thành một chấm ở gốc — đó đúng là sự thật của nó: đơn chết trong vài
+ * phút. Log hoá sẽ kéo dài nó ra thành một đoạn trông ngang ngửa các đường
+ * kia, tức là vẽ sai điều quan trọng nhất của biểu đồ này.
+ *
+ * Mỗi đường vẽ theo TRUNG VỊ; trung bình đánh dấu bằng một hình thoi rỗng,
+ * vì đuôi dài kéo trung bình lệch hẳn (huỷ trước lấy hàng: trung vị 6 phút,
+ * trung bình 4,7 giờ) và giấu chênh lệch đó đi thì người đọc không biết mình
+ * đang nhìn cái nào.
+ */
+function Timeline({ tracks, maxGio, fmtT }: {
+  tracks: {
+    ten: string; color: string; n: number; pct: number
+    lay: number | null; layTb: number | null
+    ket: number; ketTb: number
+    ketNhan: string
+  }[]
+  maxGio: number
+  fmtT: (h: number) => string
+}) {
+  if (!tracks.length) return null
+  const x = (h: number) => Math.min(100, (h / maxGio) * 100)
+  const moc = Array.from({ length: Math.floor(maxGio / 24) + 1 }, (_, i) => i)
+
+  return (
+    <div className="tl">
+      <div className="tl-grid">
+        {moc.map((d) => (
+          <span key={d} className="tl-gl" style={{ left: `${x(d * 24)}%` }}>
+            <i />
+            <b>{d === 0 ? 'order' : `${d}d`}</b>
+          </span>
+        ))}
+      </div>
+      {tracks.map((t) => (
+        <div className="tl-row" key={t.ten}>
+          <div className="tl-lbl">
+            <b style={{ color: t.color }}>{t.ten}</b>
+            <span className="muted">{n0(t.n)} units · {pct(t.pct)}</span>
+          </div>
+          <div className="tl-track">
+            {/* đoạn trong kho: từ lúc đặt tới lúc shipper lấy */}
+            {t.lay != null && (
+              <div className="tl-seg kho" style={{ left: 0, width: `${x(t.lay)}%` }} />
+            )}
+            {/* đoạn trên đường: từ lúc lấy tới lúc kết thúc */}
+            <div className="tl-seg" style={{
+              left: `${x(t.lay ?? 0)}%`,
+              width: `${Math.max(0.6, x(t.ket) - x(t.lay ?? 0))}%`,
+              background: t.color,
+            }} />
+            {t.lay != null && (
+              <span className="tl-dot" style={{ left: `${x(t.lay)}%` }} title="picked up" />
+            )}
+            <span className="tl-end" style={{ left: `${x(t.ket)}%`, background: t.color }} />
+            <span className="tl-avg" style={{ left: `${x(t.ketTb)}%`, borderColor: t.color }}
+              title={`average ${fmtT(t.ketTb)}`} />
+            <span className="tl-t" style={{ left: `${x(t.ket)}%` }}>
+              {t.ketNhan} {fmtT(t.ket)}
+            </span>
+            {t.lay != null && x(t.lay) > 3 && (
+              <span className="tl-t sm" style={{ left: `${x(t.lay)}%` }}>picked up {fmtT(t.lay)}</span>
+            )}
+          </div>
+        </div>
+      ))}
+      <div className="legend" style={{ marginTop: 6 }}>
+        <span><i className="sw" style={{ background: 'var(--line-s)' }} />in the warehouse</span>
+        <span><i className="sw" style={{ background: 'var(--muted)' }} />with the courier</span>
+        <span><i className="tl-avg st" />average (bars are the median)</span>
+      </div>
+    </div>
+  )
+}
+
 function Matrix({ cols, rows, fmt, heat, corner }: {
   cols: string[]
   rows: { label: string; sub?: string; color?: string; vals: (number | null)[] }[]
@@ -1454,8 +1565,23 @@ export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
-  campTong, campMatrix, huyChiTiet,
+  campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel,
 }: Props) {
+  /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
+     rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
+     trái chui xuống dưới dải, hoặc bấm mục lục xong tiêu đề bị che. */
+  const stickRef = useRef<HTMLDivElement>(null)
+  const [stickH, setStickH] = useState(112)
+  useEffect(() => {
+    const el = stickRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setStickH(el.offsetHeight))
+    ro.observe(el)
+    setStickH(el.offsetHeight)
+    return () => ro.disconnect()
+  }, [])
+
+  const [huySort, setHuySort] = useState<'sau' | 'instant'>('sau')
   const [sec, setSec] = useState<Sec>('Summary')
   const [cat, setCat] = useState<CatKey>('all')
   const [range, setRange] = useState<RangeKey>('mom')
@@ -1902,14 +2028,24 @@ export default function Dashboard({
         const l = lay.get(k) ?? { truoc: 0, sau: 0 }
         return {
           ky: k,
-          // Nhãn trục: ngày/tháng khi là ngày thật, còn lại là số ngày trong tháng
-          nhanTruc: theoNgayThat ? `${k.slice(8, 10)}/${k.slice(5, 7)}` : String(Number(k)),
+          // Nhãn trục: chỉ SỐ NGÀY cho gọn — 30 nhãn "01/09" dính vào nhau không
+          // đọc được, mà tháng đã nằm ở tiêu đề. Chỉ ngày 1 của mỗi tháng mới
+          // kèm tháng, để lúc khoảng lọc bắc qua hai tháng vẫn biết ranh giới.
+          nhanTruc: !theoNgayThat ? String(Number(k))
+            : k.slice(8, 10) === '01' ? `1/${Number(k.slice(5, 7))}`
+              : String(Number(k.slice(8, 10))),
+          dauThang: theoNgayThat && k.slice(8, 10) === '01',
           soNgay: t.ngay.size,
           item: t.item, huy: t.huy, nmvHuy: t.nmvHuy,
           rate: p1(t.huy, t.item),
           parts: sHuy ? raw.map((v) => (v / sHuy) * 100) : Array(12).fill(0),
           soLuong: raw,
+          sauLay: l.sau,
+          // % trên tổng ĐƠN HUỶ — cơ cấu của phần đã mất
           pctSau: p1(l.sau, l.truoc + l.sau),
+          // % trên tổng ĐƠN ĐẶT — gánh nặng kho thật của ngày đó. Cùng mẫu số
+          // với tỷ lệ huỷ chung ở 7.2 nên hai con số so thẳng được với nhau.
+          pctSauDat: p1(l.sau, t.item),
           nhan: t.nhan.size === 1 ? Array.from(t.nhan)[0] : null,
           nhanCoThe: Array.from(t.nhan).filter((x) => x !== 'BAU'),
         }
@@ -2058,6 +2194,107 @@ export default function Dashboard({
       gioTrongTayShipper: nLay ? Math.round((gioLay / nLay) * 10) / 10 : null,
     }
   }, [huyChiTiet, keys, byMonth, cat])
+
+  /* ---- hành trình đơn hàng ----
+     Trung vị không gộp được giữa các kỳ, nên thay vì cố tính lại ở client ta
+     nhặt đúng dòng DB đã tính: chọn một tháng thì lấy dòng tháng đó, còn lại
+     lấy dòng toàn kỳ. Vì thế phần này KHÔNG chạy theo bộ lọc ngày (7d/30d) —
+     có nói rõ ngay dưới tiêu đề để không ai đọc nhầm. */
+
+  const motThang = goodMonths.length === 1 ? goodMonths[0] : null
+
+  const hanhTrinhRows = useMemo(() => {
+    const catKey = cat === 'all' ? null : cat
+    const lay = (kc: string) => hanhTrinh.find(
+      (r) => r.ket_cuc === kc && r.thang === motThang && r.category === catKey,
+    )
+    const d = lay('delivered')
+    const sau = lay('cancel_after')
+    const truoc = lay('cancel_before')
+    const tong = (d?.so_don ?? 0) + (sau?.so_don ?? 0) + (truoc?.so_don ?? 0)
+    if (!tong) return null
+
+    const tracks = [
+      d && {
+        ten: 'Delivered', color: 'var(--ok)', n: d.so_don, pct: p1(d.so_don, tong),
+        lay: d.lay_tv, layTb: d.lay_tb,
+        ket: d.giao_tv ?? 0, ketTb: d.giao_tb ?? 0, ketNhan: 'delivered',
+      },
+      sau && {
+        ten: 'Cancelled after pickup', color: 'var(--bad)', n: sau.so_don, pct: p1(sau.so_don, tong),
+        lay: sau.lay_tv, layTb: sau.lay_tb,
+        ket: sau.huy_tv ?? 0, ketTb: sau.huy_tb ?? 0, ketNhan: 'cancelled',
+      },
+      truoc && {
+        ten: 'Cancelled before pickup', color: 'var(--c2)', n: truoc.so_don, pct: p1(truoc.so_don, tong),
+        lay: null, layTb: null,
+        ket: truoc.huy_tv ?? 0, ketTb: truoc.huy_tb ?? 0, ketNhan: 'cancelled',
+      },
+    ].filter(Boolean) as NonNullable<Parameters<typeof Timeline>[0]['tracks']>
+
+    // Trục dài tới hết đường dài nhất, làm tròn lên mốc ngày cho dễ đọc
+    const xa = Math.max(...tracks.map((t) => Math.max(t.ket, t.ketTb)))
+    return { tracks, tong, maxGio: Math.ceil(xa / 24) * 24, sau, truoc, d }
+  }, [hanhTrinh, motThang, cat])
+
+  /** Số giờ giam hàng theo model, cùng cách nhặt dòng như trên. */
+  const transitTheoModel = useMemo(() => {
+    const catKey = cat === 'all' ? null : cat
+    const m = new Map<string, { tv: number | null; tb: number | null; n: number }>()
+    for (const r of transitModel) {
+      if (r.thang !== motThang || r.category !== catKey) continue
+      m.set(r.model, { tv: r.transit_tv, tb: r.transit_tb, n: r.so_don })
+    }
+    return m
+  }, [transitModel, motThang, cat])
+
+  /* ---- huỷ theo model, trước vs sau khi lấy hàng ----
+     Hai nhóm này VÉT CẠN: trước + sau = đúng tỷ lệ huỷ, mẫu số là ĐƠN ĐẶT.
+     Trước-lấy-hàng gần như toàn bộ là huỷ tức thì (trung vị 6 phút, 90% trong
+     24h) — chuyện của phòng live và luồng checkout. Sau-lấy-hàng sớm nhất
+     cũng 40h vì phải đợi shipper tới (trung vị 6,7 ngày) — chuyện vận hành. */
+
+  const HUY_MODEL_TOI_THIEU = 30
+
+  const modelHuy = useMemo(() => {
+    const giu = (ngay: string) => (byMonth ? keys.has(`${ngay.slice(0, 7)}-01`) : keys.has(ngay))
+    const m = new Map<string, {
+      model: string; cat: string; dat: number; huy: number; instant: number
+      truoc: number; sau: number; nmvSau: number; nmvTruoc: number
+    }>()
+    for (const r of huyModel) {
+      if (!giu(r.ngay) || (cat !== 'all' && r.category !== cat)) continue
+      const c = m.get(r.model)
+        ?? { model: r.model, cat: r.category, dat: 0, huy: 0, instant: 0, truoc: 0, sau: 0, nmvSau: 0, nmvTruoc: 0 }
+      c.dat += Number(r.tong_item || 0)
+      c.huy += Number(r.huy || 0)
+      c.instant += Number(r.huy_instant || 0)
+      c.truoc += Number(r.huy_truoc || 0)
+      c.sau += Number(r.huy_sau || 0)
+      c.nmvSau += Number(r.nmv_huy_sau || 0)
+      c.nmvTruoc += Number(r.nmv_huy_truoc || 0)
+      m.set(r.model, c)
+    }
+    const rows = Array.from(m.values())
+      .filter((r) => r.dat >= HUY_MODEL_TOI_THIEU)
+      .map((r) => ({
+        ...r,
+        pctHuy: p1(r.huy, r.dat),
+        pctInstant: p1(r.instant, r.dat),
+        pctTruoc: p1(r.truoc, r.dat),
+        pctSau: p1(r.sau, r.dat),
+      }))
+    const tong = {
+      dat: rows.reduce((a, r) => a + r.dat, 0),
+      huy: rows.reduce((a, r) => a + r.huy, 0),
+      truoc: rows.reduce((a, r) => a + r.truoc, 0),
+      sau: rows.reduce((a, r) => a + r.sau, 0),
+      nmvSau: rows.reduce((a, r) => a + r.nmvSau, 0),
+    }
+    const tb = { truoc: p1(tong.truoc, tong.dat), sau: p1(tong.sau, tong.dat) }
+    rows.sort((a, b) => (huySort === 'sau' ? b.pctSau - a.pctSau : b.pctTruoc - a.pctTruoc))
+    return { rows, tb, tong }
+  }, [huyModel, keys, byMonth, cat, huySort])
 
   /* ---- ma trận ngày đặt × ngày huỷ ----
      Trả lời trực tiếp câu hỏi: đơn đặt ngày DDAY thì chết vào loại ngày nào.
@@ -3173,7 +3410,7 @@ export default function Dashboard({
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <div className="wrap">
+      <div className="wrap" style={{ '--stick': `${stickH}px` } as React.CSSProperties}>
         <header>
           <p className="eyebrow">Roborock Official VN · TikTok Shop</p>
           <h1>Business performance</h1>
@@ -3204,6 +3441,12 @@ export default function Dashboard({
             </div>
           </div>
 
+      </header>
+
+      {/* Thanh lọc dính lên đầu khi cuộn. Tách khỏi <header> vì sticky chỉ
+          có tác dụng trong phạm vi thẻ cha — nằm trong header thì nó rời đi
+          cùng lúc header cuộn khỏi màn hình, đúng lúc cần nó nhất. */}
+      <div className="stick" ref={stickRef}>
         <div className="filters">
           <div className="seg">
             {RANGES.map((r) => (
@@ -3244,7 +3487,7 @@ export default function Dashboard({
                 ? 'Reference only — the filters above do not apply here.'
                 : `Showing: ${periodNote}. Every chart and table in this section follows this filter.`}
         </p>
-      </header>
+      </div>
 
       <div className="body">
         {/* Thanh điều hướng trái. Dưới 1100px nó tự nằm ngang thành dải tab
@@ -6225,7 +6468,71 @@ export default function Dashboard({
             </section>
 
             <section id="s7-2">
-              <h2><span className="hno">7.2</span>Cancellation rate per {periodWord} · {dod}</h2>
+              <h2><span className="hno">7.2</span>The journey of an order — {motThang ? mmyy(motThang) : 'all months'}</h2>
+              <p className="sub">
+                Three ways an order can end, on one real time axis. Bars are <b>medians</b>; the open
+                diamond is the <b>average</b>. Where the two are far apart, a long tail is pulling
+                the average — read the median. Grey is the stretch in the warehouse, colour is the
+                stretch with the courier.
+                <br /><br />
+                <span className="muted">
+                  Medians cannot be recombined across periods, so this block reads a figure the
+                  database computed per month. It follows the <b>month chips</b> and the category
+                  toggle, but not the 7-day / 30-day ranges — pick one month to see that month.
+                </span>
+              </p>
+              {hanhTrinhRows ? (
+                <>
+                  <Timeline tracks={hanhTrinhRows.tracks} maxGio={hanhTrinhRows.maxGio} fmtT={gioNgay} />
+                  <div className="tablewrap" style={{ marginTop: 22 }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Outcome</th><th className="n">Units</th><th className="n">Share</th>
+                          <th className="n">Picked up</th><th className="n">Ends</th>
+                          <th className="n">Median</th><th className="n">Average</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hanhTrinhRows.tracks.map((t) => (
+                          <tr key={t.ten}>
+                            <td><span className="sw sm" style={{ background: t.color }} />{t.ten}</td>
+                            <td className="n">{n0(t.n)}</td>
+                            <td className="n">{pct(t.pct)}</td>
+                            <td className="n muted">{t.lay == null ? 'never' : gioNgay(t.lay)}</td>
+                            <td className="n muted">{t.ketNhan}</td>
+                            <td className="n">{gioNgay(t.ket)}</td>
+                            <td className="n muted">{gioNgay(t.ketTb)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="note hot">
+                    <b>A failed parcel occupies the road about three times as long as a good one.</b>
+                    {' '}A delivered order reaches the buyer around{' '}
+                    {hanhTrinhRows.d ? gioNgay(hanhTrinhRows.d.giao_tv ?? 0) : '—'} after it is
+                    placed. One that will be refused is not cancelled until{' '}
+                    {hanhTrinhRows.sau ? gioNgay(hanhTrinhRows.sau.huy_tv ?? 0) : '—'}, because the
+                    courier works through its redelivery attempts — typically three, a day apart —
+                    before giving up and sending it back. In that window the unit is out of the
+                    warehouse, unsellable, and already carrying its shipping cost.
+                    <br /><br />
+                    <b>The third path never moves at all.</b> Cancelled-before-pickup orders die at a
+                    median of{' '}
+                    {hanhTrinhRows.truoc ? gioNgay(hanhTrinhRows.truoc.huy_tv ?? 0) : '—'} — the
+                    average of {hanhTrinhRows.truoc ? gioNgay(hanhTrinhRows.truoc.huy_tb ?? 0) : '—'}{' '}
+                    is the tail of a few that linger, not the typical case. These cost the sale and
+                    nothing else, which is why they are worth separating from the ones above.
+                  </div>
+                </>
+              ) : (
+                <p className="sub muted">No orders in the selected period.</p>
+              )}
+            </section>
+
+            <section id="s7-3">
+              <h2><span className="hno">7.3</span>Cancellation rate per {periodWord} · {dod}</h2>
               <p className="sub">Internal target is 40% or below.</p>
               <DeltaChart
                 data={pt((r) => r.cancel_rate)} color="var(--bad)" fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
@@ -6236,8 +6543,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s7-3">
-              <h2><span className="hno">7.3</span>How long after ordering do orders die — {periodNote}</h2>
+            <section id="s7-4">
+              <h2><span className="hno">7.4</span>How long after ordering do orders die — {periodNote}</h2>
               <p className="sub">
                 Twelve buckets at day resolution, and one line drawn through them: whether the
                 courier had already collected the parcel. That line is what decides the cost, and
@@ -6303,8 +6610,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-4">
-              <h2><span className="hno">7.4</span>Before or after the courier collected — {periodNote} · {dod}</h2>
+            <section id="s7-5">
+              <h2><span className="hno">7.5</span>Before or after the courier collected — {periodNote} · {dod}</h2>
               <p className="sub">
                 The one split that decides what a cancellation actually costs. TikTok stamps a
                 <code> collection_time</code> on the order the moment the courier takes the parcel,
@@ -6377,8 +6684,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-5">
-              <h2><span className="hno">7.5</span>Why orders are cancelled — {periodNote} · {dod}</h2>
+            <section id="s7-6">
+              <h2><span className="hno">7.6</span>Why orders are cancelled — {periodNote} · {dod}</h2>
               <p className="sub">
                 TikTok returns a reason and an initiator on every cancelled order, so this is the
                 shop&rsquo;s own data, not an inference from timing. The wording arrives in
@@ -6442,16 +6749,24 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-6">
-              <h2><span className="hno">7.6</span>Cancellations across the month — {periodNote}</h2>
+            <section id="s7-7">
+              <h2><span className="hno">7.7</span>Cancellations across the month — {periodNote}</h2>
               <p className="sub">
                 Time runs left to right through the month, so the whole shape is visible rather than
                 only the days that have names. The names sit under the axis:
                 <b> DDAY</b> is the double date (4/4, 5/5 … 9/9), <b>D-3</b> to <b>D-1</b> the three
                 days before it, <b>D+1</b> to <b>D+3</b> the three days after, <b>MMS</b> the
                 14th–15th, <b>Payday</b> the 24th–25th, everything else BAU. Bars are the mix of
-                time-to-cancel, each column normalised to 100%; the red line is the cancellation
-                rate for orders placed that day.
+                time-to-cancel, each column normalised to 100%.
+                <br /><br />
+                <b>The red line is the warehouse load</b> — of every unit ordered that day, the
+                share the courier collected and that was <i>then</i> cancelled. Those are the only
+                cancellations carrying a real bill: outbound shipping, packing, the return leg, the
+                restock, and the days the unit spends unsellable in transit. Everything else died
+                before anything moved. It uses the same denominator as the plain cancellation rate
+                in 7.2, so the gap between the two is the half of the problem logistics never
+                touches. Each column&rsquo;s tooltip carries all three readings.
+                <br /><br />
                 {campNgay.theoNgayThat ? (
                   <> One column is one real date, so every label is exact.</>
                 ) : (
@@ -6466,8 +6781,8 @@ export default function Dashboard({
                 moiNhan={campNgay.rows.length <= 34}
                 rows={campNgay.rows.map((r) => ({ ky: r.ky, parts: r.parts }))}
                 series={MOC_TT.map((k) => ({ ten: k, color: MOC_MAU[k] }))}
-                lines={[{ ten: 'Cancellation rate', color: 'var(--bad)',
-                  vals: campNgay.rows.map((r) => r.rate) }]}
+                lines={[{ ten: 'Cancelled after pickup, % of units ordered that day',
+                  color: 'var(--bad)', vals: campNgay.rows.map((r) => r.pctSauDat) }]}
                 fmtCot={(v) => `${Math.round(v)}%`}
                 fmtDuong={(v) => `${Math.round(v)}%`}
                 label={(k) => campNgay.rows.find((r) => r.ky === k)?.nhanTruc ?? k}
@@ -6477,8 +6792,11 @@ export default function Dashboard({
                   return (
                     <><b>{r.nhanTruc}</b>{r.nhan && r.nhan !== 'BAU' ? ` · ${r.nhan}` : ''}
                       {campNgay.theoNgayThat ? '' : ` · ${r.soNgay} day${r.soNgay === 1 ? '' : 's'} in range`}<br />
-                      Cancelled {pct(r.rate)} — {n0(r.huy)} of {n0(r.item)} pcs<br />
-                      After pickup {pct(r.pctSau)} · value lost {bn(r.nmvHuy)} bn<br />
+                      <b style={{ color: 'var(--bad)' }}>After pickup {pct(r.pctSauDat)}</b>
+                      {' '}— {n0(r.sauLay)} of {n0(r.item)} units ordered<br />
+                      <span className="muted">= {pct(r.pctSau)} of this day&rsquo;s cancellations</span><br />
+                      All cancellations {pct(r.rate)} — {n0(r.huy)} of {n0(r.item)} pcs<br />
+                      Value lost {bn(r.nmvHuy)} bn<br />
                       {!r.nhan && r.nhanCoThe.length > 0 && (
                         <><span className="muted">Mixed across months: {r.nhanCoThe.join(', ')}</span><br /></>
                       )}
@@ -6494,13 +6812,22 @@ export default function Dashboard({
               {/* Hàng nhãn thứ hai: tên ngày campaign, canh đúng cột với biểu đồ trên.
                   Để trống khi các tháng đang lọc không thống nhất cho cột đó. */}
               <div className="dnhan">
-                {campNgay.rows.map((r) => (
-                  <div key={r.ky}>
-                    {r.nhan && r.nhan !== 'BAU'
-                      ? <span style={{ color: NGAY_MAU[r.nhan] }}>{r.nhan.replace(' (14-15)', '').replace(' (24-25)', '')}</span>
-                      : ''}
-                  </div>
-                ))}
+                {campNgay.rows.map((r, i) => {
+                  // MMS và Payday kéo dài hai ngày; in tên ở cả hai cột thì hai
+                  // chữ dính vào nhau. Chỉ in ở cột đầu của mỗi chuỗi liên tiếp,
+                  // màu chữ vẫn cho biết cột sau thuộc cùng một loại.
+                  const truoc = campNgay.rows[i - 1]?.nhan
+                  const hien = r.nhan && r.nhan !== 'BAU' && r.nhan !== truoc
+                  return (
+                    <div key={r.ky}>
+                      {hien && (
+                        <span style={{ color: NGAY_MAU[r.nhan as string] }}>
+                          {(r.nhan as string).replace(' (14-15)', '').replace(' (24-25)', '')}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
               <h3 style={{ marginTop: 30 }}>Rolled up by day type</h3>
               <p className="sub">
@@ -6551,8 +6878,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-7">
-              <h2><span className="hno">7.7</span>Reason mix by campaign day — {periodNote}</h2>
+            <section id="s7-8">
+              <h2><span className="hno">7.8</span>Reason mix by campaign day — {periodNote}</h2>
               <p className="sub">
                 The same day types as 7.6, but split by <i>why</i> rather than <i>when</i>. Each row
                 is 100% of the cancellations on that day type, so the columns say which reason a
@@ -6579,8 +6906,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-8">
-              <h2><span className="hno">7.8</span>Order day vs cancel day — {periodNote}</h2>
+            <section id="s7-9">
+              <h2><span className="hno">7.9</span>Order day vs cancel day — {periodNote}</h2>
               <p className="sub">
                 Where orders placed on each day type actually die. Each row is 100% of the
                 cancellations from orders <i>placed</i> on that day type, split by the day type they
@@ -6615,8 +6942,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-9">
-              <h2><span className="hno">7.9</span>Cancellation rate by model, month by month</h2>
+            <section id="s7-10">
+              <h2><span className="hno">7.10</span>Cancellation rate by model, month by month</h2>
               <p className="sub">Darker is worse. A row that heats up month after month is a product problem, not a seasonal one.</p>
               <Matrix
                 corner="Model"
@@ -6637,8 +6964,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s7-10">
-              <h2><span className="hno">7.10</span>Worst models — {periodNote}</h2>
+            <section id="s7-11">
+              <h2><span className="hno">7.11</span>Worst models — {periodNote}</h2>
               <p className="sub">Models with at least 30 gross units in the selected period.</p>
               <RowBars
                 rows={skuF.filter((s) => s.so_luong >= 30)
@@ -6653,8 +6980,100 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s7-11">
-              <h2><span className="hno">7.11</span>Cancellation detail by model — {periodNote}</h2>
+            <section id="s7-12">
+              <h2><span className="hno">7.12</span>Before vs after pickup, by model — {periodNote}</h2>
+              <p className="sub">
+                One split, two owners. <b>Before pickup</b> means the order died while the parcel was
+                still in the warehouse — nothing moved, the loss is the sale. <b>After pickup</b>
+                means the courier already had it — outbound shipping, packing, the return leg, the
+                restock, and the days the unit is unsellable in transit. The two are exhaustive:
+                they add up exactly to the cancellation rate, and both are shares of units ordered.
+                Models with at least {HUY_MODEL_TOI_THIEU} units ordered in the range.
+                <b> Days in transit</b> is how long a failed parcel sat outside the warehouse before
+                the order was closed — median first, average after the slash — counted from pickup,
+                not from the order. Red past 7 days. Like 7.2 it comes from a per-month figure the
+                database computed, so it follows the month chips and the category toggle but not the
+                7-day / 30-day ranges.
+                <br /><br />
+                <b>How long each one takes.</b> Before-pickup cancels are almost all immediate —
+                median 6 minutes, 90% inside 24 hours. After-pickup cancels cannot happen before the
+                courier comes, so the earliest in this data is 40 hours; the median is 6.7 days and
+                90% land inside 12 days. That is why the boundary in 7.3 sits at 48 hours: under two
+                days is effectively always before pickup, over two days effectively always after.
+              </p>
+              <div className="filters" style={{ marginTop: 16 }}>
+                <div className="seg">
+                  <button className={huySort === 'sau' ? 'on' : ''} onClick={() => setHuySort('sau')}>
+                    Sort by after pickup
+                  </button>
+                  <button className={huySort === 'instant' ? 'on' : ''} onClick={() => setHuySort('instant')}>
+                    Sort by before pickup
+                  </button>
+                </div>
+              </div>
+              <div className="tablewrap" style={{ marginTop: 14 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Model</th><th className="n">Units ordered</th>
+                      <th className="n">Before pickup</th>
+                      <th className="n">After pickup</th>
+                      <th className="n">Cancelled</th>
+                      <th className="n">Days in transit</th>
+                      <th className="n">Value lost after pickup</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modelHuy.rows.map((r) => (
+                      <tr key={r.model}>
+                        <td>
+                          <span className="sw sm" style={{ background: r.cat === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
+                          {r.model}
+                        </td>
+                        <td className="n muted">{n0(r.dat)}</td>
+                        <td className="n" style={{ color: r.pctTruoc > modelHuy.tb.truoc ? 'var(--bad)' : 'inherit' }}>
+                          {pct(r.pctTruoc)}
+                        </td>
+                        <td className="n" style={{ color: r.pctSau > modelHuy.tb.sau ? 'var(--bad)' : 'inherit' }}>
+                          {pct(r.pctSau)}
+                        </td>
+                        <td className="n muted">{pct(r.pctHuy)}</td>
+                        <td className="n" style={{ color: (transitTheoModel.get(r.model)?.tv ?? 0) > 168 ? 'var(--bad)' : 'inherit' }}>
+                          {(() => {
+                            const t = transitTheoModel.get(r.model)
+                            if (!t?.tv) return <span className="muted">—</span>
+                            return <>{Math.round((t.tv / 24) * 10) / 10}
+                              <span className="muted" style={{ fontSize: 11 }}> / {Math.round(((t.tb ?? 0) / 24) * 10) / 10}</span></>
+                          })()}
+                        </td>
+                        <td className="n">{bn(r.nmvSau)} bn</td>
+                      </tr>
+                    ))}
+                    <tr style={{ fontWeight: 600 }}>
+                      <td>All models shown</td>
+                      <td className="n muted">{n0(modelHuy.tong.dat)}</td>
+                      <td className="n">{pct(modelHuy.tb.truoc)}</td>
+                      <td className="n">{pct(modelHuy.tb.sau)}</td>
+                      <td className="n muted">{pct(p1(modelHuy.tong.huy, modelHuy.tong.dat))}</td>
+                      <td className="n muted">—</td>
+                      <td className="n">{bn(modelHuy.tong.nmvSau)} bn</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="note">
+                Red means above the average of the models shown. Red on the <b>left</b> and not the
+                right means the model is being sold badly — the buyer backs out within minutes, which
+                points at how it is pitched in the room, the price on screen, or a checkout that
+                fails. Red on the <b>right</b> and not the left is the opposite: the order was firm
+                enough to ship, and the box still came back — delivery, packaging, or an expectation
+                set at the point of sale that the product did not meet. Different owners, and a model
+                can be red on both.
+              </div>
+            </section>
+
+            <section id="s7-13">
+              <h2><span className="hno">7.13</span>Cancellation detail by model — {periodNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -6903,6 +7322,7 @@ const CSS = `
 .wrap h3{font-size:14px;font-weight:600;margin:0 0 4px;color:var(--ink-2)}
 .sub{color:var(--ink-2);margin:7px 0 0;font-size:14.5px;max-width:74ch;line-height:1.6}
 .foot{color:var(--muted);font-size:12.5px;margin:8px 0 0}
+.stick .foot{margin:7px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .muted{color:var(--muted);font-weight:400}
 .up{color:var(--ok)}
 .down{color:var(--bad)}
@@ -6928,14 +7348,27 @@ const CSS = `
 .def.indent{margin-left:22px;border-left-color:var(--c2)}
 .def.warn-def{border-left-color:var(--bad);color:var(--muted)}
 
-.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:26px}
+/* ---- dải lọc dính ----
+   Cuộn tới phần 7.9 mà muốn đổi tháng thì không phải cuộn ngược lên đầu nữa.
+   Chiều cao dải nằm ở biến --stick, do JS đo và gắn vào .wrap; .side và
+   scroll-margin của các neo đều lấy theo nó nên luôn khớp. */
+.wrap{--stick:112px}  /* dự phòng; JS đo lại ngay khi mount */
+.stick{position:sticky;top:0;z-index:30;margin:26px -20px 0;padding:12px 20px 10px;
+  background:var(--ground);border-bottom:1px solid var(--line)}
+/* Đổ bóng nhẹ để biết nội dung đang chạy BÊN DƯỚI dải, không phải dính vào nó. */
+.stick::after{content:"";position:absolute;left:0;right:0;top:100%;height:10px;
+  background:linear-gradient(rgba(0,0,0,.05),transparent);pointer-events:none}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:0}
 .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:2px}
 .seg button{font:inherit;font-size:13.5px;padding:6px 13px;border:0;background:transparent;
   color:var(--ink-2);border-radius:4px;cursor:pointer;white-space:nowrap}
 .seg button.on{background:var(--surface);color:var(--ink);font-weight:500;
   box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .seg button:focus-visible{outline:2px solid var(--c1);outline-offset:1px}
-.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.chips{display:flex;gap:6px;flex-wrap:nowrap;align-items:center;margin-top:10px;
+  overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none}
 .chips-l{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
   margin-right:4px}
 .chip{font:inherit;font-size:12.5px;padding:4px 11px;border:1px solid var(--line);
@@ -6957,7 +7390,7 @@ const CSS = `
   align-items:start}
 .main{min-width:0}
 
-.side{position:sticky;top:14px;display:flex;flex-direction:column;gap:2px;
+.side{position:sticky;top:calc(var(--stick) + 14px);display:flex;flex-direction:column;gap:2px;
   border-right:1px solid var(--line);padding-right:14px}
 .side-gn{font-size:10.5px;color:var(--muted);padding:0 0 4px 14px;line-height:1.35;
   max-width:190px}
@@ -6984,10 +7417,11 @@ const CSS = `
   margin-right:9px;letter-spacing:.02em}
 
 /* Nhảy tới neo mà không bị tiêu đề dính che mất. */
-.wrap section[id],.wrap div[id^="s"]{scroll-margin-top:16px}
+.wrap section[id],.wrap div[id^="s"]{scroll-margin-top:calc(var(--stick) + 16px)}
 
 @media (max-width:1100px){
   .body{grid-template-columns:1fr;gap:0}
+  .stick{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}
   .side{position:static;flex-direction:row;flex-wrap:wrap;border-right:0;padding-right:0;
     border-bottom:1px solid var(--line);margin-bottom:18px}
   .side-g{flex-direction:row;align-items:center}
@@ -7072,6 +7506,34 @@ const CSS = `
 @media (max-width:640px){.row{grid-template-columns:1fr auto}.row-t{grid-column:1/-1}}
 
 .tablewrap{overflow-x:auto;margin-top:18px;border:1px solid var(--line);border-radius:4px}
+/* ---- hành trình đơn hàng (Timeline) ---- */
+.tl{margin-top:18px;position:relative}
+.tl-grid{position:relative;height:16px;margin-left:190px}
+.tl-gl{position:absolute;top:0;transform:translateX(-50%);text-align:center}
+.tl-gl i{position:absolute;left:50%;top:14px;width:1px;height:calc(16px + var(--tlh,150px));
+  background:var(--line)}
+.tl-gl b{font-size:10px;font-weight:500;color:var(--muted);font-variant-numeric:tabular-nums}
+.tl-row{display:flex;align-items:center;gap:0;margin-top:14px}
+.tl-lbl{width:190px;flex:none;padding-right:16px;line-height:1.35}
+.tl-lbl b{display:block;font-size:13.5px}
+.tl-lbl span{display:block;font-size:11.5px}
+.tl-track{position:relative;flex:1;height:34px}
+.tl-seg{position:absolute;top:11px;height:12px;border-radius:2px}
+.tl-seg.kho{background:var(--line-s)}
+.tl-dot{position:absolute;top:13px;width:8px;height:8px;margin-left:-4px;border-radius:50%;
+  background:var(--surface);border:2px solid var(--ink-2);box-sizing:border-box}
+.tl-end{position:absolute;top:7px;width:3px;height:20px;margin-left:-1px;border-radius:2px}
+.tl-avg{position:absolute;top:12px;width:10px;height:10px;margin-left:-5px;
+  border:1.5px solid;transform:rotate(45deg);background:var(--surface)}
+.tl-avg.st{position:static;display:inline-block;margin:0 5px 0 0;border-color:var(--muted)}
+.tl-t{position:absolute;top:-2px;transform:translateX(-50%);font-size:10.5px;font-weight:600;
+  white-space:nowrap;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.tl-t.sm{top:auto;bottom:-2px;font-weight:500;color:var(--muted);font-size:10px}
+@media (max-width:760px){
+  .tl-grid{margin-left:0}
+  .tl-row{flex-direction:column;align-items:stretch;gap:2px}
+  .tl-lbl{width:auto;padding:0}
+}
 .wrap table{border-collapse:collapse;width:100%;min-width:680px;background:var(--surface);font-size:13px}
 .wrap th,.wrap td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
 .wrap thead th{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
@@ -7118,6 +7580,7 @@ const CSS = `
   border-radius:2px 2px 0 0;min-height:1px}
 .wrap .sl-line,.wrap .sl-dots{position:absolute;inset:0 56px;width:calc(100% - 112px);height:100%;
   pointer-events:none;overflow:visible}
+.wrap .sl-v.sm{font-size:8.5px;letter-spacing:-.3px}
 .wrap .sl-v{position:absolute;transform:translateX(-50%);font-size:10.5px;font-weight:600;
   font-variant-numeric:tabular-nums;white-space:nowrap;background:var(--surface);
   border-radius:3px;padding:0 3px;line-height:1.35;pointer-events:none}
@@ -7135,8 +7598,8 @@ const CSS = `
 /* Hàng nhãn thứ hai dưới trục ngang của StackLine (tên ngày campaign).
    Padding và gap phải trùng .sl-x, nếu không nhãn lệch cột. */
 .wrap .dnhan{display:flex;gap:2px;padding:2px 56px 0}
-.wrap .dnhan>div{flex:1;min-width:0;text-align:center;font-size:9px;
-  font-weight:600;letter-spacing:-.2px;white-space:nowrap;overflow:visible}
+.wrap .dnhan>div{flex:1;min-width:0;text-align:left;font-size:9px;
+  font-weight:600;letter-spacing:-.2px;white-space:nowrap;overflow:visible;position:relative}
 .wrap .cur{margin-top:14px}
 .wrap .cur-plot{position:relative;height:300px;padding:0 52px;
   border-left:1px solid var(--line-s);border-bottom:1px solid var(--line-s);
