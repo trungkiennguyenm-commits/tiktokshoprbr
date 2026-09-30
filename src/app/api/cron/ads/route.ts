@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { syncAds } from '@/lib/ads/sync'
 
@@ -51,6 +51,38 @@ export async function GET(request: Request) {
         })
         .eq('id', run.id)
     }
+
+    // Gọi tiếp phần livestream. Gói Hobby chỉ cho 2 cron job (refresh-tokens
+    // và orders), nên chuỗi hằng ngày là orders → ads → live.
+    //
+    // Mắt xích này TRƯỚC ĐÂY KHÔNG TỒN TẠI: chú thích ở /api/cron/live nói
+    // "được lượt đồng bộ quảng cáo gọi tiếp" nhưng thực tế chưa ai nối, nên
+    // live_sessions chỉ cập nhật mỗi khi có người bấm tay — lần gần nhất
+    // 25/09, trong khi orders vẫn chạy đều mỗi tối. Sheet Livestream vì thế
+    // đứng im 5 ngày mà không có gì báo.
+    //
+    // Phải gọi qua TÊN MIỀN PRODUCTION: địa chỉ riêng của từng bản deploy bị
+    // Deployment Protection chặn 401 trước khi tới code (xem chú thích dài
+    // trong /api/cron/sync).
+    {
+      const host = process.env.VERCEL_PROJECT_PRODUCTION_URL
+      const liveUrl = new URL((host ? `https://${host}` : url.origin) + '/api/cron/live')
+      after(async () => {
+        try {
+          await fetch(liveUrl.toString(), {
+            headers: { authorization: `Bearer ${secret}` },
+            cache: 'no-store',
+            signal: AbortSignal.timeout(15_000),
+          })
+        } catch (e) {
+          const name = e instanceof Error ? e.name : ''
+          // Hết 15s nghĩa là nó đang chạy thật, bỏ đi là đúng.
+          if (name === 'TimeoutError' || name === 'AbortError') return
+          console.error('[ads] gọi tiếp /api/cron/live thất bại:', e)
+        }
+      })
+    }
+
     return NextResponse.json({ ok: true, ...res })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
