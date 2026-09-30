@@ -48,6 +48,11 @@ type TtsOrder = {
   cancel_time?: number
   paid_time?: number
   delivery_time?: number
+  /** Lúc shipper lấy hàng. Có giá trị nghĩa là parcel đã ra khỏi kho — mốc
+   *  quyết định một đơn huỷ là mất cơ hội bán hay lỗ operation. */
+  collection_time?: number
+  /** Lúc shop bấm "ready to ship". */
+  rts_time?: number
   cancel_reason?: string
   cancellation_initiator?: string
   is_cod?: boolean
@@ -139,6 +144,10 @@ export const ordersAdapter: SyncAdapter<TtsOrder> = {
       update_time: tsToIso(o.update_time),
       cancel_time: tsToIso(o.cancel_time),
       delivery_time: tsToIso(o.delivery_time),
+      // Hai mốc này trước đây chỉ nằm trong raw. Đọc chúng từ jsonb ở tầng view
+      // tốn 16s vì phải detoast cả cột raw, nên nâng thành cột thật.
+      collection_time: tsToIso(o.collection_time),
+      rts_time: tsToIso(o.rts_time),
       paid_time: tsToIso(o.paid_time), // có ở ~40% đơn (đơn đã thanh toán)
       cancel_reason: o.cancel_reason ?? null,
       cancellation_initiator: o.cancellation_initiator ?? null,
