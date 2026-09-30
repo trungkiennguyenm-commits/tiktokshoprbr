@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import Dashboard, {
   type Monthly, type Daily, type Sku, type SkuPeriod,
-  type Segment, type LapseRow, type Ship,
+  type Segment, type Ship,
   type CampTong, type CampMatrix, type HuyChiTiet,
   type AdsVs, type AdsMonth, type AdsCampaign,
   type LiveDaily, type LiveMonth, type LiveRoomMonth, type LiveSession, type LiveLgm,
@@ -38,14 +38,13 @@ export default async function Page() {
   const db = supabaseAdmin()
 
   try {
-    const [m, d, s, sm, sd, seg, lap, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd, ks, ct, cmx, hct] = await Promise.all([
+    const [m, d, s, sm, sd, seg, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd, ks, ct, cmx, hct] = await Promise.all([
       fetchAll<Monthly>(db, 'v_perf_monthly'),
       fetchAll<Daily>(db, 'v_perf_daily'),
       fetchAll<Sku>(db, 'v_sku_perf'),
       fetchAll<SkuPeriod>(db, 'v_sku_monthly'),
       fetchAll<SkuPeriod>(db, 'v_sku_daily'),
       fetchAll<Segment>(db, 'v_segment_monthly'),
-      fetchAll<LapseRow>(db, 'v_lapse_daily'),
       fetchAll<Ship>(db, 'v_shipping_daily'),
       fetchAll<AdsVs>(db, 'v_ads_vs_sales_daily'),
       fetchAll<AdsMonth>(db, 'v_ads_perf_monthly'),
@@ -67,7 +66,7 @@ export default async function Page() {
       <Dashboard
         monthly={num(m)} daily={num(d)} sku={num(s)}
         skuMonthly={num(sm)} skuDaily={num(sd)}
-        segMonthly={num(seg)} lapseDaily={num(lap)} shipDaily={num(ship)}
+        segMonthly={num(seg)} shipDaily={num(ship)}
         adsVs={num(av)} adsMonthly={num(am)} adsCampaigns={num(ac)}
         liveDaily={num(ld)} liveMonthly={num(lm)}
         liveRooms={num(lr)} liveSessions={num(ls)} liveLgm={num(lg)}
