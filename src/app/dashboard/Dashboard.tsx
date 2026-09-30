@@ -53,6 +53,27 @@ export type Segment = {
   platform_disc_chua_huy: number; khach_tra_chua_huy: number
 }
 export type LapseRow = { ngay: string; khoang: string; thu_tu: number; category: string; so_luong: number }
+/** Ba view phân tích huỷ theo NGÀY CAMPAIGN. Cách chia ngày nằm trong hàm
+ *  f_loai_ngay() ở Postgres, không nằm ở đây — sửa taxonomy thì sửa view. */
+export type CampTong = {
+  ngay: string; category: string; loai_ngay: string; thu_tu_ngay: number
+  tong_item: number; so_huy: number; nmv_dat: number; nmv_huy: number
+}
+/** v_huy_chi_tiet — một dòng cho mỗi tổ hợp (ngày đặt, category, mốc thời gian
+ *  tới lúc huỷ, đã lấy hàng chưa, nhóm lý do). sau_lay lấy từ collection_time
+ *  của TikTok: có collection_time nghĩa là shipper đã lấy hàng rồi. */
+export type HuyChiTiet = {
+  ngay: string; category: string; loai_ngay: string; thu_tu_ngay: number
+  khoang: string; thu_tu: number; sau_lay: boolean
+  ly_do: string; thu_tu_ly_do: number; nguoi_huy: string
+  so_luong: number; nmv_huy: number; gio_tong: number; sl_co_gio: number
+  gio_tu_luc_lay: number | null; sl_co_lay: number
+}
+export type CampMatrix = {
+  ngay: string; category: string
+  dat_loai: string; dat_thu_tu: number; huy_loai: string; huy_thu_tu: number
+  so_luong: number; nmv_huy: number
+}
 export type Ship = {
   ngay: string; so_don: number; phi_ship_goc: number; phi_ship_khach_tra: number
   shop_tro_gia_ship: number; san_tro_gia_ship: number; ship_dot_cho_don_huy: number
@@ -151,6 +172,7 @@ type Props = {
   liveDaily: LiveDaily[]; liveMonthly: LiveMonth[]
   liveRooms: LiveRoomMonth[]; liveSessions: LiveSession[]; liveLgm: LiveLgm[]
   kenhMonthly: KenhMonth[]; kenhDaily: KenhDay[]; kenhSku: KenhSku[]
+  campTong: CampTong[]; campMatrix: CampMatrix[]; huyChiTiet: HuyChiTiet[]
 }
 
 /* ============================== helpers ============================== */
@@ -256,8 +278,9 @@ const SECTIONS = [
   },
   {
     id: 'Cancellations', ten: 'Cancellations',
-    groups: [{ ten: '', subs: ['Key numbers', 'Rate per period', 'Time to cancel', 'By model',
-      'Worst models', 'Detail table'] }],
+    groups: [{ ten: '', subs: ['Key numbers', 'Rate per period', 'Time to cancel',
+      'Before or after pickup', 'Why cancelled', 'Campaign day',
+      'Order day vs cancel day', 'By model', 'Worst models', 'Detail table'] }],
   },
   {
     id: 'P&L', ten: 'P&L',
@@ -381,6 +404,19 @@ const GLOSSARY: Nhom[] = [
         ten: 'Lapse (median)',
         dinh_nghia: 'The middle cancel lapse for that model in that period.',
         ghi_chu: 'Only shown when a single period is selected — medians cannot be combined across periods. More trustworthy than the average, which a few very late cancellations drag upward.',
+      },
+      {
+        ten: 'Collected / after pickup',
+        dinh_nghia: 'Whether the courier had already taken the parcel when the order was cancelled.',
+        ct: 'TikTok\u2019s collection_time is present on the order',
+        ghi_chu: 'This is what decides the cost. Before pickup the loss is the sale. After pickup it is also outbound shipping, packing, the return leg and the restock, plus the days the unit spends unsellable in transit. The boundary sits almost exactly at 48 hours of cancel lapse.',
+        canh_bao: true,
+      },
+      {
+        ten: 'Campaign day',
+        dinh_nghia: 'Where a date sits in that month\u2019s sale calendar.',
+        ct: 'DDAY = double date (4/4, 5/5 \u2026 9/9) \u00b7 D-3\u2026D-1 before it \u00b7 D+1\u2026D+3 after it \u00b7 MMS = 14\u201315 \u00b7 Payday = 24\u201325 \u00b7 BAU = the rest',
+        ghi_chu: 'D+1\u2026D+3 is not a TikTok label \u2014 it is ours, added because the question is what happens to orders AFTER a campaign ends. When a D+ day collides with MMS (December, November), D+ wins.',
       },
       {
         ten: 'Lapse (avg)',
@@ -578,6 +614,62 @@ const ROOM_METRICS: {
   { id: 'pcs', ten: 'Units sold', don_vi: '',
     lay: (a) => a.pcs || null, fmt: (v) => new Intl.NumberFormat('en-US').format(Math.round(v || 0)) },
 ]
+/* Sáu khoảng thời gian tới lúc huỷ. Hai đầu là hai vấn đề khác nhau nên
+   tô hai họ màu khác nhau: nóng = huỷ sớm (lỗi ở bước xác nhận đơn),
+   lạnh = huỷ muộn (khách từ chối nhận hàng). */
+const KHOANG_MAU: Record<string, string> = {
+  '0 - 1 hour': '#B31B4A', '1 - 6 hours': '#D4623A', '6 - 24 hours': '#E0A33C',
+  '1 - 3 days': '#7FA8C9', '3 - 7 days': '#2563A8', 'over 7 days': '#31406B',
+}
+const KHOANG_TT = ['0 - 1 hour', '1 - 6 hours', '6 - 24 hours', '1 - 3 days', '3 - 7 days', 'over 7 days']
+
+/* Mười hai mốc mịn của v_huy_chi_tiet. Mịn tới cấp NGÀY vì câu hỏi thật là
+   "đơn đặt ngày 11 chết ngày nào" — mốc 3–4 days trả lời được, mốc 3–7 days
+   thì không. Vạch 48h là ranh giới shipper đã lấy hàng: dưới vạch tô ấm
+   (huỷ rẻ), trên vạch tô lạnh dần (huỷ đắt). */
+const MOC_TT = ['0 - 1h', '1 - 3h', '3 - 6h', '6 - 12h', '12 - 24h', '1 - 2 days',
+  '2 - 3 days', '3 - 4 days', '4 - 5 days', '5 - 6 days', '6 - 7 days', '7+ days']
+const MOC_MAU: Record<string, string> = {
+  '0 - 1h': '#B31B4A', '1 - 3h': '#C93A52', '3 - 6h': '#D4623A', '6 - 12h': '#E0A33C',
+  '12 - 24h': '#E8C77A', '1 - 2 days': '#C9D4B8',
+  '2 - 3 days': '#A9C4E0', '3 - 4 days': '#7FA8C9', '4 - 5 days': '#4E86B8',
+  '5 - 6 days': '#2563A8', '6 - 7 days': '#1E4E85', '7+ days': '#31406B',
+}
+/** Mốc mịn thứ i rơi vào nhóm thô nào — dùng khi trục ngang đã hết chỗ. */
+const khoangTho = (tt: number) =>
+  tt <= 1 ? KHOANG_TT[0] : tt <= 3 ? KHOANG_TT[1] : tt <= 5 ? KHOANG_TT[2]
+    : tt <= 7 ? KHOANG_TT[3] : tt <= 11 ? KHOANG_TT[4] : KHOANG_TT[5]
+/** Mốc đầu tiên đã nằm sau khi shipper lấy hàng (thu_tu 7 = 2–3 days). */
+const MOC_SAU_LAY = 7
+
+/** Thứ tự đọc của các loại ngày campaign, trùng với f_thu_tu_ngay() ở DB. */
+const NGAY_TT = ['D-3', 'D-2', 'D-1', 'DDAY', 'D+1', 'D+2', 'D+3',
+  'MMS (14-15)', 'Payday (24-25)', 'BAU']
+/** Ba cụm để đọc nhanh: trước / trong / sau DDAY, rồi hai loại sale khác, rồi BAU. */
+const NGAY_MAU: Record<string, string> = {
+  'D-3': '#7FA8C9', 'D-2': '#4E86B8', 'D-1': '#2563A8', 'DDAY': '#B31B4A',
+  'D+1': '#C2620B', 'D+2': '#D4863A', 'D+3': '#E0A868',
+  'MMS (14-15)': '#5B4A9E', 'Payday (24-25)': '#1F7A4D', 'BAU': '#8A94A6',
+}
+
+/* Chín nhóm lý do huỷ. Hai nhóm lớn nhất (giao thất bại, không còn nhu cầu)
+   lấy màu đậm; nhóm "có giá tốt hơn" lấy màu nổi riêng vì nó là nhóm duy nhất
+   trả lời trực tiếp câu hỏi về giá. */
+const LYDO_TT = ['Delivery failed', 'No longer needed', 'Found a better price',
+  'Unpaid in time', 'Payment problem', 'Wants to change the order',
+  'Delivery cost too high', 'Seller side', 'Other']
+const LYDO_MAU: Record<string, string> = {
+  'Delivery failed': '#31406B', 'No longer needed': '#7FA8C9',
+  'Found a better price': '#B31B4A', 'Unpaid in time': '#E0A33C',
+  'Payment problem': '#C2620B', 'Wants to change the order': '#5B4A9E',
+  'Delivery cost too high': '#1F7A4D', 'Seller side': '#D4623A',
+  'Other': '#8A94A6',
+}
+/** Ai bấm huỷ. Dùng ở bảng, không dùng ở biểu đồ. */
+const NGUOI_HUY: Record<string, string> = {
+  SYSTEM: 'TikTok / hệ thống', BUYER: 'Khách', SELLER: 'Shop', UNKNOWN: '—',
+}
+
 const BAND_COLOR: Record<string, string> = {
   '<5M': '#4A5568', '5-10M': '#2563A8', '10-15M': '#C2620B',
   '15-20M': '#1F7A4D', '20-30M': '#8E44AD', '30M+': '#B31B4A',
@@ -1341,6 +1433,7 @@ export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, lapseDaily, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
+  campTong, campMatrix, huyChiTiet,
 }: Props) {
   const [sec, setSec] = useState<Sec>('Summary')
   const [cat, setCat] = useState<CatKey>('all')
@@ -1678,6 +1771,227 @@ export default function Dashboard({
     return out.map((r) => ({ ...r, pct: p1(r.so_luong, tot) }))
   }, [lapseDaily, keys, byMonth, cat])
 
+  /* ================= phân tích huỷ =================
+     Ba useMemo dưới đây đều đọc v_huy_chi_tiet — một view duy nhất chứa:
+     mốc thời gian tới lúc huỷ (mịn tới cấp ngày), đã-lấy-hàng-chưa, và nhóm
+     lý do. Mẫu số (mọi đơn đặt trong ngày) nằm ở v_lapse_campaign_tong.
+
+     Ranh giới quan trọng nhất là 48 giờ: dưới 48h gần như toàn bộ đơn huỷ
+     trước khi shipper lấy hàng — chỉ mất cơ hội bán; trên 48h thì 94–99%
+     đã lấy hàng rồi, tức mất cả tiền ship và công kho. Cờ sau_lay lấy từ
+     collection_time của TikTok, không phải suy ra từ số giờ. */
+
+  const camp = useMemo(() => {
+    const giu = (ngay: string) => (byMonth ? keys.has(`${ngay.slice(0, 7)}-01`) : keys.has(ngay))
+    const catOk = (c: string) => cat === 'all' || c === cat
+
+    const tong = new Map<string, {
+      loai: string; tt: number; item: number; huy: number; nmvHuy: number; ngay: Set<string>
+    }>()
+    for (const r of campTong) {
+      if (!giu(r.ngay) || !catOk(r.category)) continue
+      const c = tong.get(r.loai_ngay)
+        ?? { loai: r.loai_ngay, tt: r.thu_tu_ngay, item: 0, huy: 0, nmvHuy: 0, ngay: new Set<string>() }
+      c.item += Number(r.tong_item || 0)
+      c.huy += Number(r.so_huy || 0)
+      c.nmvHuy += Number(r.nmv_huy || 0)
+      c.ngay.add(r.ngay)
+      tong.set(r.loai_ngay, c)
+    }
+
+    // Cơ cấu mốc thời gian gộp về 6 nhóm thô cho biểu đồ theo loại ngày —
+    // 12 nhóm mịn trên một trục 10 cột thì không đọc được.
+    const mix = new Map<string, number[]>()
+    for (const r of huyChiTiet) {
+      if (!giu(r.ngay) || !catOk(r.category)) continue
+      const arr = mix.get(r.loai_ngay) ?? Array(KHOANG_TT.length).fill(0)
+      arr[KHOANG_TT.indexOf(khoangTho(r.thu_tu))] += Number(r.so_luong || 0)
+      mix.set(r.loai_ngay, arr)
+    }
+
+    const rows = NGAY_TT
+      .map((loai) => {
+        const t = tong.get(loai)
+        if (!t || !t.item) return null
+        const raw = mix.get(loai) ?? Array(KHOANG_TT.length).fill(0)
+        const sHuy = raw.reduce((a, b) => a + b, 0)
+        // Chuẩn hoá về 100 để StackLine vẽ mọi cột cao bằng nhau — cột ở đây
+        // là cơ cấu, không phải lượng; lượng đã có ở cột Cancelled trong bảng.
+        const parts = sHuy ? raw.map((v) => (v / sHuy) * 100) : Array(KHOANG_TT.length).fill(0)
+        return {
+          loai, tt: t.tt, soNgay: t.ngay.size,
+          item: t.item, huy: t.huy, nmvHuy: t.nmvHuy,
+          rate: p1(t.huy, t.item),
+          parts,
+          nhanh: parts[0] + parts[1] + parts[2],   // huỷ trong 24h
+          cham: parts[4] + parts[5],               // huỷ từ ngày thứ 3 trở đi
+        }
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+
+    const bau = rows.find((r) => r.loai === 'BAU')
+    return { rows, bau }
+  }, [campTong, huyChiTiet, keys, byMonth, cat])
+
+  /* ---- lý do huỷ ----
+     Lý do nằm ở cấp ĐƠN (orders.cancel_reason), không ở cấp dòng sản phẩm,
+     nên mỗi dòng của đơn thừa hưởng lý do của đơn đó — cùng cách đếm với
+     mọi số huỷ khác trên dashboard. */
+
+  const lyDo = useMemo(() => {
+    const rows = huyChiTiet
+      .filter((r) => (byMonth ? keys.has(`${r.ngay.slice(0, 7)}-01`) : keys.has(r.ngay)))
+      .filter((r) => cat === 'all' || r.category === cat)
+
+    type O = {
+      ly_do: string; tt: number; sl: number; nmv: number; gio: number; nGio: number
+      sauLay: number; nguoi: Map<string, number>
+    }
+    const tong = new Map<string, O>()
+    const theoKy = new Map<string, number[]>()
+    const theoNgay = new Map<string, number[]>()
+
+    for (const r of rows) {
+      const sl = Number(r.so_luong || 0)
+      const j = LYDO_TT.indexOf(r.ly_do)
+      if (j < 0) continue
+
+      const c = tong.get(r.ly_do)
+        ?? { ly_do: r.ly_do, tt: r.thu_tu_ly_do, sl: 0, nmv: 0, gio: 0, nGio: 0, sauLay: 0, nguoi: new Map() }
+      c.sl += sl
+      c.nmv += Number(r.nmv_huy || 0)
+      c.gio += Number(r.gio_tong || 0)
+      c.nGio += Number(r.sl_co_gio || 0)
+      if (r.sau_lay) c.sauLay += sl
+      c.nguoi.set(r.nguoi_huy, (c.nguoi.get(r.nguoi_huy) ?? 0) + sl)
+      tong.set(r.ly_do, c)
+
+      const ky = byMonth ? `${r.ngay.slice(0, 7)}-01` : r.ngay
+      const a1 = theoKy.get(ky) ?? Array(LYDO_TT.length).fill(0)
+      a1[j] += sl; theoKy.set(ky, a1)
+
+      const a2 = theoNgay.get(r.loai_ngay) ?? Array(LYDO_TT.length).fill(0)
+      a2[j] += sl; theoNgay.set(r.loai_ngay, a2)
+    }
+
+    const tongSl = Array.from(tong.values()).reduce((a, r) => a + r.sl, 0)
+    const bang = LYDO_TT
+      .map((l) => tong.get(l))
+      .filter((r): r is O => !!r && r.sl > 0)
+      .map((r) => ({
+        ly_do: r.ly_do,
+        sl: r.sl,
+        pct: p1(r.sl, tongSl),
+        nmv: r.nmv,
+        gioTb: r.nGio ? Math.round(r.gio / r.nGio) : null,
+        pctSauLay: p1(r.sauLay, r.sl),
+        // Ai bấm huỷ nhiều nhất cho lý do này
+        nguoi: Array.from(r.nguoi.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'UNKNOWN',
+      }))
+    // Chỉ giữ các nhóm lý do thực sự có số, để chú giải không đầy màu chết
+    const co = LYDO_TT.filter((l) => (tong.get(l)?.sl ?? 0) > 0)
+
+    const chuanHoa = (m: Map<string, number[]>, thuTu: string[]) => thuTu
+      .filter((k) => m.has(k))
+      .map((k) => {
+        const raw = m.get(k) as number[]
+        const t = raw.reduce((a, b) => a + b, 0)
+        return { ky: k, parts: co.map((l) => (t ? (raw[LYDO_TT.indexOf(l)] / t) * 100 : 0)), n: t }
+      })
+
+    const kyTT = Array.from(theoKy.keys()).sort((a, b) => a.localeCompare(b))
+    return {
+      bang, co, tongSl,
+      theoKy: chuanHoa(theoKy, kyTT),
+      theoNgay: chuanHoa(theoNgay, NGAY_TT),
+    }
+  }, [huyChiTiet, keys, byMonth, cat])
+
+  /* ---- trước hay sau khi shipper lấy hàng ----
+     Câu hỏi vận hành thật sự. Đơn chết trước khi lấy hàng chỉ mất cơ hội bán;
+     đơn chết sau khi lấy hàng mất tiền ship hai chiều, công đóng gói, và quay
+     đầu về kho. Mốc thời gian mịn ở đây là để đọc được kiểu "đơn ngày 11 chết
+     ngày 15" — nó rơi vào mốc 3–4 days. */
+
+  const pickup = useMemo(() => {
+    const rows = huyChiTiet
+      .filter((r) => (byMonth ? keys.has(`${r.ngay.slice(0, 7)}-01`) : keys.has(r.ngay)))
+      .filter((r) => cat === 'all' || r.category === cat)
+
+    // cơ cấu 12 mốc mịn theo NGÀY ĐẶT (hoặc tháng, theo thanh lọc)
+    const mocTheoKy = new Map<string, number[]>()
+    // trước / sau khi lấy hàng, theo kỳ
+    const layTheoKy = new Map<string, { truoc: number; sau: number; gioLay: number; nLay: number }>()
+    // 12 mốc mịn cộng dồn cả kỳ, tách trước/sau
+    const moc = Array.from({ length: 12 }, () => ({ truoc: 0, sau: 0, nmv: 0 }))
+    let truoc = 0; let sau = 0; let gioLay = 0; let nLay = 0
+
+    for (const r of rows) {
+      const sl = Number(r.so_luong || 0)
+      const ky = byMonth ? `${r.ngay.slice(0, 7)}-01` : r.ngay
+      const a = mocTheoKy.get(ky) ?? Array(12).fill(0)
+      a[r.thu_tu - 1] += sl
+      mocTheoKy.set(ky, a)
+
+      const b = layTheoKy.get(ky) ?? { truoc: 0, sau: 0, gioLay: 0, nLay: 0 }
+      const m = moc[r.thu_tu - 1]
+      if (r.sau_lay) {
+        b.sau += sl; sau += sl; m.sau += sl
+        b.gioLay += Number(r.gio_tu_luc_lay || 0); b.nLay += Number(r.sl_co_lay || 0)
+        gioLay += Number(r.gio_tu_luc_lay || 0); nLay += Number(r.sl_co_lay || 0)
+      } else {
+        b.truoc += sl; truoc += sl; m.truoc += sl
+      }
+      m.nmv += Number(r.nmv_huy || 0)
+      layTheoKy.set(ky, b)
+    }
+
+    const kyTT = Array.from(mocTheoKy.keys()).sort((a, b) => a.localeCompare(b))
+    const theoKy = kyTT.map((k) => {
+      const raw = mocTheoKy.get(k) as number[]
+      const t = raw.reduce((x, y) => x + y, 0)
+      const l = layTheoKy.get(k) as { truoc: number; sau: number; gioLay: number; nLay: number }
+      return {
+        ky: k, n: t,
+        // chuẩn hoá về 100: đây là cơ cấu trong một ngày, không phải lượng
+        parts: t ? raw.map((v) => (v / t) * 100) : Array(12).fill(0),
+        soLuong: raw,
+        truoc: l.truoc, sau: l.sau,
+        pctSau: p1(l.sau, l.truoc + l.sau),
+      }
+    })
+
+    return {
+      theoKy,
+      moc: moc.map((m, i) => ({
+        khoang: MOC_TT[i], truoc: m.truoc, sau: m.sau, nmv: m.nmv,
+        tong: m.truoc + m.sau, pctSau: p1(m.sau, m.truoc + m.sau),
+      })).filter((m) => m.tong > 0),
+      truoc, sau, tong: truoc + sau,
+      pctSau: p1(sau, truoc + sau),
+      gioTrongTayShipper: nLay ? Math.round((gioLay / nLay) * 10) / 10 : null,
+    }
+  }, [huyChiTiet, keys, byMonth, cat])
+
+  /* ---- ma trận ngày đặt × ngày huỷ ----
+     Trả lời trực tiếp câu hỏi: đơn đặt ngày DDAY thì chết vào loại ngày nào.
+     Mỗi hàng chuẩn hoá về 100% theo hàng, vì lượng huỷ giữa các loại ngày
+     lệch nhau hàng chục lần. */
+
+  const campMx = useMemo(() => {
+    const giu = (ngay: string) => (byMonth ? keys.has(`${ngay.slice(0, 7)}-01`) : keys.has(ngay))
+    const cell = new Map<string, number>()
+    const hangTong = new Map<string, number>()
+    for (const r of campMatrix) {
+      if (!giu(r.ngay) || (cat !== 'all' && r.category !== cat)) continue
+      const v = Number(r.so_luong || 0)
+      cell.set(`${r.dat_loai}|${r.huy_loai}`, (cell.get(`${r.dat_loai}|${r.huy_loai}`) ?? 0) + v)
+      hangTong.set(r.dat_loai, (hangTong.get(r.dat_loai) ?? 0) + v)
+    }
+    const hang = NGAY_TT.filter((l) => (hangTong.get(l) ?? 0) > 0)
+    const cot = NGAY_TT.filter((l) => hang.some((h) => (cell.get(`${h}|${l}`) ?? 0) > 0))
+    return { cell, hangTong, hang, cot }
+  }, [campMatrix, keys, byMonth, cat])
   /** Ô số liệu đầu phần Discounts. Chạy theo bộ lọc NGÀY như cả phần đó. */
   const discTotals = useMemo(() => {
     const t = { booked: 0, valid: 0, seller: 0, list: 0, nmv: 0 }
@@ -5818,6 +6132,9 @@ export default function Dashboard({
                 <Tile label={`Cancelled ${lapse[0]?.khoang ?? 'early'}`}
                   value={pct(lapse[0]?.pct ?? 0)}
                   sub="share of all cancellations" />
+                <Tile label="Cancelled after pickup" value={pct(pickup.pctSau)}
+                  tone={pickup.pctSau > 40 ? 'bad' : 'ok'}
+                  sub="parcel had already shipped — see 7.4" />
               </div>
             </section>
 
@@ -5873,11 +6190,315 @@ export default function Dashboard({
                 <b>Second cluster — cancelled at day 3–7.</b> That is the delivery window. The parcel
                 shipped and the buyer refused it, which matches the &ldquo;delivery failed&rdquo;
                 reason code. The shipping money is genuinely gone.
+                <br /><br />
+                7.4 splits both clusters by whether the courier had actually collected the parcel,
+                which is what decides the cost, and breaks the buckets down to day resolution.
               </div>
             </section>
 
             <section id="s7-4">
-              <h2><span className="hno">7.4</span>Cancellation rate by model, month by month</h2>
+              <h2><span className="hno">7.4</span>Before or after the courier collected — {periodNote} · {dod}</h2>
+              <p className="sub">
+                The one split that decides what a cancellation actually costs. TikTok stamps a
+                <code> collection_time</code> on the order the moment the courier takes the parcel,
+                so this is recorded fact, not inferred from the clock. A cancellation
+                <b> before</b> collection costs the sale and nothing else. A cancellation
+                <b> after</b> collection costs outbound shipping, packing, the return leg and the
+                restock — and the unit is out of sellable stock for the days it spends in transit.
+              </p>
+              <div className="tiles" style={{ marginTop: 20 }}>
+                <Tile label="Cancelled after collection" value={pct(pickup.pctSau)}
+                  tone={pickup.pctSau > 40 ? 'bad' : 'ok'}
+                  sub={`${n0(pickup.sau)} of ${n0(pickup.tong)} cancelled pcs`} />
+                <Tile label="Cancelled before collection" value={pct(100 - pickup.pctSau)}
+                  sub={`${n0(pickup.truoc)} pcs — sale lost, nothing shipped`} />
+                <Tile label="Time in the courier's hands"
+                  value={pickup.gioTrongTayShipper == null ? '—' : n0(pickup.gioTrongTayShipper)}
+                  unit="h" sub="collection to cancellation, average" />
+                <Tile label="Value lost after collection"
+                  value={bn(pickup.moc.filter((m) => MOC_TT.indexOf(m.khoang) + 1 >= MOC_SAU_LAY)
+                    .reduce((a, m) => a + m.nmv, 0))}
+                  unit=" bn" sub="NMV on parcels that had already shipped" />
+              </div>
+
+              <h3 style={{ marginTop: 30 }}>Where the 48-hour line falls</h3>
+              <p className="sub">
+                Each row is one time bucket, split by whether the parcel had been collected. The
+                boundary is sharp and it is at <b>48 hours</b>: almost everything cancelled inside
+                two days died before pickup, almost everything after two days died after it. That
+                gives one operating rule — a cancellation inside 48h is a lost sale, past 48h it is
+                an operations loss.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time to cancel</th><th className="n">Before pickup</th>
+                      <th className="n">After pickup</th><th className="n">Total</th>
+                      <th className="n">% after pickup</th><th className="n">Value lost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pickup.moc.map((m) => {
+                      const sau = MOC_TT.indexOf(m.khoang) + 1 >= MOC_SAU_LAY
+                      return (
+                        <tr key={m.khoang} style={sau ? { background: 'rgba(193,18,31,0.05)' } : undefined}>
+                          <td><span className="sw sm" style={{ background: MOC_MAU[m.khoang] }} />{m.khoang}</td>
+                          <td className="n">{n0(m.truoc)}</td>
+                          <td className="n">{n0(m.sau)}</td>
+                          <td className="n muted">{n0(m.tong)}</td>
+                          <td className="n" style={{ color: m.pctSau > 50 ? 'var(--bad)' : 'inherit' }}>{pct(m.pctSau)}</td>
+                          <td className="n">{bn(m.nmv)} bn</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 style={{ marginTop: 30 }}>Time-to-cancel mix, {periodWord} by {periodWord}</h3>
+              <p className="sub">
+                Twelve buckets at day resolution, each column normalised to 100% — so this reads as
+                the <i>shape</i> of a {periodWord}&rsquo;s cancellations, not its volume. Warm bands
+                are cancellations before pickup, cool bands after. Read it by order date: if orders
+                placed on the 11th–13th are being cancelled on the 15th, the <b>3 - 4 days</b> and
+                <b> 4 - 5 days</b> bands on those dates fatten — and because those bands sit past
+                the 48-hour line, every one of those parcels had already shipped. The red line is
+                the share of that {periodWord}&rsquo;s cancellations that happened after pickup.
+              </p>
+              <StackLine
+                rows={pickup.theoKy.map((r) => ({ ky: r.ky, parts: r.parts }))}
+                series={MOC_TT.map((k) => ({ ten: k, color: MOC_MAU[k] }))}
+                lines={[{ ten: 'After pickup, % of cancellations', color: 'var(--bad)',
+                  vals: pickup.theoKy.map((r) => r.pctSau) }]}
+                fmtCot={(v) => `${Math.round(v)}%`}
+                fmtDuong={(v) => `${Math.round(v)}%`}
+                label={lbl}
+                tip={(i) => {
+                  const r = pickup.theoKy[i]
+                  if (!r) return null
+                  return (
+                    <><b>{lbl(r.ky)}</b> · {n0(r.n)} cancelled pcs<br />
+                      After pickup {pct(r.pctSau)} ({n0(r.sau)} pcs)<br />
+                      <span className="muted">— mix —</span><br />
+                      {MOC_TT.map((k, j) => (r.parts[j] > 0.5 ? (
+                        <span key={k}><i className="sw" style={{ background: MOC_MAU[k] }} />
+                          {k} {pct(Math.round(r.parts[j] * 10) / 10)} · {n0(r.soLuong[j])} pcs<br /></span>
+                      ) : null))}
+                    </>
+                  )
+                }}
+              />
+              <div className="note hot">
+                <b>Why this matters more than the headline cancellation rate.</b> Half the
+                cancellations on this account happen after the parcel has left — the average one
+                spends about a week in the courier&rsquo;s hands before it dies. Those are the ones
+                with a real cost attached, and they are almost all the same reason code (7.5:
+                delivery failed). The other half never shipped, and while they still cost the sale,
+                fixing them is a different job: firmer orders in the live room, a checkout that
+                works, and a price the buyer will not immediately go looking to beat.
+                <br /><br />
+                <b>One caveat on the newest dates.</b> A cancellation that will land at day 5 has
+                not happened yet on a date five days old, so the most recent columns are missing
+                their cool bands and will look better than they end up. Read the last week of any
+                range as provisional.
+              </div>
+            </section>
+
+            <section id="s7-5">
+              <h2><span className="hno">7.5</span>Why orders are cancelled — {periodNote} · {dod}</h2>
+              <p className="sub">
+                TikTok returns a reason and an initiator on every cancelled order, so this is the
+                shop&rsquo;s own data, not an inference from timing. The wording arrives in
+                Vietnamese, English and Chinese for the same reason, so it is folded into nine
+                groups. Each column is one {periodWord}, normalised to 100% — the mix, not the
+                volume. Volume per {periodWord} is already in 7.2.
+              </p>
+              <StackLine
+                rows={lyDo.theoKy.map((r) => ({ ky: r.ky, parts: r.parts }))}
+                series={lyDo.co.map((l) => ({ ten: l, color: LYDO_MAU[l] }))}
+                lines={[]}
+                fmtCot={(v) => `${Math.round(v)}%`}
+                /* Không có đường nào nên trục phải để trống, nếu không nó in ra 1 và 0.5. */
+                fmtDuong={() => ''}
+                label={lbl}
+                tip={(i) => {
+                  const r = lyDo.theoKy[i]
+                  if (!r) return null
+                  return (
+                    <><b>{lbl(r.ky)}</b> · {n0(r.n)} cancelled pcs<br />
+                      {lyDo.co.map((l, j) => (r.parts[j] > 0.5 ? (
+                        <span key={l}><i className="sw" style={{ background: LYDO_MAU[l] }} />
+                          {l} {pct(Math.round(r.parts[j] * 10) / 10)}<br /></span>
+                      ) : null))}
+                    </>
+                  )
+                }}
+              />
+              <div className="tablewrap" style={{ marginTop: 18 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Reason</th><th>Who cancelled</th><th className="n">Pcs</th>
+                      <th className="n">Share</th><th className="n">Avg lapse</th>
+                      <th className="n">Value lost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lyDo.bang.map((r) => (
+                      <tr key={r.ly_do}>
+                        <td><span className="sw sm" style={{ background: LYDO_MAU[r.ly_do] }} />{r.ly_do}</td>
+                        <td className="muted">{NGUOI_HUY[r.nguoi] ?? r.nguoi}</td>
+                        <td className="n">{n0(r.sl)}</td>
+                        <td className="n">{pct(r.pct)}</td>
+                        <td className="n muted">{r.gioTb == null ? '—' : `${n0(r.gioTb)}h`}</td>
+                        <td className="n">{bn(r.nmv)} bn</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="note hot">
+                <b>The two clusters in 7.3 now have names.</b> The first-hour cluster is
+                buyer-initiated — &ldquo;no longer needed&rdquo;, a payment that would not go
+                through, a better price found elsewhere; average lapse 1–3 hours. The day 3–7
+                cluster is almost entirely <b>Delivery failed</b>, cancelled by TikTok, average
+                lapse around a week: the parcel went out and the buyer refused it at the door. Those
+                are two different owners and two different fixes — the first belongs to the live
+                room and the checkout flow, the second to logistics and to how firm the order was
+                when it was taken.
+              </div>
+            </section>
+
+            <section id="s7-6">
+              <h2><span className="hno">7.6</span>Cancellations by campaign day — {periodNote}</h2>
+              <p className="sub">
+                Every date in the range is labelled by where it sits in the month&rsquo;s sale
+                calendar, then cancellations are read against that label. DDAY is the double date
+                of the month (4/4, 5/5 … 9/9); D-3 to D-1 are the three days before it and D+1 to
+                D+3 the three days after; MMS is the 14th–15th, Payday the 24th–25th; everything
+                else is BAU. The bars are the <b>mix</b> of time-to-cancel inside that day type,
+                each column normalised to 100%. The line is the <b>cancellation rate</b> — orders
+                placed on that day type that later died.
+              </p>
+              <StackLine
+                rows={camp.rows.map((r) => ({ ky: r.loai, parts: r.parts }))}
+                series={KHOANG_TT.map((k) => ({ ten: k, color: KHOANG_MAU[k] }))}
+                lines={[{ ten: 'Cancellation rate', color: 'var(--bad)', vals: camp.rows.map((r) => r.rate) }]}
+                fmtCot={(v) => `${Math.round(v)}%`}
+                fmtDuong={(v) => `${v}%`}
+                label={(k) => k}
+                tip={(i) => {
+                  const r = camp.rows[i]
+                  if (!r) return null
+                  return (
+                    <><b>{r.loai}</b> · {r.soNgay} day{r.soNgay === 1 ? '' : 's'} in range<br />
+                      Cancelled {pct(r.rate)} — {n0(r.huy)} of {n0(r.item)} pcs<br />
+                      Value lost {bn(r.nmvHuy)} bn<br />
+                      <span className="muted">Within 24h {pct(r.nhanh)} · day 3+ {pct(r.cham)}</span>
+                    </>
+                  )
+                }}
+              />
+              <div className="tablewrap" style={{ marginTop: 18 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Campaign day</th><th className="n">Days</th>
+                      <th className="n">Gross pcs</th><th className="n">Cancelled</th>
+                      <th className="n">Cancel %</th><th className="n">vs BAU</th>
+                      <th className="n">Within 24h</th><th className="n">Day 3+</th>
+                      <th className="n">Value lost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {camp.rows.map((r) => {
+                      const d = camp.bau ? Math.round((r.rate - camp.bau.rate) * 10) / 10 : null
+                      return (
+                        <tr key={r.loai}>
+                          <td><span className="sw sm" style={{ background: NGAY_MAU[r.loai] }} />{r.loai}</td>
+                          <td className="n muted">{r.soNgay}</td>
+                          <td className="n">{n0(r.item)}</td>
+                          <td className="n">{n0(r.huy)}</td>
+                          <td className="n" style={{ color: r.rate > 70 ? 'var(--bad)' : 'inherit' }}>{pct(r.rate)}</td>
+                          <td className="n muted">
+                            {r.loai === 'BAU' || d == null ? '—' : `${d > 0 ? '+' : ''}${d} pp`}
+                          </td>
+                          <td className="n">{pct(r.nhanh)}</td>
+                          <td className="n">{pct(r.cham)}</td>
+                          <td className="n">{bn(r.nmvHuy)} bn</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <h3 style={{ marginTop: 30 }}>Reason mix by campaign day</h3>
+              <p className="sub">
+                Same day types, but split by <i>why</i> rather than <i>when</i>. Each row is 100% of
+                the cancellations on that day type.
+              </p>
+              <Matrix
+                corner="Campaign day"
+                cols={lyDo.co}
+                heat="high-bad"
+                fmt={(v) => `${v}%`}
+                rows={lyDo.theoNgay.map((r) => ({
+                  label: r.ky,
+                  sub: `${n0(r.n)} cancelled`,
+                  color: NGAY_MAU[r.ky],
+                  vals: r.parts.map((v) => (v > 0 ? Math.round(v * 10) / 10 : null)),
+                }))}
+              />
+              <div className="note">
+                <b>How to read the two columns on the right.</b> &ldquo;Within 24h&rdquo; is the
+                order-confirmation problem — the order dies before anyone touches it. &ldquo;Day
+                3+&rdquo; is the delivery window — the parcel shipped and the buyer refused it, and
+                that is the one where a competitor&rsquo;s price during the wait is a plausible
+                cause. A day type whose cancellation rate is high <i>and</i> whose mix leans to Day
+                3+ is losing buyers after they had time to shop around; one that leans to the first
+                hour is losing them at checkout, which is a different fix.
+              </div>
+            </section>
+
+            <section id="s7-7">
+              <h2><span className="hno">7.7</span>Order day vs cancel day — {periodNote}</h2>
+              <p className="sub">
+                Where orders placed on each day type actually die. Each row is 100% of the
+                cancellations from orders <i>placed</i> on that day type, split by the day type they
+                were <i>cancelled</i> on. This is the direct test of the &ldquo;they compare prices
+                later and cancel&rdquo; story: if DDAY buyers wait for mid-month to cancel, the DDAY
+                row leans towards MMS rather than staying on the diagonal.
+              </p>
+              <Matrix
+                corner="Placed on ↓ / cancelled on →"
+                cols={campMx.cot}
+                heat="high-bad"
+                fmt={(v) => `${v}%`}
+                rows={campMx.hang.map((h) => ({
+                  label: h,
+                  sub: `${n0(campMx.hangTong.get(h) ?? 0)} cancelled`,
+                  color: NGAY_MAU[h],
+                  vals: campMx.cot.map((c) => {
+                    const t = campMx.hangTong.get(h) ?? 0
+                    if (!t) return null
+                    const v = campMx.cell.get(`${h}|${c}`) ?? 0
+                    return v ? p1(v, t) : null
+                  }),
+                }))}
+              />
+              <div className="note">
+                Read the diagonal first — an order cancelled on the same day type it was placed
+                never left the campaign, so nothing external explains it. What matters is the mass
+                that sits <i>off</i> the diagonal to the right: those orders survived the campaign
+                and died later. The BAU column is large by construction, because BAU covers most
+                days of the month; compare the named sale columns against each other, not against
+                BAU.
+              </div>
+            </section>
+
+            <section id="s7-8">
+              <h2><span className="hno">7.8</span>Cancellation rate by model, month by month</h2>
               <p className="sub">Darker is worse. A row that heats up month after month is a product problem, not a seasonal one.</p>
               <Matrix
                 corner="Model"
@@ -5898,8 +6519,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s7-5">
-              <h2><span className="hno">7.5</span>Worst models — {periodNote}</h2>
+            <section id="s7-9">
+              <h2><span className="hno">7.9</span>Worst models — {periodNote}</h2>
               <p className="sub">Models with at least 30 gross units in the selected period.</p>
               <RowBars
                 rows={skuF.filter((s) => s.so_luong >= 30)
@@ -5914,8 +6535,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s7-6">
-              <h2><span className="hno">7.6</span>Cancellation detail by model — {periodNote}</h2>
+            <section id="s7-10">
+              <h2><span className="hno">7.10</span>Cancellation detail by model — {periodNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
