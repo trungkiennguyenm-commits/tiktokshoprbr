@@ -6982,18 +6982,34 @@ export default function Dashboard({
             </section>
 
             <section id="s7-11">
-              <h2><span className="hno">7.11</span>Worst models — {periodNote}</h2>
-              <p className="sub">Models with at least 30 gross units in the selected period.</p>
+              <h2><span className="hno">7.11</span>Every model, worst first — {periodNote}</h2>
+              <p className="sub">
+                All {skuF.length} models that sold anything in the range, ranked by cancellation
+                rate. The ones under {HUY_MODEL_TOI_THIEU} gross units are marked <i>thin</i>, drawn
+                paler and held at the bottom — at that volume the percentage swings on one or two
+                orders, so ranking them against the rest would put noise at the top. Nothing is
+                dropped: a model missing from a chart is a problem nobody looks for.
+              </p>
               <RowBars
-                rows={skuF.filter((s) => s.so_luong >= 30)
-                  .slice()
-                  .sort((a, b) => b.cancel_rate - a.cancel_rate)
-                  .slice(0, 14)
-                  .map((s) => ({
-                    nhan: s.model,
-                    segs: [{ v: s.cancel_rate, color: s.cancel_rate > 70 ? 'var(--bad)' : 'var(--c2)', ten: 'Cancellation rate (%)' }],
-                    phu: `${pct(s.cancel_rate)} · ${n0(s.so_luong)} gross`,
-                  }))}
+                rows={skuF.slice()
+                  .sort((a, b) => {
+                    const am = a.so_luong < HUY_MODEL_TOI_THIEU
+                    const bm = b.so_luong < HUY_MODEL_TOI_THIEU
+                    return am === bm ? b.cancel_rate - a.cancel_rate : (am ? 1 : -1)
+                  })
+                  .map((s) => {
+                    const mong = s.so_luong < HUY_MODEL_TOI_THIEU
+                    return {
+                      nhan: mong ? `${s.model} · thin` : s.model,
+                      segs: [{
+                        v: s.cancel_rate,
+                        color: mong ? 'var(--line-s)'
+                          : s.cancel_rate > 70 ? 'var(--bad)' : 'var(--c2)',
+                        ten: 'Cancellation rate (%)',
+                      }],
+                      phu: `${pct(s.cancel_rate)} · ${n0(s.so_luong)} gross`,
+                    }
+                  })}
               />
             </section>
 
