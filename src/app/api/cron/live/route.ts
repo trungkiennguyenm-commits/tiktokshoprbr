@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { syncLive } from '@/lib/live/sync'
+import { syncLiveOverview } from '@/lib/live/overview'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -32,7 +33,14 @@ export async function GET(request: Request) {
     .single()
 
   try {
-    const res = await syncLive(Number.isFinite(days) && days > 0 ? days : 30)
+    const n = Number.isFinite(days) && days > 0 ? days : 30
+    const res = await syncLive(n)
+    // Tổng quan cấp shop đi cùng lượt này. Lỗi bên nó không được làm
+    // hỏng phần phiên live, nên gộp vào errors chứ không ném ra.
+    const ov = await syncLiveOverview(n).catch((e) => ({
+      rows: 0, days: n, errors: [e instanceof Error ? e.message : String(e)],
+    }))
+    res.errors.push(...ov.errors.map((x) => `overview: ${x}`))
     if (run?.id) {
       await db.from('sync_runs').update({
         finished_at: new Date().toISOString(),
@@ -43,7 +51,7 @@ export async function GET(request: Request) {
         error_message: res.errors.slice(0, 5).join(' | ') || null,
       }).eq('id', run.id)
     }
-    return NextResponse.json({ ok: true, ...res })
+    return NextResponse.json({ ok: true, ...res, overview: ov.rows })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (run?.id) {

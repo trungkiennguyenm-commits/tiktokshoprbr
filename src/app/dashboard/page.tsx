@@ -3,7 +3,7 @@ import Dashboard, {
   type Monthly, type Daily, type Sku, type SkuPeriod,
   type Segment, type Ship,
   type CampTong, type CampMatrix, type HuyChiTiet, type HuyModel,
-  type HanhTrinh, type TransitModel,
+  type HanhTrinh, type TransitModel, type LiveOverview,
   type AdsVs, type AdsMonth, type AdsCampaign,
   type LiveDaily, type LiveMonth, type LiveRoomMonth, type LiveSession, type LiveLgm,
   type KenhMonth, type KenhDay, type KenhSku,
@@ -39,7 +39,7 @@ export default async function Page() {
   const db = supabaseAdmin()
 
   try {
-    const [m, d, s, sm, sd, seg, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd, ks, ct, cmx, hct, hm, ht, tm] = await Promise.all([
+    const [m, d, s, sm, sd, seg, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd, ks, ct, cmx, hct, hm, ht, tm, lo] = await Promise.all([
       fetchAll<Monthly>(db, 'v_perf_monthly'),
       fetchAll<Daily>(db, 'v_perf_daily'),
       fetchAll<Sku>(db, 'v_sku_perf'),
@@ -64,6 +64,7 @@ export default async function Page() {
       fetchAll<HuyModel>(db, 'v_huy_model'),
       fetchAll<HanhTrinh>(db, 'v_don_hanh_trinh'),
       fetchAll<TransitModel>(db, 'v_transit_model'),
+      fetchAll<LiveOverview>(db, 'v_live_overview_daily'),
     ])
 
     return (
@@ -76,7 +77,7 @@ export default async function Page() {
         liveRooms={num(lr)} liveSessions={num(ls)} liveLgm={num(lg)}
         kenhMonthly={num(kn)} kenhDaily={num(kd)} kenhSku={num(ks)}
         campTong={num(ct)} campMatrix={num(cmx)} huyChiTiet={num(hct)} huyModel={num(hm)}
-        hanhTrinh={num(ht)} transitModel={num(tm)}
+        hanhTrinh={num(ht)} transitModel={num(tm)} liveOverview={num(lo)}
       />
     )
   } catch (e) {

@@ -68,6 +68,18 @@ export type HuyChiTiet = {
   so_luong: number; nmv_huy: number; gio_tong: number; sl_co_gio: number
   gio_tu_luc_lay: number | null; sl_co_lay: number
 }
+/** v_live_overview_daily — tổng quan live cấp SHOP từ endpoint 202609.
+ *  `shows` là số SUY RA từ show_gpm, không phải số TikTok trả thẳng. */
+export type LiveOverview = {
+  ngay: string
+  views: number | null; shows: number | null; show_gpm: number | null
+  live_attributed_gmv: number | null; live_gmv: number | null
+  live_indirect_gmv: number | null
+  sku_orders: number | null; items_sold: number | null
+  live_ctr: number | null; ctor_sku_order: number | null
+  avg_viewing_duration: number | null
+  tap_through: number | null; pct_gian_tiep: number | null
+}
 /** v_don_hanh_trinh — mốc thời gian của một đơn, theo kết cục.
  *  thang null = toàn kỳ, category null = gộp hai ngành. Trung vị không cộng
  *  được nên DB tính sẵn từng tổ hợp; giao diện chỉ nhặt đúng dòng. */
@@ -197,6 +209,7 @@ type Props = {
   kenhMonthly: KenhMonth[]; kenhDaily: KenhDay[]; kenhSku: KenhSku[]
   campTong: CampTong[]; campMatrix: CampMatrix[]; huyChiTiet: HuyChiTiet[]
   huyModel: HuyModel[]; hanhTrinh: HanhTrinh[]; transitModel: TransitModel[]
+  liveOverview: LiveOverview[]
 }
 
 /* ============================== helpers ============================== */
@@ -295,6 +308,8 @@ const SECTIONS = [
       { ten: '', subs: ['Key numbers', 'Daily overview'] },
       { ten: 'Our revenue', ghi: 'from orders, net of cancellations',
         subs: ['Revenue by room', 'Products by room', 'Hours and schedule'] },
+      { ten: 'Top of funnel', ghi: 'shop level — feed impressions, TikTok attribution',
+        subs: ['Feed into the room'] },
       { ten: 'Room performance', ghi: 'from TikTok live reporting, gross GMV',
         subs: ['Rooms side by side', 'Traffic and engagement', 'Funnel'] },
       { ten: 'Day by day', ghi: 'TikTok live',
@@ -1571,7 +1586,7 @@ export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
-  campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel,
+  campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel, liveOverview,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -2698,6 +2713,56 @@ export default function Dashboard({
     }
     return Array.from(m.values()).sort((a, b) => a.ngay.localeCompare(b.ngay))
   }, [liveDaily, liveKeep])
+
+  /* ---- đầu phễu: từ feed vào phòng live ----
+     Số ở CẤP SHOP, không tách được theo phòng. Nguồn là endpoint 202609,
+     khác với endpoint từng phiên nên views lệch nhau ~6% — đã đối chiếu
+     product impressions và clicks thì hai nguồn khớp trong 1%, tức cùng một
+     tập, chỉ khác cách đếm lượt xem. */
+
+  const dauPheu = useMemo(() => {
+    const rows = liveOverview
+      .filter((r) => liveKeep.has(String(r.ngay).slice(0, 7)))
+      .slice()
+      .sort((a, b) => String(a.ngay).localeCompare(String(b.ngay)))
+    if (!rows.length) return null
+
+    const t = rows.reduce((a, r) => ({
+      shows: a.shows + Number(r.shows || 0),
+      views: a.views + Number(r.views || 0),
+      gmv: a.gmv + Number(r.live_attributed_gmv || 0),
+      giao: a.giao + Number(r.live_gmv || 0),
+      gianTiep: a.gianTiep + Number(r.live_indirect_gmv || 0),
+      don: a.don + Number(r.sku_orders || 0),
+    }), { shows: 0, views: 0, gmv: 0, giao: 0, gianTiep: 0, don: 0 })
+
+    // Gộp theo kỳ để vẽ, theo đúng thanh lọc DoD / MoM phía trên
+    const m = new Map<string, { ky: string; shows: number; views: number; gmv: number; gianTiep: number }>()
+    for (const r of rows) {
+      const ky = byMonth ? `${String(r.ngay).slice(0, 7)}-01` : String(r.ngay)
+      const c = m.get(ky) ?? { ky, shows: 0, views: 0, gmv: 0, gianTiep: 0 }
+      c.shows += Number(r.shows || 0)
+      c.views += Number(r.views || 0)
+      c.gmv += Number(r.live_attributed_gmv || 0)
+      c.gianTiep += Number(r.live_indirect_gmv || 0)
+      m.set(ky, c)
+    }
+    const ky = Array.from(m.values())
+      .sort((a, b) => a.ky.localeCompare(b.ky))
+      .map((r) => ({ ...r, tap: p1(r.views, r.shows), pctGt: p1(r.gianTiep, r.gmv) }))
+
+    // Ba tầng dưới lấy số THẬT từ bảng phiên, không suy ra — đã kiểm chéo
+    // với phép suy từ live_ctr / ctor_sku_order, lệch dưới 1,5%.
+    const duoi = liveDays.reduce((a, r) => ({
+      imp: a.imp + r.imp, clicks: a.clicks + r.clicks, don: a.don + r.don,
+    }), { imp: 0, clicks: 0, don: 0 })
+
+    return {
+      rows, ky, tong: t, duoi,
+      tap: p1(t.views, t.shows),
+      pctGt: p1(t.gianTiep, t.gmv),
+    }
+  }, [liveOverview, liveKeep, byMonth, liveDays])
 
   /** GMV từng phòng theo NGÀY. v_live_daily chỉ gộp theo nhóm nên phần này
    *  phải dựng từ chính bảng phiên — mỗi phiên tính vào ngày bắt đầu. */
@@ -5282,7 +5347,99 @@ export default function Dashboard({
             </section>
 
             <section id="s5-6">
-              <h2><span className="hno">5.6</span>Rooms side by side</h2>
+              <h2><span className="hno">5.6</span>From the feed into the room — {periodNote}</h2>
+              <p className="sub">
+                The step the dashboard could not see until now: people scrolling past a live room,
+                and how many of them tapped in. <b>Shows</b> is how often a room was put in front of
+                someone; <b>tap-through</b> is the share who went in. Everything below this line was
+                already measured — this is the funnel finally starting where the traffic starts.
+                <br /><br />
+                <span className="muted">
+                  Shop level, not per room — TikTok reports it for the shop&rsquo;s linked accounts
+                  as a whole. Shows is <b>derived</b>: TikTok gives GMV per 1,000 shows, so shows =
+                  attributed GMV ÷ show GPM × 1,000. Cross-checked against the per-session numbers,
+                  product impressions and clicks agree within 1.5%, so the two sources describe the
+                  same traffic; views differ by about 6% because the two endpoints count a view
+                  slightly differently.
+                </span>
+              </p>
+              {dauPheu ? (
+                <>
+                  <div className="tiles" style={{ marginTop: 20 }}>
+                    <Tile label="Tap-through rate" value={pct(dauPheu.tap)}
+                      sub={`${n0(dauPheu.tong.views)} entered of ${n0(dauPheu.tong.shows)} shown`} />
+                    <Tile label="Times a room was shown" value={mn1(dauPheu.tong.shows)} unit="m"
+                      sub="feed impressions of the live room" />
+                    <Tile label="TikTok-attributed live GMV" value={bn(dauPheu.tong.gmv)} unit=" bn"
+                      sub="TikTok's attribution, not our order data" />
+                    <Tile label="Of that, indirect" value={pct(dauPheu.pctGt)}
+                      sub={`${bn(dauPheu.tong.gianTiep)} bn bought after leaving the room`} />
+                  </div>
+
+                  <h3 style={{ marginTop: 30 }}>The whole funnel, top to bottom</h3>
+                  <p className="sub">
+                    Log scale — each step is a fraction of a percent of the one above it, and on a
+                    linear axis everything after the first bar would be a sliver.
+                  </p>
+                  <Funnel
+                    rooms={[{
+                      ten: 'All linked rooms',
+                      color: 'var(--c1)',
+                      stages: [
+                        { ten: 'Shown in feed', v: dauPheu.tong.shows },
+                        { ten: 'Entered the room', v: dauPheu.tong.views },
+                        { ten: 'Product impressions', v: dauPheu.duoi.imp },
+                        { ten: 'Product clicks', v: dauPheu.duoi.clicks },
+                        { ten: 'Paid SKU orders', v: dauPheu.duoi.don },
+                      ],
+                    }]}
+                  />
+
+                  <h3 style={{ marginTop: 30 }}>Shows and tap-through, {periodWord} by {periodWord}</h3>
+                  <StackLine
+                    rows={dauPheu.ky.map((r) => ({ ky: r.ky, parts: [r.views, Math.max(0, r.shows - r.views)] }))}
+                    series={[
+                      { ten: 'Entered the room', color: 'var(--c1)' },
+                      { ten: 'Scrolled past', color: 'var(--c1-soft)' },
+                    ]}
+                    lines={[{ ten: 'Tap-through rate', color: 'var(--bad)', vals: dauPheu.ky.map((r) => r.tap) }]}
+                    fmtCot={(v) => `${mn1(v)}m`}
+                    fmtDuong={(v) => `${v}%`}
+                    label={lbl}
+                    tip={(i) => {
+                      const r = dauPheu.ky[i]
+                      if (!r) return null
+                      return (
+                        <><b>{lbl(r.ky)}</b><br />
+                          Shown {n0(r.shows)}<br />
+                          Entered {n0(r.views)} · <b style={{ color: 'var(--bad)' }}>{pct(r.tap)}</b><br />
+                          <span className="muted">Attributed GMV {bn(r.gmv)} bn · indirect {pct(r.pctGt)}</span>
+                        </>
+                      )
+                    }}
+                  />
+                  <div className="note">
+                    <b>Tap-through is the cheapest lever in the funnel.</b> Every step below it is
+                    measured in fractions of a percent, so a point gained here carries all the way
+                    down; a point gained at product-click level does not. It is also the step LGM
+                    actually buys — ad money buys shows, and what the thumbnail, the title and the
+                    first ten seconds do with those shows is what this line measures.
+                    <br /><br />
+                    <b>Indirect GMV is the part nothing else on this dashboard counts.</b> It is the
+                    buyer who watched, left, and bought later. Judging a room only on what closed
+                    inside the session understates it by exactly this much.
+                  </div>
+                </>
+              ) : (
+                <p className="sub muted">
+                  No shop-level data in the selected months. This table is filled by the daily sync
+                  chain (orders → ads → live); if it stays empty, that chain has stopped.
+                </p>
+              )}
+            </section>
+
+            <section id="s5-7">
+              <h2><span className="hno">5.7</span>Rooms side by side</h2>
               <p className="sub">
                 The rooms differ enough in scale that totals alone mislead. GMV per 1k views is the
                 column to read across &mdash; it puts a big room with cheap traffic next to a small
@@ -5363,8 +5520,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-7">
-              <h2><span className="hno">5.7</span>Traffic and engagement by room</h2>
+            <section id="s5-8">
+              <h2><span className="hno">5.8</span>Traffic and engagement by room</h2>
               <p className="sub">
                 Everything here is per 1.000 views rather than a total, because the three rooms pull
                 very different volumes and raw counts only restate that. Views counts every entry
@@ -5538,8 +5695,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-8">
-              <h2><span className="hno">5.8</span>Funnel by room</h2>
+            <section id="s5-9">
+              <h2><span className="hno">5.9</span>Funnel by room</h2>
               <p className="sub">
                 From a view to a paid order. Each percentage is against the step immediately above
                 it, so a weak room shows exactly where it loses people rather than only that it
@@ -5630,8 +5787,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-9">
-              <h2><span className="hno">5.9</span>Room by period</h2>
+            <section id="s5-10">
+              <h2><span className="hno">5.10</span>Room by period</h2>
               <p className="sub">
                 The same numbers as a grid. Reading along a row shows how steady a room is; reading
                 down a column shows which room carried a given day. Shading is relative to the
@@ -5716,8 +5873,8 @@ export default function Dashboard({
               </div>
                         </section>
 
-            <section id="s5-10">
-              <h2><span className="hno">5.10</span>Audience per day</h2>
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>Audience per day</h2>
               <p className="sub">
                 Columns split each day&rsquo;s views into people seen for the first time that day
                 and the views they came back for. The red line is the engagement rate &mdash; likes,
@@ -5751,8 +5908,8 @@ export default function Dashboard({
               <p className="foot">Our own rooms only — creator rooms report no engagement data.</p>
             </section>
 
-            <section id="s5-11">
-              <h2><span className="hno">5.11</span>Traffic and conversion per day</h2>
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>Traffic and conversion per day</h2>
               <p className="sub">
                 Columns are live GMV split between our rooms and creator rooms. The red line is the
                 product click-through rate in our rooms &mdash; impressions that turned into a tap
@@ -5785,8 +5942,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-12">
-              <h2><span className="hno">5.12</span>Engagement vs CTR vs GMV</h2>
+            <section id="s5-13">
+              <h2><span className="hno">5.13</span>Engagement vs CTR vs GMV</h2>
               <p className="sub">
                 One bubble is one day of one room. Across: engagement rate. Up: product CTR. Size:
                 that day&rsquo;s GMV. If talking to the room is what drives people to tap the
@@ -5845,8 +6002,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-13">
-              <h2><span className="hno">5.13</span>Top sessions</h2>
+            <section id="s5-14">
+              <h2><span className="hno">5.14</span>Top sessions</h2>
               <p className="sub">
                 The {Math.min(40, liveTop.length)} biggest of {n0(liveTop.length)} sessions in the
                 selected months. Worth reading next to the title &mdash; the stream name is the only
@@ -5887,8 +6044,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-14">
-              <h2><span className="hno">5.14</span>Creator rooms</h2>
+            <section id="s5-15">
+              <h2><span className="hno">5.15</span>Creator rooms</h2>
               <p className="sub">
                 Rooms that sold our products but are not ours. They register themselves the first
                 time one appears, so the list grows on its own as the team works with new creators.
