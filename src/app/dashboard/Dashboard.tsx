@@ -2281,10 +2281,13 @@ export default function Dashboard({
       c.nmvTruoc += Number(r.nmv_huy_truoc || 0)
       m.set(r.model, c)
     }
+    // Liệt kê ĐỦ model, không cắt bớt — nhưng model quá ít đơn thì đẩy xuống
+    // cuối và làm mờ, vì một model 3 đơn huỷ 2 sẽ ra 67% và nhảy lên đầu bảng
+    // trong khi chẳng nói lên điều gì.
     const rows = Array.from(m.values())
-      .filter((r) => r.dat >= HUY_MODEL_TOI_THIEU)
       .map((r) => ({
         ...r,
+        mong: r.dat < HUY_MODEL_TOI_THIEU,
         pctHuy: p1(r.huy, r.dat),
         pctInstant: p1(r.instant, r.dat),
         pctTruoc: p1(r.truoc, r.dat),
@@ -2297,9 +2300,17 @@ export default function Dashboard({
       sau: rows.reduce((a, r) => a + r.sau, 0),
       nmvSau: rows.reduce((a, r) => a + r.nmvSau, 0),
     }
-    const tb = { truoc: p1(tong.truoc, tong.dat), sau: p1(tong.sau, tong.dat) }
-    rows.sort((a, b) => (huySort === 'sau' ? b.pctSau - a.pctSau : b.pctTruoc - a.pctTruoc))
-    return { rows, tb, tong }
+    // Mốc "trên/dưới trung bình" chỉ tính trên các model đủ dày, để một vài
+    // model lẻ không kéo mốc đi và làm cả cột đổi màu.
+    const day = rows.filter((r) => !r.mong)
+    const tb = {
+      truoc: p1(day.reduce((a, r) => a + r.truoc, 0), day.reduce((a, r) => a + r.dat, 0)),
+      sau: p1(day.reduce((a, r) => a + r.sau, 0), day.reduce((a, r) => a + r.dat, 0)),
+    }
+    rows.sort((a, b) => (a.mong === b.mong
+      ? (huySort === 'sau' ? b.pctSau - a.pctSau : b.pctTruoc - a.pctTruoc)
+      : (a.mong ? 1 : -1)))
+    return { rows, tb, tong, soMong: rows.length - day.length, soModel: rows.length }
   }, [huyModel, keys, byMonth, cat, huySort])
 
   /* ---- ma trận ngày đặt × ngày huỷ ----
@@ -6994,7 +7005,11 @@ export default function Dashboard({
                 means the courier already had it — outbound shipping, packing, the return leg, the
                 restock, and the days the unit is unsellable in transit. The two are exhaustive:
                 they add up exactly to the cancellation rate, and both are shares of units ordered.
-                Models with at least {HUY_MODEL_TOI_THIEU} units ordered in the range.
+                Every model that sold anything in the range is listed — {modelHuy.soModel} of them.
+                The {modelHuy.soMong} with fewer than {HUY_MODEL_TOI_THIEU} units are marked
+                <i> thin</i>, dimmed and pushed to the bottom: at that volume a percentage swings on
+                one or two orders. They are still in the table because leaving a model out entirely
+                is how a problem stays invisible.
                 <b> Days in transit</b> is how long a failed parcel sat outside the warehouse before
                 the order was closed — median first, average after the slash — counted from pickup,
                 not from the order. Red past 7 days. Like 7.2 it comes from a per-month figure the
@@ -7031,10 +7046,11 @@ export default function Dashboard({
                   </thead>
                   <tbody>
                     {modelHuy.rows.map((r) => (
-                      <tr key={r.model}>
+                      <tr key={r.model} style={r.mong ? { opacity: 0.55 } : undefined}>
                         <td>
                           <span className="sw sm" style={{ background: r.cat === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
                           {r.model}
+                          {r.mong && <span className="muted" style={{ fontSize: 11 }}> · thin</span>}
                         </td>
                         <td className="n muted">{n0(r.dat)}</td>
                         <td className="n" style={{ color: r.pctTruoc > modelHuy.tb.truoc ? 'var(--bad)' : 'inherit' }}>
@@ -7056,7 +7072,7 @@ export default function Dashboard({
                       </tr>
                     ))}
                     <tr style={{ fontWeight: 600 }}>
-                      <td>All models shown</td>
+                      <td>All {modelHuy.soModel} models</td>
                       <td className="n muted">{n0(modelHuy.tong.dat)}</td>
                       <td className="n">{pct(modelHuy.tb.truoc)}</td>
                       <td className="n">{pct(modelHuy.tb.sau)}</td>
@@ -7068,7 +7084,7 @@ export default function Dashboard({
                 </table>
               </div>
               <div className="note">
-                Red means above the average of the models shown. Red on the <b>left</b> and not the
+                Red means above the average, which is taken over the non-thin models only. Red on the <b>left</b> and not the
                 right means the model is being sold badly — the buyer backs out within minutes, which
                 points at how it is pitched in the room, the price on screen, or a checkout that
                 fails. Red on the <b>right</b> and not the left is the opposite: the order was firm
