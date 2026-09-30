@@ -1404,9 +1404,15 @@ function Timeline({ tracks, maxGio, fmtT }: {
   if (!tracks.length) return null
   const x = (h: number) => Math.min(100, (h / maxGio) * 100)
   const moc = Array.from({ length: Math.floor(maxGio / 24) + 1 }, (_, i) => i)
+  /* Nhãn mặc định canh giữa mốc. Sát hai mép thì canh mép, nếu không nhãn của
+     mốc ~0 sẽ tràn sang cột tên ở bên trái và đè lên nhau. */
+  const neo = (px: number): React.CSSProperties =>
+    px < 10 ? { left: `${px}%`, transform: 'translateX(0)', textAlign: 'left' }
+      : px > 90 ? { left: `${px}%`, transform: 'translateX(-100%)', textAlign: 'right' }
+        : { left: `${px}%` }
 
   return (
-    <div className="tl">
+    <div className="tl" style={{ '--tlh': `${tracks.length * 48}px` } as React.CSSProperties}>
       <div className="tl-grid">
         {moc.map((d) => (
           <span key={d} className="tl-gl" style={{ left: `${x(d * 24)}%` }}>
@@ -1438,11 +1444,11 @@ function Timeline({ tracks, maxGio, fmtT }: {
             <span className="tl-end" style={{ left: `${x(t.ket)}%`, background: t.color }} />
             <span className="tl-avg" style={{ left: `${x(t.ketTb)}%`, borderColor: t.color }}
               title={`average ${fmtT(t.ketTb)}`} />
-            <span className="tl-t" style={{ left: `${x(t.ket)}%` }}>
+            <span className="tl-t" style={neo(x(t.ket))}>
               {t.ketNhan} {fmtT(t.ket)}
             </span>
-            {t.lay != null && x(t.lay) > 3 && (
-              <span className="tl-t sm" style={{ left: `${x(t.lay)}%` }}>picked up {fmtT(t.lay)}</span>
+            {t.lay != null && (
+              <span className="tl-t sm" style={neo(x(t.lay))}>picked up {fmtT(t.lay)}</span>
             )}
           </div>
         </div>
@@ -7509,26 +7515,30 @@ const CSS = `
 /* ---- hành trình đơn hàng (Timeline) ---- */
 .tl{margin-top:18px;position:relative}
 .tl-grid{position:relative;height:16px;margin-left:190px}
+.tl-gl:first-child b{transform:translateX(50%);display:inline-block}
 .tl-gl{position:absolute;top:0;transform:translateX(-50%);text-align:center}
 .tl-gl i{position:absolute;left:50%;top:14px;width:1px;height:calc(16px + var(--tlh,150px));
   background:var(--line)}
 .tl-gl b{font-size:10px;font-weight:500;color:var(--muted);font-variant-numeric:tabular-nums}
-.tl-row{display:flex;align-items:center;gap:0;margin-top:14px}
-.tl-lbl{width:190px;flex:none;padding-right:16px;line-height:1.35}
+.tl-row{display:flex;align-items:center;gap:0;margin-top:20px}
+.tl-lbl{width:190px;flex:none;padding-right:22px;line-height:1.35}
 .tl-lbl b{display:block;font-size:13.5px}
 .tl-lbl span{display:block;font-size:11.5px}
-.tl-track{position:relative;flex:1;height:34px}
-.tl-seg{position:absolute;top:11px;height:12px;border-radius:2px}
+/* Chiều cao 48px = 16 cho nhãn trên, 16 cho thanh, 16 cho nhãn dưới. Nhãn
+   nằm trong phạm vi này nên hàng nọ không chạm hàng kia. */
+.tl-track{position:relative;flex:1;height:48px}
+.tl-seg{position:absolute;top:18px;height:12px;border-radius:2px}
 .tl-seg.kho{background:var(--line-s)}
-.tl-dot{position:absolute;top:13px;width:8px;height:8px;margin-left:-4px;border-radius:50%;
-  background:var(--surface);border:2px solid var(--ink-2);box-sizing:border-box}
-.tl-end{position:absolute;top:7px;width:3px;height:20px;margin-left:-1px;border-radius:2px}
-.tl-avg{position:absolute;top:12px;width:10px;height:10px;margin-left:-5px;
+.tl-dot{position:absolute;top:20px;width:8px;height:8px;margin-left:-4px;border-radius:50%;
+  background:var(--surface);border:2px solid var(--ink-2);box-sizing:border-box;z-index:2}
+.tl-end{position:absolute;top:14px;width:3px;height:20px;margin-left:-1px;border-radius:2px}
+.tl-avg{position:absolute;top:19px;width:10px;height:10px;margin-left:-5px;
   border:1.5px solid;transform:rotate(45deg);background:var(--surface)}
-.tl-avg.st{position:static;display:inline-block;margin:0 5px 0 0;border-color:var(--muted)}
-.tl-t{position:absolute;top:-2px;transform:translateX(-50%);font-size:10.5px;font-weight:600;
-  white-space:nowrap;color:var(--ink-2);font-variant-numeric:tabular-nums}
-.tl-t.sm{top:auto;bottom:-2px;font-weight:500;color:var(--muted);font-size:10px}
+.tl-avg.st{position:static;display:inline-block;margin:0 5px 0 0;border-color:var(--muted);
+  transform:rotate(45deg);width:9px;height:9px}
+.tl-t{position:absolute;top:0;transform:translateX(-50%);font-size:10.5px;font-weight:600;
+  white-space:nowrap;color:var(--ink-2);font-variant-numeric:tabular-nums;line-height:14px}
+.tl-t.sm{top:auto;bottom:0;font-weight:500;color:var(--muted);font-size:10px}
 @media (max-width:760px){
   .tl-grid{margin-left:0}
   .tl-row{flex-direction:column;align-items:stretch;gap:2px}
