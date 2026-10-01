@@ -3664,11 +3664,16 @@ export default function Dashboard({
      SQL vì bộ lọc thời gian và bộ lọc ngành hàng nằm ở đây; view chỉ trả
      về dòng thô, mỗi dòng một đơn.
 
-     Ngưỡng gộp: creator dưới 5 đơn và video dưới 3 đơn bị dồn vào dòng
-     "Khác". Dưới ngưỡng đó một đơn huỷ đã làm tỷ lệ nhảy hàng chục điểm,
-     bày ra chỉ tạo cảm giác có tín hiệu ở chỗ không có gì. */
-  const NGUONG_CREATOR = 5
-  const NGUONG_VIDEO = 3
+     Ngưỡng gộp để ở 1, tức bày hết: mọi creator, mọi video, kể cả loại
+     chỉ có một đơn. Người dùng muốn nhìn đủ. Đổi lại, ô tỷ lệ huỷ chỉ tô
+     đỏ từ NGUONG_TIN đơn trở lên — một creator 1 đơn huỷ 1 đơn vẫn hiện
+     100% nhưng không được bôi đỏ, vì con số đó không nói lên điều gì. */
+  const NGUONG_CREATOR = 1
+  const NGUONG_VIDEO = 1
+  /** Số đơn tối thiểu để tô đỏ ô tỷ lệ huỷ. Bày hết mọi dòng là ý muốn rõ
+   *  ràng của người dùng, nhưng tô đỏ một creator có 1 đơn huỷ 1 đơn thì
+   *  mắt bị kéo về đúng chỗ ít đáng tin nhất — nên màu vẫn giữ ngưỡng. */
+  const NGUONG_TIN = 5
 
   type AffNut = {
     ten: string; url: string | null; nhan?: string
@@ -7848,10 +7853,10 @@ export default function Dashboard({
               <h2><span className="hno">7.15</span>Product → creator → video — {periodNote}</h2>
               <p className="sub">
                 Click a product to see which creators sold it, then a creator to see which videos.
-                Creators under {NGUONG_CREATOR} orders and videos under {NGUONG_VIDEO} are folded
-                into a &ldquo;lẻ&rdquo; row, because below that one cancellation swings the rate by
-                tens of points. Video labels carry the last six digits of the content id; the title
-                links to the post on TikTok.
+                Every creator and every video is listed, down to the ones with a single order.
+                Rates on those rows are 0% or 100% by arithmetic and mean nothing on their own, so
+                the red highlight only starts at {NGUONG_TIN} orders. Video labels carry the last
+                six digits of the content id; the title links to the post on TikTok.
               </p>
               <div className="tablewrap">
                 <table>
@@ -7880,7 +7885,7 @@ export default function Dashboard({
                           <td className="n">{n0(nut.don)}</td>
                           <td className="n">{n0(nut.huy)}</td>
                           <td className="n" style={{
-                            color: nut.don >= NGUONG_VIDEO && p1(nut.huy, nut.don) > 80
+                            color: nut.don >= NGUONG_TIN && p1(nut.huy, nut.don) > 80
                               ? 'var(--bad)' : 'inherit',
                             fontWeight: muc ? 400 : 600,
                           }}>{pct(p1(nut.huy, nut.don))}</td>
