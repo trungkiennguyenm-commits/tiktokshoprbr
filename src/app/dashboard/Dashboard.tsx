@@ -377,7 +377,7 @@ const SECTIONS = [
       { ten: 'Which products',
         subs: ['By model', 'Worst models', 'Before vs after pickup', 'Detail table'] },
       { ten: 'Affiliate creators', ghi: 'creator ngoài, ~3% đơn',
-        subs: ['By content type', 'Product to creator to video'] },
+        subs: ['By content type', 'Product to creator to video', 'Video orders in detail'] },
     ],
   },
   {
@@ -3766,6 +3766,71 @@ export default function Dashboard({
     }), { don: 0, huy: 0, gmv: 0, gmvHuy: 0 }),
     [affRows],
   )
+
+
+  /* ---- đơn từ video, soi kỹ ----
+     Mục này sinh ra để trả lời một câu cụ thể: có nên đổ tiền Product GMV
+     Max vào nội dung video không.
+
+     CẠM BẪY ĐÃ SẬP MỘT LẦN: so tỷ lệ huỷ của đơn video (76%) với toàn shop
+     (64%) rồi kết luận kênh video tệ hơn — SAI. Đơn từ video đắt hơn (AOV
+     12,6tr so với 11,3tr), mà ở shop này đơn càng đắt càng huỷ nặng. Tách
+     theo dải giá thì khoảng cách gần như biến mất, có dải video còn tốt
+     hơn. Luôn so TRONG CÙNG dải giá, đừng so hai con số tổng. */
+  const DAI_GIA = [
+    { ten: '<5tr', min: 0, max: 5e6 },
+    { ten: '5–10tr', min: 5e6, max: 10e6 },
+    { ten: '10–20tr', min: 10e6, max: 20e6 },
+    { ten: '≥20tr', min: 20e6, max: Infinity },
+  ] as const
+
+  const affVideo = useMemo(() => affRows.filter((r) => r.content_type === 'VIDEO'), [affRows])
+
+  const affDai = useMemo(() => DAI_GIA.map((d) => {
+    const rows = affVideo.filter((r) => {
+      const v = Number(r.total_amount || 0)
+      return v >= d.min && v < d.max
+    })
+    const huy = rows.filter((r) => r.da_huy)
+    const dat = rows.reduce((a, r) => a + Number(r.total_amount || 0), 0)
+    const con = rows.filter((r) => !r.da_huy).reduce((a, r) => a + Number(r.total_amount || 0), 0)
+    return { ten: d.ten, don: rows.length, huy: huy.length, dat, con }
+  }), [affVideo])
+
+  /** Đặt vs giữ được, theo tháng, kèm tỷ lệ huỷ của cả shop cùng tháng để
+   *  đối chiếu — baseline lấy từ `shown` nên luôn khớp bộ lọc đang bật. */
+  const affThang = useMemo(() => {
+    const m = new Map<string, { don: number; huy: number; dat: number; con: number }>()
+    for (const r of affVideo) {
+      const k = `${r.ngay.slice(0, 7)}-01`
+      const c = m.get(k) ?? { don: 0, huy: 0, dat: 0, con: 0 }
+      const v = Number(r.total_amount || 0)
+      c.don += 1; c.dat += v
+      if (r.da_huy) c.huy += 1; else c.con += v
+      m.set(k, c)
+    }
+    const nen = new Map(shown.map((r) => [r.ky, r.cancel_rate]))
+    return Array.from(m.entries())
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([ky, c]) => ({ ky, ...c, shop: nen.get(ky) ?? null }))
+  }, [affVideo, shown])
+
+  /** Lý do huỷ của đơn video. Phần đáng đọc không phải thứ hạng mà là
+   *  "Không còn nhu cầu" — đổi ý TRƯỚC khi giao. Nó cao hơn hẳn phần còn
+   *  lại của shop, và đó mới là thứ tiền quảng cáo khuếch đại. */
+  const affLyDo = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of affVideo) {
+      if (!r.da_huy) continue
+      const k = r.cancel_reason || '(không ghi)'
+      m.set(k, (m.get(k) ?? 0) + 1)
+    }
+    const tong = Array.from(m.values()).reduce((a, b) => a + b, 0)
+    return Array.from(m.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 7)
+      .map(([ten, n]) => ({ ten, n, pct: p1(n, tong) }))
+  }, [affVideo])
 
 
   return (
@@ -7848,6 +7913,101 @@ export default function Dashboard({
                 never turns into money.
               </p>
             </section>
+            <section id="s7-16">
+              <h2><span className="hno">7.16</span>Video orders in detail — {periodNote}</h2>
+              <p className="sub">
+                Built to answer one question: is creator-video demand clean enough to put Product
+                GMV Max money behind. Read the band table first — comparing the headline rates
+                instead is how you get the wrong answer.
+              </p>
+
+              <h3>Within the same price band</h3>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Band</th><th className="n">Video orders</th><th className="n">Cancel %</th>
+                    <th className="n">GMV booked</th><th className="n">GMV kept</th><th className="n">Kept %</th>
+                  </tr></thead>
+                  <tbody>
+                    {affDai.map((d) => (
+                      <tr key={d.ten}>
+                        <td>{d.ten}</td>
+                        <td className="n">{n0(d.don)}</td>
+                        <td className="n" style={{ color: p1(d.huy, d.don) > 85 ? 'var(--bad)' : 'inherit' }}>
+                          {d.don ? pct(p1(d.huy, d.don)) : '—'}
+                        </td>
+                        <td className="n">{mn(d.dat)}m</td>
+                        <td className="n">{mn(d.con)}m</td>
+                        <td className="n" style={{ fontWeight: 600 }}>{d.dat ? pct(p1(d.con, d.dat)) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="note">
+                <b>Video orders are not a worse class of demand — they are a more expensive one.</b>{' '}
+                Across Apr–Sep 2026 video kept 18.5% of booked GMV against 21.3% for everything
+                else, a gap of under three points, while the headline cancel rates differ by
+                twelve. The difference is average order value: 12.6m against 11.3m, and at this
+                shop the dearer the order the harder it cancels. Plan with <b>kept %</b>, never
+                with booked GMV.
+              </div>
+
+              <h3>Month by month</h3>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Month</th><th className="n">Video orders</th><th className="n">Cancel %</th>
+                    <th className="n">Whole shop</th><th className="n">GMV booked</th>
+                    <th className="n">GMV kept</th><th className="n">Kept %</th>
+                  </tr></thead>
+                  <tbody>
+                    {affThang.map((r) => (
+                      <tr key={r.ky}>
+                        <td>{mmyy(r.ky)}</td>
+                        <td className="n">{n0(r.don)}</td>
+                        <td className="n">{pct(p1(r.huy, r.don))}</td>
+                        <td className="n muted">{r.shop != null ? pct(r.shop) : '—'}</td>
+                        <td className="n">{mn(r.dat)}m</td>
+                        <td className="n">{mn(r.con)}m</td>
+                        <td className="n" style={{ fontWeight: 600 }}>{r.dat ? pct(p1(r.con, r.dat)) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Months sit in the tens of orders, so a single month moving ten points is noise.
+                Watch the run of months, not the last one.
+              </p>
+
+              <h3>Why video orders die</h3>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr><th>Reason</th><th className="n">Cancelled</th><th className="n">Share</th></tr></thead>
+                  <tbody>
+                    {affLyDo.map((r) => (
+                      <tr key={r.ten}>
+                        <td>{r.ten}</td>
+                        <td className="n">{n0(r.n)}</td>
+                        <td className="n">{pct(r.pct)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="note hot">
+                <b>This is the part that scales with ad spend.</b> &ldquo;Không còn nhu cầu&rdquo; —
+                the buyer changing their mind before the parcel moves — runs at 36% of video
+                cancellations against 23% everywhere else, while delivery failure runs{' '}
+                <i>lower</i> (39% against 49%). Video demand is impulse demand: it is created in
+                seconds and it evaporates overnight. Paid amplification buys more of exactly that
+                behaviour, so budget pushed at the ≥20tr band, where nine in ten orders already
+                cancel, mostly buys orders that never become money. The 5–10tr band is where this
+                channel holds up on its own.
+              </div>
+            </section>
+
 
           </>
         )}
