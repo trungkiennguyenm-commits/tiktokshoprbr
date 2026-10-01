@@ -120,6 +120,23 @@ export type HuyModel = {
   huy_truoc: number; huy_sau: number
   nmv_dat: number; nmv_huy_sau: number; nmv_huy_truoc: number
 }
+/** v_huy_affiliate — huỷ của đơn affiliate, một dòng một đơn.
+ *
+ *  PHẠM VI HẸP: chỉ đơn có hoa hồng affiliate, tức creator NGOÀI. Ba phòng
+ *  live của chính shop không nằm trong đây vì live của shop không phát hoa
+ *  hồng. Toàn shop huỷ ~64%, riêng nhóm này ~76% — hai con số khác nhau,
+ *  đừng trình bày số của bảng này như tỷ lệ huỷ của cả shop.
+ *
+ *  Dùng video_url, đừng dùng content_id: nó là chuỗi 19 chữ số và page.tsx
+ *  ép chuỗi-giống-số thành Number, vượt 2^53 nên sai mấy chữ số cuối. */
+export type HuyAffiliate = {
+  ngay: string; san_pham: string; category: string
+  creator_username: string; content_type: string
+  video_url: string | null; video_nhan: string
+  gmv: number; so_luong: number
+  da_huy: boolean; huy_sau_lay: boolean
+  cancel_reason: string | null; total_amount: number
+}
 export type CampMatrix = {
   ngay: string; category: string
   dat_loai: string; dat_thu_tu: number; huy_loai: string; huy_thu_tu: number
@@ -227,6 +244,7 @@ type Props = {
   huyModel: HuyModel[]; hanhTrinh: HanhTrinh[]; transitModel: TransitModel[]
   liveOverview: LiveOverview[]
   adsObjective: AdsObjective[]; adsObjectiveDay: AdsObjectiveDay[]
+  huyAffiliate: HuyAffiliate[]
 }
 
 /* ============================== helpers ============================== */
@@ -358,6 +376,8 @@ const SECTIONS = [
         subs: ['Across the month', 'Reason by campaign day', 'Order day vs cancel day'] },
       { ten: 'Which products',
         subs: ['By model', 'Worst models', 'Before vs after pickup', 'Detail table'] },
+      { ten: 'Affiliate creators', ghi: 'creator ngoài, ~3% đơn',
+        subs: ['By content type', 'Product to creator to video'] },
     ],
   },
   {
@@ -1621,6 +1641,7 @@ export default function Dashboard({
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
   campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel, liveOverview, adsObjective, adsObjectiveDay,
+  huyAffiliate,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -1654,6 +1675,16 @@ export default function Dashboard({
   const [mixShare, setMixShare] = useState(false)
   const [modelSel, setModelSel] = useState('')
   const [closed, setClosed] = useState<Set<string>>(new Set())
+  /** Các nhánh đang mở ở cây huỷ theo affiliate (7.15). Khoá là đường dẫn
+   *  'sản phẩm' hoặc 'sản phẩm|creator', nên hai creator trùng tên ở hai
+   *  sản phẩm khác nhau vẫn mở/đóng độc lập. */
+  const [affMo, setAffMo] = useState<Set<string>>(new Set())
+  const toggleAff = (k: string) =>
+    setAffMo((p) => {
+      const n = new Set(p)
+      if (n.has(k)) n.delete(k); else n.add(k)
+      return n
+    })
   /** Chỉ số đang xem ở hai lưới phòng × ngày và phòng × tháng. */
   const [roomMetric, setRoomMetric] = useState<RoomMetric>('gmv')
   /** Chỉ số đang xem ở lưới kênh × tháng (doanh thu thật của shop). */
@@ -3625,6 +3656,115 @@ export default function Dashboard({
         )}
       />
     </section>
+  )
+
+
+  /* ---- huỷ theo kênh affiliate ----
+     Cây ba tầng sản phẩm → creator → video. Gộp ở giao diện chứ không ở
+     SQL vì bộ lọc thời gian và bộ lọc ngành hàng nằm ở đây; view chỉ trả
+     về dòng thô, mỗi dòng một đơn.
+
+     Ngưỡng gộp: creator dưới 5 đơn và video dưới 3 đơn bị dồn vào dòng
+     "Khác". Dưới ngưỡng đó một đơn huỷ đã làm tỷ lệ nhảy hàng chục điểm,
+     bày ra chỉ tạo cảm giác có tín hiệu ở chỗ không có gì. */
+  const NGUONG_CREATOR = 5
+  const NGUONG_VIDEO = 3
+
+  type AffNut = {
+    ten: string; url: string | null; nhan?: string
+    don: number; huy: number; sau: number; gmv: number; gmvHuy: number
+    con: AffNut[]
+  }
+  const nutMoi = (ten: string, url: string | null = null): AffNut =>
+    ({ ten, url, don: 0, huy: 0, sau: 0, gmv: 0, gmvHuy: 0, con: [] })
+
+  const affRows = useMemo(
+    () => huyAffiliate
+      .filter((r) => (byMonth ? keys.has(`${r.ngay.slice(0, 7)}-01`) : keys.has(r.ngay)))
+      .filter((r) => cat === 'all' || r.category === cat),
+    [huyAffiliate, keys, byMonth, cat],
+  )
+
+  /** Tách theo loại nội dung — VIDEO / LIVE / SHOP / LINKSHARE. */
+  const affLoai = useMemo(() => {
+    const m = new Map<string, AffNut>()
+    for (const r of affRows) {
+      const c = m.get(r.content_type) ?? nutMoi(r.content_type)
+      c.don += 1
+      if (r.da_huy) { c.huy += 1; c.gmvHuy += Number(r.gmv || 0) }
+      if (r.huy_sau_lay) c.sau += 1
+      c.gmv += Number(r.gmv || 0)
+      m.set(r.content_type, c)
+    }
+    return Array.from(m.values()).sort((a, b) => b.don - a.don)
+  }, [affRows])
+
+  /** Cây sản phẩm → creator → video. */
+  const affCay = useMemo(() => {
+    const sp = new Map<string, Map<string, Map<string, AffNut>>>()
+    const tong = new Map<string, AffNut>()
+
+    const cong = (c: AffNut, r: HuyAffiliate) => {
+      c.don += 1
+      if (r.da_huy) { c.huy += 1; c.gmvHuy += Number(r.gmv || 0) }
+      if (r.huy_sau_lay) c.sau += 1
+      c.gmv += Number(r.gmv || 0)
+    }
+
+    for (const r of affRows) {
+      if (!tong.has(r.san_pham)) { tong.set(r.san_pham, nutMoi(r.san_pham)); sp.set(r.san_pham, new Map()) }
+      cong(tong.get(r.san_pham)!, r)
+
+      const theoCreator = sp.get(r.san_pham)!
+      if (!theoCreator.has(r.creator_username)) theoCreator.set(r.creator_username, new Map())
+      const theoVideo = theoCreator.get(r.creator_username)!
+
+      const khoa = r.video_url ?? `nhan:${r.video_nhan}`
+      if (!theoVideo.has(khoa)) {
+        theoVideo.set(khoa, { ...nutMoi(`${r.content_type} ·${r.video_nhan}`, r.video_url), nhan: r.video_nhan })
+      }
+      cong(theoVideo.get(khoa)!, r)
+    }
+
+    /** Dồn phần đuôi mỏng vào một dòng "Khác" thay vì bày ra từng dòng. */
+    const gomDuoi = (ds: AffNut[], nguong: number, ten: string) => {
+      const giu = ds.filter((x) => x.don >= nguong)
+      const bo = ds.filter((x) => x.don < nguong)
+      if (!bo.length) return giu
+      const k = nutMoi(`${ten} (${bo.length})`)
+      for (const x of bo) {
+        k.don += x.don; k.huy += x.huy; k.sau += x.sau
+        k.gmv += x.gmv; k.gmvHuy += x.gmvHuy
+      }
+      return [...giu, k]
+    }
+
+    const ra: AffNut[] = []
+    for (const [ten, nut] of tong) {
+      const creators: AffNut[] = []
+      for (const [cten, videos] of sp.get(ten)!) {
+        const c = nutMoi(cten)
+        for (const v of videos.values()) {
+          c.don += v.don; c.huy += v.huy; c.sau += v.sau
+          c.gmv += v.gmv; c.gmvHuy += v.gmvHuy
+        }
+        c.con = gomDuoi(Array.from(videos.values()).sort((a, b) => b.don - a.don), NGUONG_VIDEO, 'Video lẻ')
+        creators.push(c)
+      }
+      nut.con = gomDuoi(creators.sort((a, b) => b.don - a.don), NGUONG_CREATOR, 'Creator lẻ')
+      ra.push(nut)
+    }
+    return ra.sort((a, b) => b.don - a.don)
+  }, [affRows])
+
+  const affTong = useMemo(
+    () => affRows.reduce((a, r) => ({
+      don: a.don + 1,
+      huy: a.huy + (r.da_huy ? 1 : 0),
+      gmv: a.gmv + Number(r.gmv || 0),
+      gmvHuy: a.gmvHuy + (r.da_huy ? Number(r.gmv || 0) : 0),
+    }), { don: 0, huy: 0, gmv: 0, gmvHuy: 0 }),
+    [affRows],
   )
 
 
@@ -7601,6 +7741,114 @@ export default function Dashboard({
               </div>
               <p className="foot">Value lost = Seller GMV minus Seller NMV — the money that walked out with the cancelled orders.</p>
             </section>
+            <section id="s7-14">
+              <h2><span className="hno">7.14</span>Affiliate orders by content type — {periodNote}</h2>
+              <p className="sub">
+                Affiliate orders only — the ones that carry a creator commission. Our own three
+                live rooms are not in here, because a shop&apos;s own live pays no commission. This
+                is roughly 3% of all orders, and it cancels harder than the rest of the shop:
+                {' '}<b>{pct(p1(affTong.huy, affTong.don))}</b> against ~64% shop-wide.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Content type</th><th className="n">Orders</th><th className="n">Cancelled</th>
+                    <th className="n">Cancel %</th><th className="n">After pickup %</th>
+                    <th className="n">GMV booked</th><th className="n">GMV lost</th>
+                  </tr></thead>
+                  <tbody>
+                    {affLoai.map((r) => (
+                      <tr key={r.ten}>
+                        <td>{r.ten}</td>
+                        <td className="n">{n0(r.don)}</td>
+                        <td className="n">{n0(r.huy)}</td>
+                        <td className="n" style={{ color: p1(r.huy, r.don) > 80 ? 'var(--bad)' : 'inherit' }}>
+                          {pct(p1(r.huy, r.don))}
+                        </td>
+                        <td className="n muted">{pct(p1(r.sau, r.don))}</td>
+                        <td className="n">{mn(r.gmv)}m</td>
+                        <td className="n" style={{ color: 'var(--bad)' }}>{mn(r.gmvHuy)}m</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Read the thin rows with care — LIVE and SHOP sit in the dozens, where one
+                cancellation moves the rate by two points.
+              </p>
+            </section>
+
+            <section id="s7-15">
+              <h2><span className="hno">7.15</span>Product → creator → video — {periodNote}</h2>
+              <p className="sub">
+                Click a product to see which creators sold it, then a creator to see which videos.
+                Creators under {NGUONG_CREATOR} orders and videos under {NGUONG_VIDEO} are folded
+                into a &ldquo;lẻ&rdquo; row, because below that one cancellation swings the rate by
+                tens of points. Video labels carry the last six digits of the content id; the title
+                links to the post on TikTok.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Product · creator · video</th><th className="n">Orders</th>
+                    <th className="n">Cancelled</th><th className="n">Cancel %</th>
+                    <th className="n">After pickup %</th>
+                    <th className="n">GMV booked</th><th className="n">GMV lost</th>
+                  </tr></thead>
+                  <tbody>
+                    {affCay.map((sp) => {
+                      const spMo = affMo.has(sp.ten)
+                      const dong = (
+                        nut: typeof sp, muc: number, khoa: string, moDuoc: boolean, mo: boolean,
+                      ) => (
+                        <tr key={khoa} className={muc ? 'muted' : undefined}>
+                          <td style={{ paddingLeft: 8 + muc * 20 }}>
+                            {moDuoc ? (
+                              <button className="lnk" onClick={() => toggleAff(khoa)}>
+                                {mo ? '▾' : '▸'} {nut.ten}
+                              </button>
+                            ) : nut.url ? (
+                              <a href={nut.url} target="_blank" rel="noreferrer">{nut.ten}</a>
+                            ) : nut.ten}
+                          </td>
+                          <td className="n">{n0(nut.don)}</td>
+                          <td className="n">{n0(nut.huy)}</td>
+                          <td className="n" style={{
+                            color: nut.don >= NGUONG_VIDEO && p1(nut.huy, nut.don) > 80
+                              ? 'var(--bad)' : 'inherit',
+                            fontWeight: muc ? 400 : 600,
+                          }}>{pct(p1(nut.huy, nut.don))}</td>
+                          <td className="n">{pct(p1(nut.sau, nut.don))}</td>
+                          <td className="n">{mn(nut.gmv)}m</td>
+                          <td className="n" style={{ color: 'var(--bad)' }}>{mn(nut.gmvHuy)}m</td>
+                        </tr>
+                      )
+                      const ra = [dong(sp, 0, sp.ten, true, spMo)]
+                      if (spMo) {
+                        for (const cr of sp.con) {
+                          const k = `${sp.ten}|${cr.ten}`
+                          const crMo = affMo.has(k)
+                          ra.push(dong(cr, 1, k, cr.con.length > 0, crMo))
+                          if (crMo) {
+                            for (const vd of cr.con) {
+                              ra.push(dong(vd, 2, `${k}|${vd.ten}`, false, false))
+                            }
+                          }
+                        }
+                      }
+                      return ra
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                GMV booked is what the orders were worth when placed; GMV lost is the part that
+                cancelled. A creator whose two columns are nearly equal is bringing volume that
+                never turns into money.
+              </p>
+            </section>
+
           </>
         )}
 
