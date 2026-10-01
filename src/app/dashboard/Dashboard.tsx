@@ -78,6 +78,12 @@ export type AdsObjective = {
   impressions: number | null; clicks: number | null
   cpm_vnd: number | null; cpc_vnd: number | null; ctr: number | null
 }
+/** Bản theo ngày, để 4.8 chạy được cả khi lọc DoD. */
+export type AdsObjectiveDay = {
+  ngay: string; nhom: string; muc_tieu: string
+  campaigns: number; cost_vnd: number
+  impressions: number | null; clicks: number | null
+}
 /** v_live_overview_daily — tổng quan live cấp SHOP từ endpoint 202609.
  *  `shows` là số SUY RA từ show_gpm, không phải số TikTok trả thẳng. */
 export type LiveOverview = {
@@ -219,7 +225,8 @@ type Props = {
   kenhMonthly: KenhMonth[]; kenhDaily: KenhDay[]; kenhSku: KenhSku[]
   campTong: CampTong[]; campMatrix: CampMatrix[]; huyChiTiet: HuyChiTiet[]
   huyModel: HuyModel[]; hanhTrinh: HanhTrinh[]; transitModel: TransitModel[]
-  liveOverview: LiveOverview[]; adsObjective: AdsObjective[]
+  liveOverview: LiveOverview[]
+  adsObjective: AdsObjective[]; adsObjectiveDay: AdsObjectiveDay[]
 }
 
 /* ============================== helpers ============================== */
@@ -1613,7 +1620,7 @@ export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
-  campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel, liveOverview, adsObjective,
+  campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel, liveOverview, adsObjective, adsObjectiveDay,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -2378,7 +2385,18 @@ export default function Dashboard({
      Chạy theo CHIP THÁNG như mọi khối MoM khác của sheet Advertising. */
 
   const adsMT = useMemo(() => {
-    const rows = adsObjective.filter((r) => goodMonths.includes(String(r.thang)))
+    // Chạy theo thanh lọc phía trên: chọn ngày thì đọc bản theo ngày, chọn
+    // tháng thì đọc bản theo tháng. Trước đây chỉ đọc bản tháng nên bấm
+    // "Days in picked months" mà biểu đồ vẫn đứng yên một cột.
+    const rows: { ky: string; nhom: string; muc_tieu: string; campaigns: number
+      cost_vnd: number; impressions: number | null; clicks: number | null }[] =
+      byMonth
+        ? adsObjective
+          .filter((r) => goodMonths.includes(String(r.thang)))
+          .map((r) => ({ ...r, ky: String(r.thang) }))
+        : adsObjectiveDay
+          .filter((r) => keys.has(String(r.ngay)))
+          .map((r) => ({ ...r, ky: String(r.ngay) }))
     const m = new Map<string, {
       mt: string; nhom: string; chi: number; imp: number; clicks: number; camps: number
     }>()
@@ -2405,17 +2423,21 @@ export default function Dashboard({
     const tong = all.reduce((a, r) => a + r.chi, 0)
     const gmvMax = all.filter((r) => r.nhom === 'GMV Max').reduce((a, r) => a + r.chi, 0)
 
-    // Cột xếp chồng theo tháng
+    // Cột xếp chồng theo kỳ đang chọn
     const mt = all.map((r) => r.mt)
-    const theoThang = goodMonths.map((th) => ({
-      ky: th,
-      parts: mt.map((k) => {
-        const hit = rows.find((r) => String(r.thang) === th && r.muc_tieu === k)
-        return Number(hit?.cost_vnd || 0)
-      }),
-    }))
+    const bucket = new Map<string, number[]>()
+    for (const r of rows) {
+      const j = mt.indexOf(r.muc_tieu)
+      if (j < 0) continue
+      const a = bucket.get(r.ky) ?? Array(mt.length).fill(0)
+      a[j] += Number(r.cost_vnd || 0)
+      bucket.set(r.ky, a)
+    }
+    const theoThang = Array.from(bucket.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([ky, parts]) => ({ ky, parts }))
     return { all, tong, gmvMax, branding: tong - gmvMax, mt, theoThang }
-  }, [adsObjective, goodMonths])
+  }, [adsObjective, adsObjectiveDay, goodMonths, keys, byMonth])
 
   /** Ô số liệu đầu phần Discounts. Chạy theo bộ lọc NGÀY như cả phần đó. */
   const discTotals = useMemo(() => {
@@ -4884,7 +4906,7 @@ export default function Dashboard({
             </section>
 
             <section id="s4-8">
-              <h2><span className="hno">4.8</span>Spend by campaign objective — {monthNote}</h2>
+              <h2><span className="hno">4.8</span>Spend by campaign objective — {periodNote} · {dod}</h2>
               <p className="sub">
                 Everything that is not GMV Max used to land in one unlabelled bucket, so the money
                 going to branding was in the data but invisible. This splits it by what each
@@ -4898,27 +4920,28 @@ export default function Dashboard({
                 </span>
               </p>
               <div className="tiles" style={{ marginTop: 20 }}>
-                <Tile label="Total ad spend" value={bn(adsMT.tong)} unit=" bn" sub={monthNote} />
+                <Tile label="Total ad spend" value={bn(adsMT.tong)} unit=" bn" sub={periodNote} />
                 <Tile label="GMV Max" value={bn(adsMT.gmvMax)} unit=" bn"
                   sub={`${pct(p1(adsMT.gmvMax, adsMT.tong))} of spend — LGM + PGM`} />
                 <Tile label="Branding and other" value={bn(adsMT.branding)} unit=" bn"
                   sub={`${pct(p1(adsMT.branding, adsMT.tong))} of spend — no revenue attributed`} />
               </div>
 
-              <h3 style={{ marginTop: 30 }}>Month by month</h3>
+              <h3 style={{ marginTop: 30 }}>{periodWord === 'month' ? 'Month by month' : 'Day by day'}</h3>
               <StackLine
                 rows={adsMT.theoThang}
                 series={adsMT.mt.map((k) => ({ ten: MT_TEN[k] ?? k, color: MT_MAU[k] ?? 'var(--muted)' }))}
                 lines={[]}
                 fmtCot={(v) => `${bn(v)} bn`}
                 fmtDuong={() => ''}
-                label={mmyy}
+                label={lbl}
+                moiNhan={adsMT.theoThang.length <= 34}
                 tip={(i) => {
                   const r = adsMT.theoThang[i]
                   if (!r) return null
                   const t = r.parts.reduce((a, b) => a + b, 0)
                   return (
-                    <><b>{mmyy(r.ky)}</b> · {bn(t)} bn<br />
+                    <><b>{lbl(r.ky)}</b> · {bn(t)} bn<br />
                       {adsMT.mt.map((k, j) => (r.parts[j] > 0 ? (
                         <span key={k}><i className="sw" style={{ background: MT_MAU[k] ?? 'var(--muted)' }} />
                           {MT_TEN[k] ?? k} {bn(r.parts[j])} bn · {pct(p1(r.parts[j], t))}<br /></span>
