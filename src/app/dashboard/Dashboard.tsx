@@ -1679,6 +1679,8 @@ export default function Dashboard({
    *  'sản phẩm' hoặc 'sản phẩm|creator', nên hai creator trùng tên ở hai
    *  sản phẩm khác nhau vẫn mở/đóng độc lập. */
   const [affMo, setAffMo] = useState<Set<string>>(new Set())
+  /** Lọc 7.15 theo một sản phẩm. Rỗng = tất cả. */
+  const [affSp, setAffSp] = useState('')
   const toggleAff = (k: string) =>
     setAffMo((p) => {
       const n = new Set(p)
@@ -3761,6 +3763,13 @@ export default function Dashboard({
     }
     return ra.sort((a, b) => b.don - a.don)
   }, [affRows])
+
+  /** Cây sau khi lọc sản phẩm. Lọc ở tầng ngoài cùng nên tổng của creator
+   *  và video bên trong không đổi — không có số nào phải tính lại. */
+  const affCayLoc = useMemo(
+    () => (affSp ? affCay.filter((x) => x.ten === affSp) : affCay),
+    [affCay, affSp],
+  )
 
   const affTong = useMemo(
     () => affRows.reduce((a, r) => ({
@@ -7858,6 +7867,21 @@ export default function Dashboard({
                 the red highlight only starts at {NGUONG_TIN} orders. Video labels carry the last
                 six digits of the content id; the title links to the post on TikTok.
               </p>
+              <div className="filters" style={{ marginBottom: 14 }}>
+                <select className="drop wide" value={affSp} onChange={(e) => setAffSp(e.target.value)}>
+                  <option value="">All products ({affCay.length})</option>
+                  {affCay.map((x) => (
+                    <option key={x.ten} value={x.ten}>
+                      {x.ten} — {n0(x.don)} orders, {pct(p1(x.huy, x.don))} cancelled
+                    </option>
+                  ))}
+                </select>
+                {affSp && <button className="lnk" onClick={() => setAffSp('')}>Clear product filter</button>}
+                <button className="lnk" onClick={() => setAffMo(new Set(affCayLoc.map((x) => x.ten)))}>
+                  Expand all
+                </button>
+                <button className="lnk" onClick={() => setAffMo(new Set())}>Collapse all</button>
+              </div>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -7867,7 +7891,7 @@ export default function Dashboard({
                     <th className="n">GMV booked</th><th className="n">GMV lost</th>
                   </tr></thead>
                   <tbody>
-                    {affCay.map((sp) => {
+                    {affCayLoc.map((sp) => {
                       const spMo = affMo.has(sp.ten)
                       const dong = (
                         nut: typeof sp, muc: number, khoa: string, moDuoc: boolean, mo: boolean,
