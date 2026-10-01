@@ -3476,6 +3476,51 @@ export default function Dashboard({
           )
         }}
       />
+      <div className="tablewrap" style={{ marginTop: 18 }}>
+        <table>
+          <thead><tr>
+            <th>Month</th>
+            <th className="n">Seller NMV</th>
+            <th className="n">MoM</th>
+            <th className="n">Ad spend</th>
+            <th className="n">MoM</th>
+            <th className="n">Left after ads</th>
+            <th className="n">ATR</th>
+            <th className="n">vs prev</th>
+          </tr></thead>
+          <tbody>
+            {adsRevMonths.slice().reverse().map((m, i, arr) => {
+              // arr đã đảo ngược nên tháng trước nằm ở i + 1
+              const p = arr[i + 1]
+              const dAtr = m.atr != null && p?.atr != null
+                ? Math.round((m.atr - p.atr) * 10) / 10 : null
+              return (
+                <tr key={m.ky}>
+                  <td>{mmyy(m.ky)}</td>
+                  <td className="n">{usd(m.nmv)}</td>
+                  <td className="n muted">{deltaText(delta(m.nmv, p?.nmv), 'month')}</td>
+                  <td className="n">{usd(m.cost)}</td>
+                  <td className="n muted">{deltaText(delta(m.cost, p?.cost), 'month')}</td>
+                  <td className="n muted">{usd(m.rest)}</td>
+                  <td className="n" style={{ color: (m.atr ?? 0) > 25 ? 'var(--bad)' : 'inherit' }}>
+                    {pct(m.atr)}
+                  </td>
+                  <td className="n muted">
+                    {dAtr == null ? '—' : `${dAtr > 0 ? '+' : ''}${dAtr} pp`}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="foot">
+        All figures in USD at the stored FX rate. <b>ATR</b> is ad spend ÷ Seller NMV — the share of
+        revenue that went back to TikTok as media. The two MoM columns move the amounts; <b>vs
+        prev</b> moves the <i>rate</i> in percentage points, which is the one that says whether the
+        account is getting more or less efficient — spend can rise and ATR still fall if revenue
+        rose faster. Red past 25%.
+      </p>
     </section>
   )
 
