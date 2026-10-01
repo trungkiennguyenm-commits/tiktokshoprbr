@@ -48,7 +48,14 @@ export async function GET(request: Request) {
       method: 'POST',
       accessToken: ctx.accessToken,
       shopCipher: ctx.shopCipher,
-      query: { page_size: 100 },
+      query: {
+        page_size: 100,
+        // Hai tham số này doc không ghi nhưng API Testing Tool có gửi.
+        // Thiếu `version` thì gateway trả 105005 "chưa được cấp scope" —
+        // sai hoàn toàn so với nguyên nhân thật. Đừng bỏ.
+        version: 202410,
+        shop_id: ctx.ttsShopId,
+      },
       body: { create_time_ge: ge, create_time_lt: now },
     })
 
