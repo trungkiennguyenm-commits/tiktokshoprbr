@@ -270,7 +270,8 @@ const SECTIONS = [
     groups: [
       { ten: '', subs: ['At a glance'] },
       { ten: 'Month over month', ghi: 'this sheet is MoM — day by day lives on Sales',
-        subs: ['GMV, NMV, cancellations', 'NMV, ads and ATR', 'LGM vs PGM', 'Headline table'] },
+        subs: ['GMV, NMV, cancellations', 'NMV, ads and ATR', 'LGM vs PGM',
+          'Valid subsidy', 'Headline table'] },
       { ten: 'Channels', ghi: 'Official VN, Handheld, Lifestyle', subs: ['By channel'] },
     ],
   },
@@ -3698,7 +3699,115 @@ export default function Dashboard({
             <div id="s1-4">{chartAdsMix('1.4')}</div>
 
             <section id="s1-5">
-              <h2><span className="hno">1.5</span>Headline numbers by month</h2>
+              <h2><span className="hno">1.5</span>Valid subsidy against Seller NMV — month by month</h2>
+              <p className="sub">
+                Same view as 2.5 on the Sales tab, but monthly — so the question here is not what
+                happened on a given day, it is which way the subsidy is drifting. Columns are the
+                money that actually came off the price on orders that survived, split by who paid:
+                TikTok on the bottom, us on top. <b style={{ color: 'var(--bad)' }}>Red &mdash; how
+                deep is the discounting?</b> TikTok&rsquo;s subsidy measured against Seller NMV.{' '}
+                <b style={{ color: 'var(--ok)' }}>Green &mdash; who is paying for it?</b>{' '}
+                TikTok&rsquo;s share of the whole discount. The green line says nothing about how
+                large the discount is &mdash; only who carries it.
+              </p>
+              <ComboChart
+                data={momRows.map((r) => ({
+                  ky: r.ky, a: r.platform_disc_chua_huy, b: r.seller_disc_chua_huy,
+                }))}
+                names={['TikTok — valid subsidy', 'Us — seller discount']}
+                colors={['var(--c1)', 'var(--c2)']}
+                lines={[
+                  {
+                    ten: 'Subsidy ÷ Seller NMV (right axis)',
+                    color: 'var(--bad)', truc: 'pct',
+                    vals: momRows.map((r) => (r.nmv > 0 ? p1(r.platform_disc_chua_huy, r.nmv) : null)),
+                    showVals: true, fmtVal: (v) => `${v}%`,
+                  },
+                  {
+                    ten: 'TikTok share of the discount (right axis)',
+                    color: 'var(--ok)', truc: 'pct',
+                    vals: momRows.map((r) => {
+                      const t = r.platform_disc_chua_huy + r.seller_disc_chua_huy
+                      return t > 0 ? p1(r.platform_disc_chua_huy, t) : null
+                    }),
+                    showVals: true, fmtVal: (v) => `${v}%`,
+                  },
+                ]}
+                fmt={bn} label={mmyy} unit="VND bn"
+                tip={(d, i2) => {
+                  const r = momRows[i2]
+                  if (!r) return null
+                  const t = r.platform_disc_chua_huy + r.seller_disc_chua_huy
+                  return (
+                    <><b>{mmyy(d.ky)}</b><br />
+                      Valid subsidy {bn(r.platform_disc_chua_huy)}<br />
+                      · booked {bn(r.platform_disc)} · kept {pct(p1(r.platform_disc_chua_huy, r.platform_disc))}<br />
+                      Our discount {bn(r.seller_disc_chua_huy)}<br />
+                      Seller NMV {bn(r.nmv)}<br />
+                      Subsidy rate {pct(r.nmv > 0 ? p1(r.platform_disc_chua_huy, r.nmv) : null)}<br />
+                      TikTok funded {pct(t > 0 ? p1(r.platform_disc_chua_huy, t) : null)} of the discount</>
+                  )
+                }}
+              />
+              <div className="tablewrap" style={{ marginTop: 18 }}>
+                <table>
+                  <thead><tr>
+                    <th>Month</th>
+                    <th className="n">Seller NMV</th>
+                    <th className="n">Subsidy booked</th>
+                    <th className="n">Valid subsidy</th>
+                    <th className="n">MoM</th>
+                    <th className="n">Kept</th>
+                    <th className="n">Subsidy rate</th>
+                    <th className="n">vs prev</th>
+                    <th className="n">Our discount</th>
+                    <th className="n">TikTok share</th>
+                  </tr></thead>
+                  <tbody>
+                    {momRows.slice().reverse().map((r, i, arr) => {
+                      // arr đã đảo ngược nên "tháng trước" nằm ở i + 1
+                      const p = arr[i + 1]
+                      const t = r.platform_disc_chua_huy + r.seller_disc_chua_huy
+                      const tyLe = r.nmv > 0 ? p1(r.platform_disc_chua_huy, r.nmv) : null
+                      const tyLeTruoc = p && p.nmv > 0 ? p1(p.platform_disc_chua_huy, p.nmv) : null
+                      const dPt = tyLe != null && tyLeTruoc != null
+                        ? Math.round((tyLe - tyLeTruoc) * 10) / 10 : null
+                      return (
+                        <tr key={r.ky}>
+                          <td>{mmyy(r.ky)}</td>
+                          <td className="n">{bn(r.nmv)}</td>
+                          <td className="n muted">{bn(r.platform_disc)}</td>
+                          <td className="n"><b>{bn(r.platform_disc_chua_huy)}</b></td>
+                          <td className="n muted">
+                            {deltaText(delta(r.platform_disc_chua_huy, p?.platform_disc_chua_huy), 'month')}
+                          </td>
+                          <td className="n muted">{pct(p1(r.platform_disc_chua_huy, r.platform_disc))}</td>
+                          <td className="n">{pct(tyLe)}</td>
+                          <td className="n muted">
+                            {dPt == null ? '—' : `${dPt > 0 ? '+' : ''}${dPt} pp`}
+                          </td>
+                          <td className="n">{bn(r.seller_disc_chua_huy)}</td>
+                          <td className="n">{pct(t > 0 ? p1(r.platform_disc_chua_huy, t) : null)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Money in VND bn. <b>Booked</b> is every voucher TikTok attached at checkout;{' '}
+                <b>valid</b> is what remained on orders that were not cancelled &mdash; only the
+                second one is money TikTok really spent, and the gap between them is large because
+                the cancellation rate is high. <b>Kept</b> is valid ÷ booked. <b>MoM</b> compares
+                the valid subsidy amount; <b>vs prev</b> compares the subsidy <i>rate</i> in
+                percentage points, which is the one to watch &mdash; the amount can rise simply
+                because the month was bigger. Subsidy here is platform voucher money only; it is not
+                the platform fee, which lives on the P&amp;L tab.
+              </p>
+            </section>
+
+            <section id="s1-6">
+              <h2><span className="hno">1.6</span>Headline numbers by month</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -3737,8 +3846,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn.</p>
             </section>
 
-            <section id="s1-6">
-              <h2><span className="hno">1.6</span>Seller NMV by channel — MoM</h2>
+            <section id="s1-7">
+              <h2><span className="hno">1.7</span>Seller NMV by channel — MoM</h2>
               <p className="sub">
                 Our own revenue, after cancellations, split by the live room that produced the
                 order. TikTok tags each order line with the live room it came from, so this is the
