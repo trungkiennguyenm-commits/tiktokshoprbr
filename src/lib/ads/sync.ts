@@ -12,6 +12,9 @@ export const ADS_ACCOUNTS = [
 ] as const
 
 const CAMPAIGN_PATH = '/open_api/v1.3/gmv_max/campaign/get/'
+/** Campaign thường (không phải GMV Max). Chỉ endpoint này mới trả
+ *  objective_type thật — AWARENESS, TRAFFIC, VIDEO_VIEWS, REACH… */
+const CAMPAIGN_THUONG_PATH = '/open_api/v1.3/campaign/get/'
 const REPORT_PATH = '/open_api/v1.3/gmv_max/report/get/'
 
 /** LIVE_GMV_MAX = LGM, PRODUCT_GMV_MAX = PGM. Đây là hai giá trị duy nhất
@@ -123,6 +126,57 @@ export async function syncAds(days = 30): Promise<Result> {
         const info = body.data?.page_info as { total_page?: number } | undefined
         if (!info?.total_page || page >= info.total_page) break
       }
+    }
+
+    // ---- 1b. Campaign thường (auction) ----
+    // Bước 1 chỉ hỏi endpoint gmv_max nên campaign branding / traffic /
+    // video view không có tên lẫn objective — chi tiêu của chúng vẫn vào
+    // ads_daily ở bước 3 với promotion_type 'AUCTION', nhưng không quy được
+    // về mục tiêu nào. Gọi thêm endpoint campaign thường để lấp chỗ đó.
+    //
+    // Endpoint này trả CẢ campaign GMV Max, nên bỏ qua campaign nào đã có
+    // trong promoOf — nếu không sẽ ghi đè promotion_type của bước 1.
+    for (let page = 1; page <= 20; page++) {
+      const body = await adsGet(CAMPAIGN_THUONG_PATH, token, {
+        advertiser_id: adv,
+        page: String(page),
+        page_size: '100',
+      })
+      if (body.code !== 0) {
+        out.errors.push(`${adv} campaign thuong: ${body.message}`)
+        break
+      }
+      const list = (body.data?.list ?? []) as Record<string, unknown>[]
+      if (!list.length) break
+
+      const rows = list
+        .filter((c) => !promoOf.has(String(c.campaign_id)))
+        .map((c) => {
+          const name = (c.campaign_name ?? null) as string | null
+          const p = parseCampaignName(name)
+          return {
+            campaign_id: String(c.campaign_id),
+            advertiser_id: adv,
+            promotion_type: 'AUCTION',
+            campaign_name: name,
+            koc_handle: p.koc,
+            model_hint: p.model,
+            room_hint: p.room,
+            objective_type: (c.objective_type ?? null) as string | null,
+            operation_status: (c.operation_status ?? null) as string | null,
+            secondary_status: (c.secondary_status ?? null) as string | null,
+            create_time: c.create_time ? new Date(String(c.create_time) + 'Z').toISOString() : null,
+            raw: c,
+            synced_at: new Date().toISOString(),
+          }
+        })
+      if (rows.length) {
+        await db.from('ads_campaigns').upsert(rows, { onConflict: 'campaign_id' })
+        out.campaigns += rows.length
+      }
+
+      const info = body.data?.page_info as { total_page?: number } | undefined
+      if (!info?.total_page || page >= info.total_page) break
     }
 
     // ---- 2. Báo cáo theo ngày, chia mẻ 30 ngày cho khỏi chạm trần khoảng thời gian ----
