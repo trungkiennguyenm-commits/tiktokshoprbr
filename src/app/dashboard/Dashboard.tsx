@@ -308,8 +308,8 @@ const SECTIONS = [
       { ten: 'Category', ghi: 'robot vs handheld',
         subs: ['Cards', 'Seller NMV', 'Cancellation rate', 'Detail table'] },
       { ten: 'Price band', subs: ['Net quantity', 'Cancellation rate'] },
-      { ten: 'Models', subs: ['Gross vs net', 'By month', 'Model mix', 'Top models',
-        'Full table'] },
+      { ten: 'Models', ghi: 'follows the day / month toggle',
+        subs: ['Gross vs net', 'Model performance', 'Top models', 'Full table'] },
     ],
   },
   {
@@ -1649,12 +1649,11 @@ export default function Dashboard({
       return n
     })
   const [sortKey, setSortKey] = useState<keyof SkuAgg>('nmv')
-  const [mixMetric, setMixMetric] = useState<'gmv' | 'so_luong' | 'cancel'>('gmv')
+  const [mixMetric, setMixMetric] = useState<'gmv' | 'so_luong' | 'gross' | 'cancel'>('gmv')
   /** Bảng model mix: bật thì mỗi ô là % của cột ngày đó thay vì số tuyệt đối. */
   const [mixShare, setMixShare] = useState(false)
   const [modelSel, setModelSel] = useState('')
   const [closed, setClosed] = useState<Set<string>>(new Set())
-  const [momMetric, setMomMetric] = useState<'net' | 'gross' | 'cancel'>('net')
   /** Chỉ số đang xem ở hai lưới phòng × ngày và phòng × tháng. */
   const [roomMetric, setRoomMetric] = useState<RoomMetric>('gmv')
   /** Chỉ số đang xem ở lưới kênh × tháng (doanh thu thật của shop). */
@@ -2568,13 +2567,14 @@ export default function Dashboard({
       if (!o) return null
       if (mixMetric === 'gmv') return o.gmv || null
       if (mixMetric === 'so_luong') return o.net || null
+      if (mixMetric === 'gross') return o.gross || null
       return o.gross > 0 ? pc(o.huy, o.gross) : null
     }
     // Tổng mỗi cột, chỉ dùng cho chế độ "% của kỳ" (không áp dụng cho tỷ lệ huỷ).
     const colTot = mix.kys.map((k) => {
       let t = 0
       for (const o of (mix.byKy.get(k) ?? new Map()).values()) {
-        t += mixMetric === 'gmv' ? o.gmv : o.net
+        t += mixMetric === 'gmv' ? o.gmv : mixMetric === 'gross' ? o.gross : o.net
       }
       return t
     })
@@ -2586,8 +2586,10 @@ export default function Dashboard({
       const vals =
         mixMetric !== 'cancel' && mixShare
           ? [
-            ...per.map((o, i) => pc(o ? (mixMetric === 'gmv' ? o.gmv : o.net) : 0, colTot[i])),
-            pc(tot ? (mixMetric === 'gmv' ? tot.gmv : tot.net) : 0, grand),
+            ...per.map((o, i) => pc(o ? (mixMetric === 'gmv' ? o.gmv
+              : mixMetric === 'gross' ? o.gross : o.net) : 0, colTot[i])),
+            pc(tot ? (mixMetric === 'gmv' ? tot.gmv
+              : mixMetric === 'gross' ? tot.gross : tot.net) : 0, grand),
           ]
           : [...per.map(lay), lay(tot)]
       return { label: sr.ten, color: sr.color, vals }
@@ -4593,78 +4595,45 @@ export default function Dashboard({
             </section>
 
             <section id="s3-8">
-              <h2><span className="hno">3.8</span>Model performance by month</h2>
+              <h2><span className="hno">3.8</span>Model performance per {periodWord} · {dod}</h2>
               <p className="sub">
-                Always monthly so the trend is readable, and it follows the category and model
-                filters. Switch the metric below.
+                Every model that sold in the period, biggest first &mdash; nothing folded into
+                &ldquo;Other&rdquo;. Follows the day / month toggle, the category filter and the
+                model filter, so one table covers what used to take two. Cancellation rate is
+                cancelled pcs ÷ gross pcs, recalculated on the totals rather than summed, which is
+                why the share view does not apply to it.
               </p>
               <div className="seg" style={{ marginTop: 14 }}>
-                {([['net', 'Net pcs'], ['gross', 'Gross pcs'], ['cancel', 'Cancel %']] as const).map(([k, l]) => (
-                  <button key={k} className={momMetric === k ? 'on' : ''} onClick={() => setMomMetric(k)}>{l}</button>
+                {(['gmv', 'so_luong', 'gross', 'cancel'] as const).map((k) => (
+                  <button key={k} className={mixMetric === k ? 'on' : ''} onClick={() => setMixMetric(k)}>
+                    {k === 'gmv' ? 'Seller GMV' : k === 'so_luong' ? 'Net pcs'
+                      : k === 'gross' ? 'Gross pcs' : 'Cancellation rate'}
+                  </button>
                 ))}
               </div>
+              {mixMetric !== 'cancel' && (
+                <div className="seg" style={{ marginTop: 8 }}>
+                  {([[false, 'Absolute'], [true, 'Share of period']] as const).map(([k, l]) => (
+                    <button key={l} className={mixShare === k ? 'on' : ''} onClick={() => setMixShare(k)}>{l}</button>
+                  ))}
+                </div>
+              )}
               <Matrix
-                corner="Model"
-                cols={goodMonths.map(mmyy)}
-                heat={momMetric === 'cancel' ? 'high-bad' : undefined}
-                fmt={momMetric === 'cancel' ? (v) => `${v}%` : n0}
-                rows={skuGrid.models
-                  .filter((m) => !modelSel || m === modelSel)
-                  .map((m) => ({
-                    label: m,
-                    sub: skuGrid.bandByModel.get(m),
-                    color: BAND_COLOR[skuGrid.bandByModel.get(m) ?? '<5M'],
-                    vals: goodMonths.map((mo) => {
-                      const rows = skuGrid.cell.get(`${m}|${mo}`)
-                      if (!rows?.length) return null
-                      const s = (f: keyof SkuPeriod) => rows.reduce((a, r) => a + Number(r[f] || 0), 0)
-                      if (momMetric === 'net') return s('sl_chua_huy')
-                      if (momMetric === 'gross') return s('so_luong')
-                      return p1(s('sl_huy'), s('so_luong'))
-                    }),
-                  }))}
+                corner={`Model · ${mixMetric === 'cancel' ? 'cancelled %'
+                  : mixShare ? '% of ' + periodWord
+                    : mixMetric === 'gmv' ? 'VND bn'
+                      : mixMetric === 'gross' ? 'gross pcs' : 'net pcs'}`}
+                cols={mixTable.cols}
+                rows={mixTable.rows}
+                heat={mixMetric === 'cancel' ? 'high-bad' : 'high-good'}
+                fmt={mixMetric === 'cancel' ? (v) => `${v}%`
+                  : mixShare ? (v) => `${v}%`
+                    : mixMetric === 'gmv' ? bn : n0}
               />
             </section>
 
-            {!modelSel && (
-              <section id="s3-9">
-                <h2><span className="hno">3.9</span>Model mix per {periodWord}</h2>
-                <p className="sub">
-                  Every model that sold in the period, biggest first &mdash; nothing folded into
-                  &ldquo;Other&rdquo;. Cancellation rate is cancelled pcs ÷ gross pcs, so it is
-                  recalculated on the totals rather than summed, and the share view does not apply
-                  to it.
-                </p>
-                <div className="seg" style={{ marginTop: 14 }}>
-                  {(['gmv', 'so_luong', 'cancel'] as const).map((k) => (
-                    <button key={k} className={mixMetric === k ? 'on' : ''} onClick={() => setMixMetric(k)}>
-                      {k === 'gmv' ? 'By Seller GMV' : k === 'so_luong' ? 'By net pcs' : 'By cancellation rate'}
-                    </button>
-                  ))}
-                </div>
-                {mixMetric !== 'cancel' && (
-                  <div className="seg" style={{ marginTop: 8 }}>
-                    {([[false, 'Absolute'], [true, 'Share of period']] as const).map(([k, l]) => (
-                      <button key={l} className={mixShare === k ? 'on' : ''} onClick={() => setMixShare(k)}>{l}</button>
-                    ))}
-                  </div>
-                )}
-                <Matrix
-                  corner={`Model · ${mixMetric === 'cancel' ? 'cancelled %'
-                    : mixShare ? '% of ' + periodWord
-                      : mixMetric === 'gmv' ? 'VND bn' : 'net pcs'}`}
-                  cols={mixTable.cols}
-                  rows={mixTable.rows}
-                  heat={mixMetric === 'cancel' ? 'high-bad' : 'high-good'}
-                  fmt={mixMetric === 'cancel' ? (v) => `${v}%`
-                    : mixShare ? (v) => `${v}%`
-                      : mixMetric === 'gmv' ? bn : n0}
-                />
-              </section>
-            )}
-
-            <section id="s3-10">
-              <h2><span className="hno">3.10</span>Top models by Seller NMV — {periodNote}</h2>
+            <section id="s3-9">
+              <h2><span className="hno">3.9</span>Top models by Seller NMV — {periodNote}</h2>
               <RowBars
                 rows={skuF.slice().sort((a, b) => b.nmv - a.nmv).slice(0, 15).map((s) => ({
                   nhan: s.model,
@@ -4674,8 +4643,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s3-11">
-              <h2><span className="hno">3.11</span>Full table, grouped by category</h2>
+            <section id="s3-10">
+              <h2><span className="hno">3.10</span>Full table, grouped by category</h2>
               <p className="sub">
                 Covers {periodNote}. The bold row is the category total — click it to collapse.
                 Click a column header to re-sort. Currently sorted by <b>{String(sortKey)}</b>.
