@@ -68,6 +68,16 @@ export type HuyChiTiet = {
   so_luong: number; nmv_huy: number; gio_tong: number; sl_co_gio: number
   gio_tu_luc_lay: number | null; sl_co_lay: number
 }
+/** v_ads_objective_monthly — chi tiêu tách theo MỤC TIÊU campaign.
+ *  impressions / clicks / cpm / cpc là null với GMV Max vì TikTok không trả
+ *  hai số đó cho loại campaign này — null chứ không phải 0. */
+export type AdsObjective = {
+  thang: string; nhom: string; muc_tieu: string
+  campaigns: number; cost_vnd: number
+  gross_revenue_vnd: number; orders: number
+  impressions: number | null; clicks: number | null
+  cpm_vnd: number | null; cpc_vnd: number | null; ctr: number | null
+}
 /** v_live_overview_daily — tổng quan live cấp SHOP từ endpoint 202609.
  *  `shows` là số SUY RA từ show_gpm, không phải số TikTok trả thẳng. */
 export type LiveOverview = {
@@ -209,7 +219,7 @@ type Props = {
   kenhMonthly: KenhMonth[]; kenhDaily: KenhDay[]; kenhSku: KenhSku[]
   campTong: CampTong[]; campMatrix: CampMatrix[]; huyChiTiet: HuyChiTiet[]
   huyModel: HuyModel[]; hanhTrinh: HanhTrinh[]; transitModel: TransitModel[]
-  liveOverview: LiveOverview[]
+  liveOverview: LiveOverview[]; adsObjective: AdsObjective[]
 }
 
 /* ============================== helpers ============================== */
@@ -300,7 +310,7 @@ const SECTIONS = [
     groups: [
       { ten: 'Daily', ghi: 'DoD', subs: ['Spend and ATR', 'Spend vs Seller NMV', 'Day by day'] },
       { ten: 'Monthly', ghi: 'MoM', subs: ['NMV, ads and ATR', 'LGM vs PGM', 'Spend by month'] },
-      { ten: 'Campaigns', ghi: 'TikTok ads reporting', subs: ['Ranking'] },
+      { ten: 'Campaigns', ghi: 'TikTok ads reporting', subs: ['Ranking', 'By objective'] },
     ],
   },
   {
@@ -733,6 +743,22 @@ const LYDO_MAU: Record<string, string> = {
 /** Ai bấm huỷ. Dùng ở bảng, không dùng ở biểu đồ. */
 const NGUOI_HUY: Record<string, string> = {
   SYSTEM: 'TikTok / hệ thống', BUYER: 'Khách', SELLER: 'Shop', UNKNOWN: '—',
+}
+
+/** Màu theo mục tiêu. Hai nhóm GMV Max dùng tông xanh/cam quen thuộc của
+ *  dashboard, nhóm branding dùng tông tím/lục để tách hẳn về thị giác — đây
+ *  là tiền tiêu cho mục đích khác, không so trực tiếp được. */
+const MT_MAU: Record<string, string> = {
+  LGM: '#2563A8', PGM: '#C2620B',
+  BRAND_CONSIDERATION: '#5B4A9E', VIDEO_VIEWS: '#8E44AD',
+  ENGAGEMENT: '#1F7A4D', REACH: '#B31B4A',
+  WEB_CONVERSIONS: '#D4623A', PRODUCT_SALES: '#7FA8C9', UNKNOWN: '#8A94A6',
+}
+const MT_TEN: Record<string, string> = {
+  LGM: 'LGM — Live GMV Max', PGM: 'PGM — Product GMV Max',
+  BRAND_CONSIDERATION: 'Brand consideration', VIDEO_VIEWS: 'Video views',
+  ENGAGEMENT: 'Engagement', REACH: 'Reach', WEB_CONVERSIONS: 'Web conversions',
+  PRODUCT_SALES: 'Product sales (auction)', UNKNOWN: 'Unlabelled',
 }
 
 const BAND_COLOR: Record<string, string> = {
@@ -1587,7 +1613,7 @@ export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
-  campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel, liveOverview,
+  campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel, liveOverview, adsObjective,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -2348,6 +2374,49 @@ export default function Dashboard({
     const cot = NGAY_TT.filter((l) => hang.some((h) => (cell.get(`${h}|${l}`) ?? 0) > 0))
     return { cell, hangTong, hang, cot }
   }, [campMatrix, keys, byMonth, cat])
+  /* ---- chi tiêu theo mục tiêu campaign ----
+     Chạy theo CHIP THÁNG như mọi khối MoM khác của sheet Advertising. */
+
+  const adsMT = useMemo(() => {
+    const rows = adsObjective.filter((r) => goodMonths.includes(String(r.thang)))
+    const m = new Map<string, {
+      mt: string; nhom: string; chi: number; imp: number; clicks: number; camps: number
+    }>()
+    for (const r of rows) {
+      const c = m.get(r.muc_tieu)
+        ?? { mt: r.muc_tieu, nhom: r.nhom, chi: 0, imp: 0, clicks: 0, camps: 0 }
+      c.chi += Number(r.cost_vnd || 0)
+      c.imp += Number(r.impressions || 0)
+      c.clicks += Number(r.clicks || 0)
+      c.camps = Math.max(c.camps, Number(r.campaigns || 0))
+      m.set(r.muc_tieu, c)
+    }
+    const all = Array.from(m.values())
+      .filter((r) => r.chi > 0)
+      .map((r) => ({
+        ...r,
+        // null khi không có dữ liệu, KHÔNG phải 0 — GMV Max không trả
+        // impressions/clicks, để 0 sẽ đọc thành "rẻ vô hạn".
+        cpm: r.imp > 0 ? Math.round((r.chi / r.imp) * 1000) : null,
+        cpc: r.clicks > 0 ? Math.round(r.chi / r.clicks) : null,
+        ctr: r.imp > 0 ? Math.round((r.clicks / r.imp) * 100000) / 1000 : null,
+      }))
+      .sort((a, b) => b.chi - a.chi)
+    const tong = all.reduce((a, r) => a + r.chi, 0)
+    const gmvMax = all.filter((r) => r.nhom === 'GMV Max').reduce((a, r) => a + r.chi, 0)
+
+    // Cột xếp chồng theo tháng
+    const mt = all.map((r) => r.mt)
+    const theoThang = goodMonths.map((th) => ({
+      ky: th,
+      parts: mt.map((k) => {
+        const hit = rows.find((r) => String(r.thang) === th && r.muc_tieu === k)
+        return Number(hit?.cost_vnd || 0)
+      }),
+    }))
+    return { all, tong, gmvMax, branding: tong - gmvMax, mt, theoThang }
+  }, [adsObjective, goodMonths])
+
   /** Ô số liệu đầu phần Discounts. Chạy theo bộ lọc NGÀY như cả phần đó. */
   const discTotals = useMemo(() => {
     const t = { booked: 0, valid: 0, seller: 0, list: 0, nmv: 0 }
@@ -4812,6 +4881,95 @@ export default function Dashboard({
                 campaign &mdash; our order data cannot be traced back to a campaign. Read it as a
                 ranking between campaigns, never as a return on our own revenue.
               </p>
+            </section>
+
+            <section id="s4-8">
+              <h2><span className="hno">4.8</span>Spend by campaign objective — {monthNote}</h2>
+              <p className="sub">
+                Everything that is not GMV Max used to land in one unlabelled bucket, so the money
+                going to branding was in the data but invisible. This splits it by what each
+                campaign was actually optimising for.
+                <br /><br />
+                <span className="muted">
+                  <b>CPM and CPC are blank for LGM and PGM on purpose.</b> TikTok does not report
+                  impressions or clicks for GMV Max campaigns — blank means not reported, not zero.
+                  Judge those two on GMV per đồng (4.2, 4.6); the branding rows cannot be judged
+                  that way because no revenue is attributed to them at all.
+                </span>
+              </p>
+              <div className="tiles" style={{ marginTop: 20 }}>
+                <Tile label="Total ad spend" value={bn(adsMT.tong)} unit=" bn" sub={monthNote} />
+                <Tile label="GMV Max" value={bn(adsMT.gmvMax)} unit=" bn"
+                  sub={`${pct(p1(adsMT.gmvMax, adsMT.tong))} of spend — LGM + PGM`} />
+                <Tile label="Branding and other" value={bn(adsMT.branding)} unit=" bn"
+                  sub={`${pct(p1(adsMT.branding, adsMT.tong))} of spend — no revenue attributed`} />
+              </div>
+
+              <h3 style={{ marginTop: 30 }}>Month by month</h3>
+              <StackLine
+                rows={adsMT.theoThang}
+                series={adsMT.mt.map((k) => ({ ten: MT_TEN[k] ?? k, color: MT_MAU[k] ?? 'var(--muted)' }))}
+                lines={[]}
+                fmtCot={(v) => `${bn(v)} bn`}
+                fmtDuong={() => ''}
+                label={mmyy}
+                tip={(i) => {
+                  const r = adsMT.theoThang[i]
+                  if (!r) return null
+                  const t = r.parts.reduce((a, b) => a + b, 0)
+                  return (
+                    <><b>{mmyy(r.ky)}</b> · {bn(t)} bn<br />
+                      {adsMT.mt.map((k, j) => (r.parts[j] > 0 ? (
+                        <span key={k}><i className="sw" style={{ background: MT_MAU[k] ?? 'var(--muted)' }} />
+                          {MT_TEN[k] ?? k} {bn(r.parts[j])} bn · {pct(p1(r.parts[j], t))}<br /></span>
+                      ) : null))}
+                    </>
+                  )
+                }}
+              />
+
+              <div className="tablewrap" style={{ marginTop: 22 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Objective</th><th>Type</th><th className="n">Spend</th>
+                      <th className="n">Share</th><th className="n">Impressions</th>
+                      <th className="n">Clicks</th><th className="n">CPM</th>
+                      <th className="n">CPC</th><th className="n">CTR</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adsMT.all.map((r) => (
+                      <tr key={r.mt}>
+                        <td>
+                          <span className="sw sm" style={{ background: MT_MAU[r.mt] ?? 'var(--muted)' }} />
+                          {MT_TEN[r.mt] ?? r.mt}
+                        </td>
+                        <td className="muted">{r.nhom}</td>
+                        <td className="n">{bn(r.chi)} bn</td>
+                        <td className="n">{pct(p1(r.chi, adsMT.tong))}</td>
+                        <td className="n muted">{r.imp > 0 ? n0(r.imp) : '—'}</td>
+                        <td className="n muted">{r.clicks > 0 ? n0(r.clicks) : '—'}</td>
+                        <td className="n">{r.cpm == null ? '—' : `${n0(r.cpm)}đ`}</td>
+                        <td className="n">{r.cpc == null ? '—' : `${n0(r.cpc)}đ`}</td>
+                        <td className="n">{r.ctr == null ? '—' : `${r.ctr}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="note">
+                <b>Read CPC across branding objectives, not against GMV Max.</b> An objective that
+                optimises for views will buy almost no clicks, and that is the machine doing what it
+                was told — a high CPC there is a sign the objective was the wrong choice for the
+                goal, not that the campaign was run badly. The comparison worth making is between
+                two objectives that both claim to buy attention: if one costs several times more per
+                click than another for the same audience, the cheaper one is doing the job.
+                <br /><br />
+                <b>None of these rows carry revenue.</b> The auction report only returns spend,
+                impressions and clicks, so branding spend cannot be given an ROAS here and should
+                not be added into the ad-efficiency numbers on 4.2 and 4.6, which are GMV Max only.
+              </div>
             </section>
           </>
         )}
