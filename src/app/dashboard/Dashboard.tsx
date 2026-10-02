@@ -460,7 +460,8 @@ const SECTIONS = [
       { ten: '', ghi: 'số TikTok quy kết', subs: ['The funnel'] },
       { ten: 'By channel', subs: ['Channel funnel', 'Month by month'] },
       { ten: 'By product',
-        subs: ['Product funnel', 'Trend by product', 'By price band', 'Where each one leaks'] },
+        subs: ['Product funnel', 'Trend by product', 'Compare three products',
+          'By price band', 'Where each one leaks'] },
       { ten: 'Refunds', ghi: 'theo TikTok', subs: ['What never arrives'] },
     ],
   },
@@ -1218,6 +1219,123 @@ function LiveHead({ rows, series, fmtCot, fmtDuong, fmtAds }: {
  * Các đường dùng chung một thang để so được với nhau; mỗi đường một thang thì
  * ba phòng nhìn như nhau dù chênh lệch thật rất lớn.
  */
+
+/**
+ * So phễu của tối đa 3 sản phẩm: mỗi TẦNG phễu một khung riêng, trục thời
+ * gian dùng chung nằm dưới cùng.
+ *
+ * VÌ SAO KHÔNG GỘP VÀO MỘT KHUNG: các tầng có đơn vị khác hẳn nhau — triệu
+ * lượt hiển thị đứng cạnh 0,9% CTR. Nhét chung một khung thì phải dùng hai
+ * trục y, và biểu đồ hai trục y cho phép đặt hai đường cạnh nhau theo bất
+ * kỳ tỷ lệ nào người vẽ muốn, tức là nói được bất cứ điều gì. Tách khung,
+ * mỗi khung một thang riêng, trục x chung — nhìn dọc xuống vẫn so được
+ * cùng một tháng ở mọi tầng.
+ *
+ * Mỗi khung tự co theo số của chính nó, nên ĐỘ DỐC so sánh được giữa các
+ * sản phẩm trong cùng khung, còn chiều cao thì không so được giữa hai
+ * khung khác nhau.
+ */
+function FunnelPanels({ ky, nhan, sp, tang }: {
+  ky: string[]
+  nhan: (k: string) => string
+  sp: { ten: string; color: string }[]
+  tang: { ten: string; fmt: (v: number) => string; vals: (number | null)[][] }[]
+}) {
+  const [t, setT] = useState<{ on: boolean; x: number; y: number; body: React.ReactNode }>({
+    on: false, x: 0, y: 0, body: null,
+  })
+  if (!ky.length || !sp.length) return null
+  const n = ky.length
+  const x = (i: number) => ((i + 0.5) / n) * 100
+
+  return (
+    <>
+      <div className="legend">
+        {sp.map((p) => (
+          <span key={p.ten}><i className="swl" style={{ background: p.color }} />{p.ten}</span>
+        ))}
+      </div>
+
+      {tang.map((g) => {
+        const moi = g.vals.flat().filter((v): v is number => v != null)
+        const max = Math.max(...moi, 0) || 1
+        const min = Math.min(...moi, 0)
+        // Nền bắt đầu từ 0 với số đếm, nhưng với tỷ lệ thì kéo sát vùng dữ
+        // liệu — CTR dao động 0,8–1,0% mà vẽ từ 0 thì ba đường dính thành
+        // một vạch phẳng, đúng cái cần nhìn lại biến mất.
+        const day = g.ten.includes('→') || g.ten === 'CTR' ? Math.max(0, min * 0.9) : 0
+        const y = (v: number) => 100 - ((v - day) / (max - day || 1)) * 100
+
+        return (
+          <div className="fp" key={g.ten}>
+            <div className="fp-h">
+              <span className="fp-t">{g.ten}</span>
+              <span className="fp-s">{g.fmt(day)} – {g.fmt(max)}</span>
+            </div>
+            <div className="fp-plot">
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                {sp.map((p, pi) => (
+                  <polyline key={p.ten}
+                    points={g.vals[pi].map((v, i) => (v == null ? null : `${x(i)},${y(v)}`))
+                      .filter(Boolean).join(' ')}
+                    fill="none" stroke={p.color} strokeWidth={2}
+                    vectorEffect="non-scaling-stroke"
+                    strokeLinejoin="round" strokeLinecap="round" />
+                ))}
+              </svg>
+              {sp.map((p, pi) => g.vals[pi].map((v, i) => (v == null ? null : (
+                <span key={`${p.ten}-${i}`} className="fp-d"
+                  style={{ left: `${x(i)}%`, top: `${y(v)}%`, background: p.color }} />
+              ))))}
+              {/* Nhãn chỉ ở điểm cuối mỗi đường — ghi số lên mọi điểm thì
+                  ba đường chồng nhãn và không đọc được gì. Số của các điểm
+                  khác xem bằng hover. */}
+              {sp.map((p, pi) => {
+                const i = g.vals[pi].length - 1
+                const v = g.vals[pi][i]
+                return v == null ? null : (
+                  <span key={`l-${p.ten}`} className="fp-v"
+                    style={{ left: `${x(i)}%`, top: `${y(v)}%`, color: p.color }}>
+                    {g.fmt(v)}
+                  </span>
+                )
+              })}
+              {ky.map((k, i) => (
+                <div className="fp-hit" key={k}
+                  style={{ left: `${(i / n) * 100}%`, width: `${100 / n}%` }}
+                  onMouseMove={(e) => setT({
+                    on: true, x: e.clientX + 14, y: e.clientY - 8,
+                    body: (
+                      <>
+                        <b>{g.ten} · {nhan(k)}</b><br />
+                        {sp.map((p, pi) => (
+                          <span key={p.ten}>
+                            <i className="swl" style={{ background: p.color }} />
+                            {p.ten}: {g.vals[pi][i] == null ? '—' : g.fmt(g.vals[pi][i] as number)}
+                            <br />
+                          </span>
+                        ))}
+                      </>
+                    ),
+                  })}
+                  onMouseLeave={() => setT((q) => ({ ...q, on: false }))} />
+              ))}
+            </div>
+          </div>
+        )
+      })}
+
+      <div className="fp-x">
+        {ky.map((k) => <div key={k}>{nhan(k)}</div>)}
+      </div>
+
+      {t.on && (
+        <div className="tip" style={{ left: t.x, top: t.y }}>{t.body}</div>
+      )}
+    </>
+  )
+}
+
 function StackLine({ rows, series, lines, fmtCot, fmtDuong, label, tip, moiNhan }: {
   rows: { ky: string; parts: number[] }[]
   series: { ten: string; color: string }[]
@@ -1830,6 +1948,8 @@ export default function Dashboard({
   const [trChiMay, setTrChiMay] = useState(true)
   /** Sản phẩm đang soi ở 10.5. Rỗng = xem lưới tất cả. */
   const [trSp, setTrSp] = useState('')
+  /** Ba sản phẩm đang so ở 10.6. Rỗng = bỏ trống chỗ đó. */
+  const [trSoSanh, setTrSoSanh] = useState<string[]>([])
   const toggleAff = (k: string) =>
     setAffMo((p) => {
       const n = new Set(p)
@@ -4327,6 +4447,13 @@ export default function Dashboard({
       return { ...d, ...trCong(rows), theoKy }
     }).filter((d) => d.sp.length > 0)
   }, [trSanPham, trRows, trThang])
+
+  /** Ba sản phẩm đang so. Chưa chọn thì lấy 3 sản phẩm GMV lớn nhất, để
+   *  mở mục ra là đã có gì đó để đọc chứ không phải khung trống. */
+  const trBa = useMemo(() => {
+    const mac = trLuoi.slice(0, 3).map((x) => x.ten)
+    return [0, 1, 2].map((i) => trSoSanh[i] ?? mac[i] ?? '')
+  }, [trSoSanh, trLuoi])
 
   const trHoan = useMemo(
     () => trSanPham.filter((x) => x.gmv > 0 && x.hoan > 0)
@@ -9216,8 +9343,68 @@ export default function Dashboard({
               </p>
             </section>
 
+
             <section id="s10-6">
-              <h2><span className="hno">10.6</span>By price band — {monthNote}</h2>
+              <h2><span className="hno">10.6</span>Compare three products — {monthNote}</h2>
+              <p className="sub">
+                One panel per funnel stage, the same months running along the bottom. Pick three
+                products and read down a column: the same month at every stage, for all three at
+                once. Where one product&rsquo;s line turns while the others hold, the cause is that
+                product; where all three turn together, the cause is the shop or the platform.
+              </p>
+              <div className="filters">
+                {[0, 1, 2].map((i) => (
+                  <select key={i} className="drop wide" value={trBa[i]}
+                    onChange={(e) => setTrSoSanh((p) => {
+                      const n = [...trBa]; n[i] = e.target.value; return n
+                    })}>
+                    <option value="">— none —</option>
+                    {trLuoi.map((x) => <option key={x.ten} value={x.ten}>{x.ten}</option>)}
+                  </select>
+                ))}
+                {trSoSanh.length > 0 && (
+                  <button className="lnk" onClick={() => setTrSoSanh([])}>Reset to top three</button>
+                )}
+              </div>
+              {(() => {
+                const mau = ['var(--c1)', 'var(--c2)', 'var(--c3)']
+                const chon = trBa
+                  .map((ten, i) => ({ ten, color: mau[i], r: trLuoi.find((x) => x.ten === ten) }))
+                  .filter((z) => z.r)
+                if (!chon.length) {
+                  return <div className="note">Pick at least one product above.</div>
+                }
+                const lay = (f: (c: NonNullable<typeof chon[number]['r']>['tong']) => number) =>
+                  chon.map((z) => z.r!.o.map((c) => (c ? f(c) : null)))
+                const tang = [
+                  { ten: 'Impressions', fmt: (v: number) => `${mn1(v)}m`, vals: lay((c) => c.imp) },
+                  { ten: 'CTR', fmt: (v: number) => pct(v), vals: lay((c) => c.ctr) },
+                  { ten: 'Click → cart', fmt: (v: number) => pct(v), vals: lay((c) => c.atcRate) },
+                  { ten: 'Click → order', fmt: (v: number) => pct(v), vals: lay((c) => c.cvr) },
+                  { ten: 'Orders', fmt: (v: number) => n0(v), vals: lay((c) => c.don) },
+                  { ten: 'GMV', fmt: (v: number) => `${bn(v)}bn`, vals: lay((c) => c.gmv) },
+                ]
+                return (
+                  <FunnelPanels
+                    ky={trThang.map((t) => t.ky)}
+                    nhan={(k) => mmyy(k)}
+                    sp={chon.map((z) => ({ ten: z.ten, color: z.color }))}
+                    tang={tang}
+                  />
+                )
+              })()}
+              <div className="note warn">
+                <b>Compare slopes, not heights — and only inside one panel.</b> Each panel scales to
+                its own numbers, so a line sitting high in the Orders panel and low in the CTR panel
+                means nothing across the two. The rate panels also start near the data rather than
+                at zero, because CTR moving between 0.8% and 1.0% is the thing worth seeing and a
+                zero baseline would flatten it to one straight line. Heights within a single panel
+                are comparable; heights between panels are not.
+              </div>
+            </section>
+
+            <section id="s10-7">
+              <h2><span className="hno">10.7</span>By price band — {monthNote}</h2>
               <p className="sub">
                 Products grouped by their own average order value in this period, so the bands
                 move with promotions rather than sitting on a fixed list. The question this answers
@@ -9288,8 +9475,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s10-7">
-              <h2><span className="hno">10.7</span>Where each one leaks — {monthNote}</h2>
+            <section id="s10-8">
+              <h2><span className="hno">10.8</span>Where each one leaks — {monthNote}</h2>
               <p className="sub">
                 For every product, the funnel step furthest below the median of the products shown
                 here. The benchmark is this shop&rsquo;s own middle, not an outside standard: a
@@ -9326,8 +9513,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s10-8">
-              <h2><span className="hno">10.8</span>What never arrives — {monthNote}</h2>
+            <section id="s10-9">
+              <h2><span className="hno">10.9</span>What never arrives — {monthNote}</h2>
               <p className="sub">
                 TikTok&rsquo;s own refund figures, independent of our order table. Useful precisely
                 because nothing on this dashboard feeds it.
@@ -9471,6 +9658,21 @@ const CSS = `
 .muted{color:var(--muted);font-weight:400}
 .up{color:var(--ok)}
 .down{color:var(--bad)}
+.fp{margin:0 0 4px}
+.fp-h{display:flex;justify-content:space-between;align-items:baseline;
+  padding:0 2px 3px;font-size:11.5px}
+.fp-t{font-weight:600;color:var(--ink)}
+.fp-s{color:var(--muted);font-variant-numeric:tabular-nums}
+.fp-plot{position:relative;height:74px;border-bottom:1px solid var(--line)}
+.fp-plot svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.fp-d{position:absolute;width:7px;height:7px;border-radius:50%;
+  transform:translate(-50%,-50%);box-shadow:0 0 0 2px var(--surface)}
+.fp-v{position:absolute;transform:translate(6px,-50%);font-size:11px;
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+  text-shadow:0 0 3px var(--surface),0 0 3px var(--surface)}
+.fp-hit{position:absolute;top:0;bottom:0;cursor:crosshair}
+.fp-x{display:flex;margin-top:4px}
+.fp-x>div{flex:1;text-align:center;font-size:11.5px;color:var(--muted)}
 .lnk{font:inherit;font-size:12.5px;background:none;border:0;padding:0;color:var(--c1);
   cursor:pointer;text-decoration:underline}
 
