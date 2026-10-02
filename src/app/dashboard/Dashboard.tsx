@@ -459,7 +459,8 @@ const SECTIONS = [
     groups: [
       { ten: '', ghi: 'số TikTok quy kết', subs: ['The funnel'] },
       { ten: 'By channel', subs: ['Channel funnel', 'Month by month'] },
-      { ten: 'By product', subs: ['Product funnel', 'Where each one leaks'] },
+      { ten: 'By product',
+        subs: ['Product funnel', 'Trend by product', 'By price band', 'Where each one leaks'] },
       { ten: 'Refunds', ghi: 'theo TikTok', subs: ['What never arrives'] },
     ],
   },
@@ -1820,6 +1821,8 @@ export default function Dashboard({
   /** Sheet Videos: tiêu chí xếp hạng và bộ lọc loại tài khoản. */
   const [vidMetric, setVidMetric] = useState<'gmv' | 'views' | 'gpm' | 'ctr'>('gmv')
   const [vidAcc, setVidAcc] = useState('')
+  /** Sheet Product traffic: chỉ số đang xem ở lưới sản phẩm × tháng. */
+  const [trMetric, setTrMetric] = useState<'imp' | 'ctr' | 'atcRate' | 'cvr' | 'gmv' | 'don'>('cvr')
   const toggleAff = (k: string) =>
     setAffMo((p) => {
       const n = new Set(p)
@@ -4248,6 +4251,72 @@ export default function Dashboard({
       return { ...x, te }
     }).sort((a, b) => a.te.ty - b.te.ty)
   }, [trSanPham])
+
+  /** Kỳ cuối và kỳ liền trước, để in mũi tên thay đổi ở phễu tổng.
+   *  Chỉ có nghĩa khi đang lọc từ hai tháng trở lên. */
+  const trDoi = useMemo(() => {
+    if (trThang.length < 2) return null
+    const nay = trThang[trThang.length - 1]
+    const truoc = trThang[trThang.length - 2]
+    return { nay, truoc }
+  }, [trThang])
+
+  /** Lưới sản phẩm × tháng cho MỘT chỉ số.
+   *
+   *  Tỷ lệ được tính lại từ tử số và mẫu số của từng ô, không lấy trung
+   *  bình — một sản phẩm có 10 nghìn hiển thị và một sản phẩm có 10 triệu
+   *  không thể bình quân CTR với nhau. */
+  const trLuoi = useMemo(() => {
+    const kyDs = trThang.map((x) => x.ky)
+    // Gộp theo (sản phẩm, tháng): một model có thể gồm nhiều product_id,
+    // nên phải cộng các dòng lại rồi mới tính tỷ lệ.
+    const gop = new Map<string, Map<string, ProductKenh[]>>()
+    for (const r of trRows) {
+      if (r.kenh !== 'TOTAL') continue
+      if (!gop.has(r.san_pham)) gop.set(r.san_pham, new Map())
+      const g = gop.get(r.san_pham)!
+      g.set(r.thang, [...(g.get(r.thang) ?? []), r])
+    }
+    return Array.from(gop.entries())
+      .map(([ten, theoKy]) => ({
+        ten,
+        o: kyDs.map((ky) => (theoKy.has(ky) ? trCong(theoKy.get(ky)!) : null)),
+        tong: trCong(Array.from(theoKy.values()).flat()),
+      }))
+      .filter((x) => x.tong.imp > 0)
+      .sort((a, b) => b.tong.gmv - a.tong.gmv)
+  }, [trRows, trThang])
+
+  const TR_CHI_SO = [
+    { key: 'imp' as const, ten: 'Impressions', dinh: (v: number) => `${mn1(v)}m` },
+    { key: 'ctr' as const, ten: 'CTR', dinh: (v: number) => pct(v) },
+    { key: 'atcRate' as const, ten: 'Click → cart', dinh: (v: number) => pct(v) },
+    { key: 'cvr' as const, ten: 'Click → order', dinh: (v: number) => pct(v) },
+    { key: 'don' as const, ten: 'Orders', dinh: (v: number) => n0(v) },
+    { key: 'gmv' as const, ten: 'GMV', dinh: (v: number) => `${bn(v)}bn` },
+  ]
+
+  /** Dải giá lấy từ AOV của chính sản phẩm trong kỳ đang lọc.
+   *
+   *  product_catalog không có giá, nên AOV là thước duy nhất có sẵn. Nó
+   *  đổi theo khuyến mãi, nên một sản phẩm sát mép có thể nhảy dải giữa
+   *  hai tháng — chấp nhận được khi đọc xu hướng, nhưng đừng dùng bảng này
+   *  làm định nghĩa phân khúc cho việc khác. */
+  const trDai = useMemo(() => {
+    const dai = DAI_GIA.map((d) => ({ ten: d.ten, min: d.min, max: d.max, sp: [] as string[] }))
+    for (const x of trSanPham) {
+      const i = dai.findIndex((d) => x.aov >= d.min && x.aov < d.max)
+      if (i >= 0) dai[i].sp.push(x.ten)
+    }
+    return dai.map((d) => {
+      const rows = trRows.filter((r) => r.kenh === 'TOTAL' && d.sp.includes(r.san_pham))
+      const theoKy = trThang.map((t) => ({
+        ky: t.ky,
+        ...trCong(rows.filter((r) => r.thang === t.ky)),
+      }))
+      return { ...d, ...trCong(rows), theoKy }
+    }).filter((d) => d.sp.length > 0)
+  }, [trSanPham, trRows, trThang])
 
   const trHoan = useMemo(
     () => trSanPham.filter((x) => x.gmv > 0 && x.hoan > 0)
@@ -8972,6 +9041,18 @@ export default function Dashboard({
 
             <section id="s10-4">
               <h2><span className="hno">10.4</span>Product funnel — {monthNote}</h2>
+              {trDoi && (
+                <div className="note">
+                  <b>Whole shop, {mmyy(trDoi.nay.ky)} against {mmyy(trDoi.truoc.ky)}:</b>{' '}
+                  impressions {mn1(trDoi.nay.imp)}m <Dd a={trDoi.nay.imp} b={trDoi.truoc.imp} /> ·{' '}
+                  CTR {pct(trDoi.nay.ctr)} <Dd a={trDoi.nay.ctr} b={trDoi.truoc.ctr} /> ·{' '}
+                  click → cart {pct(trDoi.nay.atcRate)}{' '}
+                  <Dd a={trDoi.nay.atcRate} b={trDoi.truoc.atcRate} /> ·{' '}
+                  click → order {pct(trDoi.nay.cvr)} <Dd a={trDoi.nay.cvr} b={trDoi.truoc.cvr} />.{' '}
+                  A funnel can lose orders at any one of these four steps, and each has a different
+                  owner — reach, listing, price, page.
+                </div>
+              )}
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -8998,8 +9079,130 @@ export default function Dashboard({
               </div>
             </section>
 
+
             <section id="s10-5">
-              <h2><span className="hno">10.5</span>Where each one leaks — {monthNote}</h2>
+              <h2><span className="hno">10.5</span>Trend by product — {monthNote}</h2>
+              <p className="sub">
+                One metric at a time, every product down the side, every month across. Read a row
+                for a product&rsquo;s own trajectory; read a column for a month where the whole
+                shop moved. Rates are recomputed inside each cell from that month&rsquo;s own
+                numerator and denominator — a product with ten thousand impressions and one with
+                ten million cannot have their CTRs averaged.
+              </p>
+              <div className="filters">
+                {TR_CHI_SO.map((m) => (
+                  <button key={m.key} className={`chip ${trMetric === m.key ? 'on' : ''}`}
+                    onClick={() => setTrMetric(m.key)}>{m.ten}</button>
+                ))}
+              </div>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Product</th>
+                    {trThang.map((t) => <th className="n" key={t.ky}>{mmyy(t.ky)}</th>)}
+                    <th className="n">Latest MoM</th>
+                  </tr></thead>
+                  <tbody>
+                    {trLuoi.map((r) => {
+                      const dinh = TR_CHI_SO.find((m) => m.key === trMetric)!.dinh
+                      const cuoi = r.o[r.o.length - 1]
+                      const truoc = r.o[r.o.length - 2]
+                      return (
+                        <tr key={r.ten}>
+                          <td>{r.ten}</td>
+                          {r.o.map((c, i) => (
+                            <td className="n" key={i}>{c ? dinh(c[trMetric]) : '—'}</td>
+                          ))}
+                          <td className="n">
+                            <Dd a={cuoi ? cuoi[trMetric] : undefined}
+                              b={truoc ? truoc[trMetric] : undefined} />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Months with no row for a product show a dash: the product sold nothing and drew no
+                impressions that month, which is not the same as a zero rate.
+              </p>
+            </section>
+
+            <section id="s10-6">
+              <h2><span className="hno">10.6</span>By price band — {monthNote}</h2>
+              <p className="sub">
+                Products grouped by their own average order value in this period, so the bands
+                move with promotions rather than sitting on a fixed list. The question this answers
+                is whether products in the same band are growing together or taking impressions
+                from each other.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Band</th><th className="n">Products</th><th className="n">Impressions</th>
+                    <th className="n">Share</th><th className="n">CTR</th>
+                    <th className="n">Click → cart</th><th className="n">Click → order</th>
+                    <th className="n">GMV</th>
+                  </tr></thead>
+                  <tbody>
+                    {trDai.map((d) => (
+                      <tr key={d.ten}>
+                        <td>{d.ten}</td>
+                        <td className="n">{d.sp.length}</td>
+                        <td className="n">{mn1(d.imp)}m</td>
+                        <td className="n muted">
+                          {pct(p1(d.imp, trDai.reduce((a, x) => a + x.imp, 0)))}
+                        </td>
+                        <td className="n">{pct(d.ctr)}</td>
+                        <td className="n">{pct(d.atcRate)}</td>
+                        <td className="n" style={{ fontWeight: 600 }}>{pct(d.cvr)}</td>
+                        <td className="n">{bn(d.gmv)}bn</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <h3>Impressions by band, month by month</h3>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Band</th>
+                    {trThang.map((t) => <th className="n" key={t.ky}>{mmyy(t.ky)}</th>)}
+                    <th className="n">Latest MoM</th>
+                  </tr></thead>
+                  <tbody>
+                    {trDai.map((d) => {
+                      const cuoi = d.theoKy[d.theoKy.length - 1]
+                      const truoc = d.theoKy[d.theoKy.length - 2]
+                      return (
+                        <tr key={d.ten}>
+                          <td>{d.ten}<span className="muted"> · {d.sp.join(', ')}</span></td>
+                          {d.theoKy.map((t) => (
+                            <td className="n" key={t.ky}>{mn1(t.imp)}m</td>
+                          ))}
+                          <td className="n"><Dd a={cuoi?.imp} b={truoc?.imp} /></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="note warn">
+                <b>This table can suggest cannibalisation. It cannot prove it.</b> If one product
+                gains impressions while another in the same band loses roughly as many and the band
+                total holds flat, they are probably competing for the same slots. But two products
+                moving together is also what a campaign day, a season, or a shared LGM push looks
+                like. Before concluding, check whether the band total moved: if the whole band grew
+                and one member shrank, that is losing a race, not being eaten. Read it against ad
+                spend on the Advertising sheet, and treat the answer as a hypothesis to test with a
+                deliberate budget change, not as a finding.
+              </div>
+            </section>
+
+            <section id="s10-7">
+              <h2><span className="hno">10.7</span>Where each one leaks — {monthNote}</h2>
               <p className="sub">
                 For every product, the funnel step furthest below the median of the products shown
                 here. The benchmark is this shop&rsquo;s own middle, not an outside standard: a
@@ -9036,8 +9239,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s10-6">
-              <h2><span className="hno">10.6</span>What never arrives — {monthNote}</h2>
+            <section id="s10-8">
+              <h2><span className="hno">10.8</span>What never arrives — {monthNote}</h2>
               <p className="sub">
                 TikTok&rsquo;s own refund figures, independent of our order table. Useful precisely
                 because nothing on this dashboard feeds it.
