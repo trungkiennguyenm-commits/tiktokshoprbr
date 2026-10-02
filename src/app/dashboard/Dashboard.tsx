@@ -1235,6 +1235,54 @@ function LiveHead({ rows, series, fmtCot, fmtDuong, fmtAds }: {
  * sản phẩm trong cùng khung, còn chiều cao thì không so được giữa hai
  * khung khác nhau.
  */
+
+/**
+ * Dải chip chọn sản phẩm.
+ *
+ * Thay cho thẻ select vì ở đây việc chọn là việc làm đi làm lại: mở
+ * dropdown, đọc, chọn, đóng, rồi lặp lại cho sản phẩm thứ hai là bốn thao
+ * tác cho mỗi lần đổi. Chip thì mọi lựa chọn nằm sẵn trước mắt, và ở chế
+ * độ nhiều lựa chọn thì nhìn một cái là biết đang chọn những gì — dropdown
+ * không bao giờ cho thấy điều đó.
+ *
+ * `mau` chỉ truyền ở chế độ nhiều lựa chọn: chấm màu trên chip phải khớp
+ * với màu đường trong biểu đồ, nếu không người đọc phải tự dò.
+ */
+function ChonSP({ ds, chon, doi, nhieu, mau, trong }: {
+  ds: { ten: string; phu?: string }[]
+  chon: string[]
+  doi: (ten: string) => void
+  nhieu?: boolean
+  mau?: (ten: string) => string | null
+  trong?: string
+}) {
+  return (
+    <div className="chips">
+      {trong && (
+        <button className={`chip ${chon.length === 0 ? 'on' : ''}`} onClick={() => doi('')}>
+          {trong}
+        </button>
+      )}
+      {ds.map((x) => {
+        const on = chon.includes(x.ten)
+        const c = on && mau ? mau(x.ten) : null
+        return (
+          <button key={x.ten} className={`chip ${on ? 'on' : ''}`} onClick={() => doi(x.ten)}>
+            {c && <i className="swl" style={{ background: c }} />}
+            {x.ten}
+            {x.phu && <span className="chip-s">{x.phu}</span>}
+          </button>
+        )
+      })}
+      {nhieu && chon.length > 0 && (
+        <span className="muted" style={{ fontSize: 12.5 }}>
+          {chon.length} of 3 picked
+        </span>
+      )}
+    </div>
+  )
+}
+
 function FunnelPanels({ ky, nhan, sp, tang }: {
   ky: string[]
   nhan: (k: string) => string
@@ -1948,8 +1996,10 @@ export default function Dashboard({
   const [trChiMay, setTrChiMay] = useState(true)
   /** Sản phẩm đang soi ở 10.5. Rỗng = xem lưới tất cả. */
   const [trSp, setTrSp] = useState('')
-  /** Ba sản phẩm đang so ở 10.6. Rỗng = bỏ trống chỗ đó. */
-  const [trSoSanh, setTrSoSanh] = useState<string[]>([])
+  /** Ba sản phẩm đang so ở 10.6.
+   *  null = chưa đụng vào, lấy mặc định. Mảng rỗng = đã bỏ chọn hết, phải
+   *  tôn trọng — nếu lại nhảy về mặc định thì nút bỏ chọn trông như hỏng. */
+  const [trSoSanh, setTrSoSanh] = useState<string[] | null>(null)
   const toggleAff = (k: string) =>
     setAffMo((p) => {
       const n = new Set(p)
@@ -4451,8 +4501,11 @@ export default function Dashboard({
   /** Ba sản phẩm đang so. Chưa chọn thì lấy 3 sản phẩm GMV lớn nhất, để
    *  mở mục ra là đã có gì đó để đọc chứ không phải khung trống. */
   const trBa = useMemo(() => {
-    const mac = trLuoi.slice(0, 3).map((x) => x.ten)
-    return [0, 1, 2].map((i) => trSoSanh[i] ?? mac[i] ?? '')
+    // Chưa đụng vào thì lấy 3 sản phẩm GMV lớn nhất. Đã đụng rồi thì tôn
+    // trọng đúng danh sách đó — kể cả khi người dùng bỏ hết, vì nếu lại
+    // nhảy về mặc định thì nút bỏ chọn trông như hỏng.
+    if (trSoSanh) return trSoSanh
+    return trLuoi.slice(0, 3).map((x) => x.ten)
   }, [trSoSanh, trLuoi])
 
   const trHoan = useMemo(
@@ -9237,15 +9290,12 @@ export default function Dashboard({
                 numerator and denominator — a product with ten thousand impressions and one with
                 ten million cannot have their CTRs averaged.
               </p>
-              <div className="filters">
-                <select className="drop wide" value={trSp} onChange={(e) => setTrSp(e.target.value)}>
-                  <option value="">All products ({trLuoi.length}) — grid of one metric</option>
-                  {trLuoi.map((x) => (
-                    <option key={x.ten} value={x.ten}>{x.ten} — full funnel</option>
-                  ))}
-                </select>
-                {trSp && <button className="lnk" onClick={() => setTrSp('')}>Back to the grid</button>}
-              </div>
+              <ChonSP
+                ds={trLuoi.map((x) => ({ ten: x.ten, phu: `${bn(x.tong.gmv)}bn` }))}
+                chon={trSp ? [trSp] : []}
+                doi={(ten) => setTrSp((p) => (p === ten ? '' : ten))}
+                trong={`All products (${trLuoi.length})`}
+              />
               {!trSp && (
                 <div className="filters">
                   {TR_CHI_SO.map((m) => (
@@ -9348,24 +9398,26 @@ export default function Dashboard({
               <h2><span className="hno">10.6</span>Compare three products — {monthNote}</h2>
               <p className="sub">
                 One panel per funnel stage, the same months running along the bottom. Pick three
-                products and read down a column: the same month at every stage, for all three at
-                once. Where one product&rsquo;s line turns while the others hold, the cause is that
+                products below and read down a column: the same month at every stage, for all
+                three at once. Picking a fourth drops the one you picked first. Where one product&rsquo;s line turns while the others hold, the cause is that
                 product; where all three turn together, the cause is the shop or the platform.
               </p>
-              <div className="filters">
-                {[0, 1, 2].map((i) => (
-                  <select key={i} className="drop wide" value={trBa[i]}
-                    onChange={(e) => setTrSoSanh((p) => {
-                      const n = [...trBa]; n[i] = e.target.value; return n
-                    })}>
-                    <option value="">— none —</option>
-                    {trLuoi.map((x) => <option key={x.ten} value={x.ten}>{x.ten}</option>)}
-                  </select>
-                ))}
-                {trSoSanh.length > 0 && (
-                  <button className="lnk" onClick={() => setTrSoSanh([])}>Reset to top three</button>
-                )}
-              </div>
+              <ChonSP
+                ds={trLuoi.map((x) => ({ ten: x.ten, phu: `${bn(x.tong.gmv)}bn` }))}
+                chon={trBa.filter(Boolean)}
+                nhieu
+                mau={(ten) => {
+                  const i = trBa.indexOf(ten)
+                  return i < 0 ? null : ['var(--c1)', 'var(--c2)', 'var(--c3)'][i]
+                }}
+                doi={(ten) => setTrSoSanh(() => {
+                  const dang = trBa.filter(Boolean)
+                  if (dang.includes(ten)) return dang.filter((x) => x !== ten)
+                  // Quá ba thì bỏ cái chọn sớm nhất, để bấm tiếp không bị
+                  // chặn im lặng — người dùng thấy ngay cái cũ rụng ra.
+                  return [...dang, ten].slice(-3)
+                })}
+              />
               {(() => {
                 const mau = ['var(--c1)', 'var(--c2)', 'var(--c3)']
                 const chon = trBa
@@ -9658,6 +9710,8 @@ const CSS = `
 .muted{color:var(--muted);font-weight:400}
 .up{color:var(--ok)}
 .down{color:var(--bad)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 14px}
+.chip-s{margin-left:6px;opacity:.55;font-variant-numeric:tabular-nums}
 .fp{margin:0 0 4px}
 .fp-h{display:flex;justify-content:space-between;align-items:baseline;
   padding:0 2px 3px;font-size:11.5px}
