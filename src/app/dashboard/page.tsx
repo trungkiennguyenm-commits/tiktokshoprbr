@@ -4,7 +4,7 @@ import Dashboard, {
   type Segment, type Ship,
   type CampTong, type CampMatrix, type HuyChiTiet, type HuyModel,
   type HanhTrinh, type TransitModel, type LiveOverview, type AdsObjective, type AdsObjectiveDay,
-  type HuyAffiliate,
+  type HuyAffiliate, type VideoThang,
   type AdsVs, type AdsMonth, type AdsCampaign,
   type LiveDaily, type LiveMonth, type LiveRoomMonth, type LiveSession, type LiveLgm,
   type KenhMonth, type KenhDay, type KenhSku,
@@ -73,7 +73,7 @@ export default async function Page() {
   const db = supabaseAdmin()
 
   try {
-    const [m, d, s, sm, sd, seg, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd, ks, ct, cmx, hct, hm, ht, tm, lo, ao, aod, haf] = await Promise.all([
+    const [m, d, s, sm, sd, seg, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd, ks, ct, cmx, hct, hm, ht, tm, lo, ao, aod, haf, vth] = await Promise.all([
       fetchAll<Monthly>(db, 'v_perf_monthly'),
       fetchAll<Daily>(db, 'v_perf_daily'),
       fetchAll<Sku>(db, 'v_sku_perf'),
@@ -102,6 +102,7 @@ export default async function Page() {
       fetchAll<AdsObjective>(db, 'v_ads_objective_monthly'),
       fetchAll<AdsObjectiveDay>(db, 'v_ads_objective_daily'),
       fetchAll<HuyAffiliate>(db, 'v_huy_affiliate'),
+      fetchAll<VideoThang>(db, 'v_video_thang'),
     ])
 
     return (
@@ -115,7 +116,7 @@ export default async function Page() {
         kenhMonthly={num(kn)} kenhDaily={num(kd)} kenhSku={num(ks)}
         campTong={num(ct)} campMatrix={num(cmx)} huyChiTiet={num(hct)} huyModel={num(hm)}
         hanhTrinh={num(ht)} transitModel={num(tm)} liveOverview={num(lo)} adsObjective={num(ao)} adsObjectiveDay={num(aod)}
-        huyAffiliate={num(haf)}
+        huyAffiliate={num(haf)} videoThang={num(vth)}
       />
     )
   } catch (e) {

@@ -137,6 +137,34 @@ export type HuyAffiliate = {
   da_huy: boolean; huy_sau_lay: boolean
   cancel_reason: string | null; total_amount: number
 }
+/** v_video_thang — hiệu suất từng video theo tháng.
+ *
+ *  HAI LOẠI SỐ NẰM CẠNH NHAU, ĐỪNG TRỘN:
+ *   - views/ctr/gmv/sku_orders: TikTok quy kết, KHÔNG trừ huỷ. Cùng loại
+ *     với gross_revenue bên tab Advertising, không so trực tiếp với Seller
+ *     GMV/NMV được.
+ *   - aff_*: đơn thật trong sổ shop, chỉ có với video affiliate. Video kênh
+ *     nhà luôn null vì TikTok chỉ gắn đơn với nội dung khi có hoa hồng —
+ *     giới hạn của API, không phải sync thiếu. */
+export type VideoThang = {
+  thang: string
+  username: string | null; nick_name: string | null; author_type: string | null
+  title: string | null; duration: number | null
+  video_post_time: string | null; advertisable: boolean | null
+  hash_tags: string[] | null
+  video_url: string | null; video_nhan: string
+  views: number | null; product_impressions: number | null; product_clicks: number | null
+  click_through_rate: number | null; ctor: number | null
+  v_to_l_rate: number | null; video_finish_rate: number | null
+  gmv: number | null; indirect_gmv: number | null; attributed_gmv: number | null
+  gpm: number | null; sku_orders: number | null; items_sold: number | null
+  likes: number | null; comments: number | null; shares: number | null
+  new_followers: number | null
+  product_name: string; model_short: string | null; category: string | null
+  so_product: number | null
+  aff_don: number | null; aff_huy: number | null
+  aff_gmv_dat: number | null; aff_gmv_con: number | null
+}
 export type CampMatrix = {
   ngay: string; category: string
   dat_loai: string; dat_thu_tu: number; huy_loai: string; huy_thu_tu: number
@@ -245,6 +273,7 @@ type Props = {
   liveOverview: LiveOverview[]
   adsObjective: AdsObjective[]; adsObjectiveDay: AdsObjectiveDay[]
   huyAffiliate: HuyAffiliate[]
+  videoThang: VideoThang[]
 }
 
 /* ============================== helpers ============================== */
@@ -386,6 +415,20 @@ const SECTIONS = [
       { ten: 'Per unit', ghi: 'platform fees appear only on this sheet',
         subs: ['List price to cash', 'What erodes NMV'] },
       { ten: 'Month by month', subs: ['P&L by month'] },
+    ],
+  },
+  /* Đặt SAU P&L chứ không cạnh Livestream, dù về nội dung nó thuộc về đó.
+     Chèn vào giữa sẽ đánh số lại toàn bộ sheet phía sau — 7.15 thành 8.15 —
+     mà số hiệu đã đi vào trao đổi hằng ngày. Giữ số cũ quan trọng hơn thứ
+     tự đẹp. */
+  {
+    id: 'Videos', ten: 'Videos',
+    groups: [
+      { ten: '', ghi: 'số TikTok quy kết', subs: ['Key numbers'] },
+      { ten: 'Over time', ghi: 'MoM', subs: ['Month by month'] },
+      { ten: 'Who posts them', subs: ['By account type', 'Top creators'] },
+      { ten: 'Which ones work', subs: ['Top videos', 'Reach vs revenue', 'By product'] },
+      { ten: 'Do the orders stick', ghi: 'chỉ video affiliate', subs: ['Attributed vs kept'] },
     ],
   },
   { id: 'Glossary', ten: 'Glossary', groups: [] },
@@ -1641,7 +1684,7 @@ export default function Dashboard({
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
   campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel, liveOverview, adsObjective, adsObjectiveDay,
-  huyAffiliate,
+  huyAffiliate, videoThang,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -1681,6 +1724,9 @@ export default function Dashboard({
   const [affMo, setAffMo] = useState<Set<string>>(new Set())
   /** Lọc 7.15 theo một sản phẩm. Rỗng = tất cả. */
   const [affSp, setAffSp] = useState('')
+  /** Sheet Videos: tiêu chí xếp hạng và bộ lọc loại tài khoản. */
+  const [vidMetric, setVidMetric] = useState<'gmv' | 'views' | 'gpm' | 'ctr'>('gmv')
+  const [vidAcc, setVidAcc] = useState('')
   const toggleAff = (k: string) =>
     setAffMo((p) => {
       const n = new Set(p)
@@ -3728,7 +3774,7 @@ export default function Dashboard({
 
       const khoa = r.video_url ?? `nhan:${r.video_nhan}`
       if (!theoVideo.has(khoa)) {
-        theoVideo.set(khoa, { ...nutMoi(`${r.content_type} ·${r.video_nhan}`, r.video_url), nhan: r.video_nhan })
+        theoVideo.set(khoa, { ...nutMoi(`${r.content_type} ${r.video_nhan}`, r.video_url), nhan: r.video_nhan })
       }
       cong(theoVideo.get(khoa)!, r)
     }
@@ -3847,6 +3893,145 @@ export default function Dashboard({
   }, [affVideo])
 
 
+  /* ============================ sheet Videos ============================
+     Dữ liệu từ /analytics/202605/shop_videos/performance, một dòng một
+     video một tháng.
+
+     HAI ĐIỀU PHẢI GIỮ TRONG ĐẦU KHI ĐỌC MỌI SỐ Ở ĐÂY:
+
+     1. views, gmv, sku_orders là TikTok QUY KẾT, không trừ huỷ. Cùng loại
+        với gross_revenue bên tab Advertising. Không được đặt cạnh Seller
+        NMV rồi trừ nhau.
+
+     2. Tỷ lệ chuẩn hoá (ctr, gpm) KHÔNG cộng được giữa các tháng hay các
+        video. Luôn tính lại từ tử số và mẫu số — mọi chỗ dưới đây đều làm
+        vậy, đừng rút gọn thành avg().
+
+     Sheet này chạy theo THÁNG, vì API gộp theo khoảng ngày chứ không trả
+     theo ngày; nút 7 ngày / 30 ngày không áp dụng được. */
+
+  const vidRows = useMemo(
+    () => videoThang
+      .filter((r) => goodMonths.includes(r.thang))
+      .filter((r) => cat === 'all' || r.category === cat),
+    [videoThang, goodMonths, cat],
+  )
+
+  const vidLoc = useMemo(
+    () => (vidAcc ? vidRows.filter((r) => r.author_type === vidAcc) : vidRows),
+    [vidRows, vidAcc],
+  )
+
+  /** Cộng một tập dòng video. Tỷ lệ tính lại từ tổng, không lấy trung bình
+   *  của tỷ lệ — hai cách cho kết quả khác nhau và cách kia sai. */
+  const vidCong = (rows: VideoThang[]) => {
+    const t = rows.reduce((a, r) => ({
+      video: a.video + 1,
+      views: a.views + Number(r.views || 0),
+      imp: a.imp + Number(r.product_impressions || 0),
+      clicks: a.clicks + Number(r.product_clicks || 0),
+      gmv: a.gmv + Number(r.gmv || 0),
+      indirect: a.indirect + Number(r.indirect_gmv || 0),
+      don: a.don + Number(r.sku_orders || 0),
+      pcs: a.pcs + Number(r.items_sold || 0),
+      likes: a.likes + Number(r.likes || 0),
+      shares: a.shares + Number(r.shares || 0),
+      follow: a.follow + Number(r.new_followers || 0),
+    }), {
+      video: 0, views: 0, imp: 0, clicks: 0, gmv: 0, indirect: 0,
+      don: 0, pcs: 0, likes: 0, shares: 0, follow: 0,
+    })
+    return {
+      ...t,
+      ctr: t.views ? (t.clicks / t.views) * 100 : 0,
+      gpm: t.views ? (t.gmv / t.views) * 1000 : 0,
+      ctor: t.clicks ? (t.don / t.clicks) * 100 : 0,
+    }
+  }
+
+  const vidTot = useMemo(() => vidCong(vidLoc), [vidLoc])
+
+  /** Video thực sự ra đơn — phần lớn video không ra đơn nào, nên trung bình
+   *  trên toàn bộ là con số vô nghĩa. */
+  const vidCoDon = useMemo(
+    () => vidLoc.filter((r) => Number(r.sku_orders || 0) > 0).length,
+    [vidLoc],
+  )
+
+  const vidThang = useMemo(() => {
+    const m = new Map<string, VideoThang[]>()
+    for (const r of vidLoc) m.set(r.thang, [...(m.get(r.thang) ?? []), r])
+    return Array.from(m.entries())
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([ky, rows]) => ({ ky, ...vidCong(rows) }))
+  }, [vidLoc])
+
+  const VID_ACC = [
+    { key: 'OFFICIAL_ACCOUNTS', ten: 'Kênh nhà', mau: 'var(--c1)' },
+    { key: 'MARKETING_ACCOUNTS', ten: 'Marketing', mau: 'var(--c2)' },
+    { key: 'AFFILIATE_ACCOUNTS', ten: 'Creator ngoài', mau: 'var(--c3)' },
+  ] as const
+
+  const vidAuthor = useMemo(
+    () => VID_ACC.map((a) => ({
+      ...a, ...vidCong(vidRows.filter((r) => r.author_type === a.key)),
+    })),
+    [vidRows],
+  )
+
+  const vidCreator = useMemo(() => {
+    const m = new Map<string, VideoThang[]>()
+    for (const r of vidLoc) {
+      const k = r.username ?? '(không rõ)'
+      m.set(k, [...(m.get(k) ?? []), r])
+    }
+    return Array.from(m.entries())
+      .map(([ten, rows]) => ({
+        ten,
+        acc: rows[0].author_type,
+        nick: rows[0].nick_name,
+        ...vidCong(rows),
+      }))
+      .sort((a, b) => b.gmv - a.gmv)
+      .slice(0, 30)
+  }, [vidLoc])
+
+  const vidTop = useMemo(() => {
+    const diem = (r: VideoThang) =>
+      vidMetric === 'gmv' ? Number(r.gmv || 0)
+        : vidMetric === 'views' ? Number(r.views || 0)
+          : vidMetric === 'gpm' ? Number(r.gpm || 0)
+            : Number(r.click_through_rate || 0)
+    // Với gpm và ctr, video vài trăm view cho tỷ lệ khổng lồ mà vô nghĩa —
+    // chặn sàn 1.000 view để bảng không bị rác chiếm chỗ.
+    const nen = vidMetric === 'gpm' || vidMetric === 'ctr'
+      ? vidLoc.filter((r) => Number(r.views || 0) >= 1000)
+      : vidLoc
+    return nen.slice().sort((a, b) => diem(b) - diem(a)).slice(0, 40)
+  }, [vidLoc, vidMetric])
+
+  const vidSP = useMemo(() => {
+    const m = new Map<string, VideoThang[]>()
+    for (const r of vidLoc) {
+      const k = r.model_short ?? (r.so_product ? 'Chưa gắn tên model' : 'Không gắn sản phẩm')
+      m.set(k, [...(m.get(k) ?? []), r])
+    }
+    return Array.from(m.entries())
+      .map(([ten, rows]) => ({ ten, ...vidCong(rows) }))
+      .sort((a, b) => b.gmv - a.gmv)
+  }, [vidLoc])
+
+  /** Video nối được sang đơn affiliate — nơi duy nhất đặt được số quy kết
+   *  của TikTok cạnh số đơn thật trong sổ. */
+  const vidAff = useMemo(
+    () => vidLoc
+      .filter((r) => r.aff_don != null && Number(r.aff_don) > 0)
+      .sort((a, b) => Number(b.aff_gmv_dat || 0) - Number(a.aff_gmv_dat || 0))
+      .slice(0, 40),
+    [vidLoc],
+  )
+
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
@@ -3919,7 +4104,7 @@ export default function Dashboard({
         </div>
 
         <p className="foot">
-          {sec === 'Summary'
+          {sec === 'Summary' || sec === 'Videos'
             ? `Always monthly — the day ranges do not apply here. Showing ${monthNote}.`
             : sec === 'Discounts'
               ? `Mostly day-level. Showing ${dayNote}. The monthly blocks at the bottom follow the month chips instead.`
@@ -5993,7 +6178,7 @@ export default function Dashboard({
                         <td className="n"><b>{bn(r.gmv)}</b></td>
                         <td className="n">{liveDayStats ? bn(r.gmv / liveDayStats.n) : '—'}</td>
                         <td className="n">{r.gio > 0 ? mn1(r.gmv / r.gio) : '—'}</td>
-                        <td className="n">{n0(r.views)}</td>
+                        <td className="n">{n0(Number(r.views) || 0)}</td>
                         <td className="n"><b>{mn1(per1k(r.gmv, r.views))}</b></td>
                         <td className="n">{pct(p1(r.clicks, r.imp))}</td>
                         <td className="n">{pct(p1(r.don, r.clicks))}</td>
@@ -6180,7 +6365,7 @@ export default function Dashboard({
                     {liveOwnRooms.map((r) => (
                       <tr key={r.username}>
                         <td>{r.ten}</td>
-                        <td className="n">{n0(r.views)}</td>
+                        <td className="n">{n0(Number(r.views) || 0)}</td>
                         <td className="n">{n0(r.viewers)}</td>
                         <td className="n">{r.viewers > 0 ? (r.views / r.viewers).toFixed(2) : '—'}</td>
                         <td className="n">{r.gio > 0 ? n0(r.views / r.gio) : '—'}</td>
@@ -6262,7 +6447,7 @@ export default function Dashboard({
                     {liveOwnRooms.map((r) => (
                       <tr key={r.username}>
                         <td>{r.ten}</td>
-                        <td className="n">{n0(r.views)}</td>
+                        <td className="n">{n0(Number(r.views) || 0)}</td>
                         <td className="n">{n0(r.imp)}</td>
                         <td className="n muted">{r.views > 0 ? (r.imp / r.views).toFixed(2) : '—'}</td>
                         <td className="n">{n0(r.clicks)}</td>
@@ -8150,6 +8335,286 @@ export default function Dashboard({
                 </table>
               </div>
               <p className="foot">Money in VND bn. Shipping figures cover all orders, not just robots and handhelds.</p>
+            </section>
+          </>
+        )}
+
+
+        {/* ======================== VIDEOS ======================== */}
+        {sec === 'Videos' && (
+          <>
+            <section id="s9-1">
+              <h2><span className="hno">9.1</span>Video performance — {monthNote}</h2>
+              <p className="sub">
+                Straight from TikTok Shop analytics, one row per video per month. The API
+                aggregates over the window you ask for and never returns a daily series, so this
+                sheet follows the month chips above; the 7- and 30-day buttons do not apply.
+              </p>
+              <div className="note warn">
+                <b>Every money and order figure on this sheet is TikTok&rsquo;s attribution, not the
+                shop&rsquo;s books.</b> It is the same kind of number as gross revenue on the
+                Advertising sheet: counted before cancellation, and a single order can be credited
+                to more than one piece of content. Do not place it beside Seller NMV and subtract.
+                Section 9.7 is the only place where these numbers meet real orders.
+              </div>
+              <div className="filters" style={{ marginTop: 20 }}>
+                <select className="drop" value={vidAcc} onChange={(e) => setVidAcc(e.target.value)}>
+                  <option value="">All accounts</option>
+                  {VID_ACC.map((a) => <option key={a.key} value={a.key}>{a.ten}</option>)}
+                </select>
+                {vidAcc && <button className="lnk" onClick={() => setVidAcc('')}>Clear</button>}
+              </div>
+              <div className="tiles" style={{ marginTop: 16 }}>
+                <Tile label="Videos" value={n0(vidTot.video)}
+                  sub={`${n0(vidCoDon)} produced at least one order`} />
+                <Tile label="Views" value={mn1(vidTot.views)} unit=" mn"
+                  sub={`${n0(vidTot.imp)} product impressions`} />
+                <Tile label="Attributed GMV" value={bn(vidTot.gmv)} unit=" bn"
+                  sub={`plus ${mn(vidTot.indirect)}m indirect`} />
+                <Tile label="GMV per 1k views" value={n0(vidTot.gpm)} unit=" ₫"
+                  sub="recomputed from totals, not averaged" />
+                <Tile label="Product CTR" value={pct(vidTot.ctr)}
+                  sub={`${n0(vidTot.clicks)} product clicks`} />
+                <Tile label="Click to order" value={pct(vidTot.ctor)}
+                  sub={`${n0(vidTot.don)} attributed SKU orders`} />
+                <Tile label="Units attributed" value={n0(vidTot.pcs)} />
+                <Tile label="New followers" value={n0(vidTot.follow)}
+                  sub={`${n0(vidTot.likes)} likes · ${n0(vidTot.shares)} shares`} />
+              </div>
+            </section>
+
+            <section id="s9-2">
+              <h2><span className="hno">9.2</span>Month by month</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Month</th><th className="n">Videos</th><th className="n">Views</th>
+                    <th className="n">CTR</th><th className="n">Attributed GMV</th>
+                    <th className="n">GMV / 1k views</th><th className="n">Orders</th>
+                    <th className="n">Click to order</th>
+                  </tr></thead>
+                  <tbody>
+                    {vidThang.map((r) => (
+                      <tr key={r.ky}>
+                        <td>{mmyy(r.ky)}</td>
+                        <td className="n">{n0(r.video)}</td>
+                        <td className="n">{mn1(r.views)}m</td>
+                        <td className="n">{pct(r.ctr)}</td>
+                        <td className="n">{mn(r.gmv)}m</td>
+                        <td className="n">{n0(r.gpm)}</td>
+                        <td className="n">{n0(r.don)}</td>
+                        <td className="n muted">{pct(r.ctor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Rates are recomputed from each month&rsquo;s own totals. Averaging the per-video
+                rates would give a different — and wrong — answer.
+              </p>
+            </section>
+
+            <section id="s9-3">
+              <h2><span className="hno">9.3</span>By account type — {monthNote}</h2>
+              <p className="sub">
+                Three populations with different economics: our own three channels, the marketing
+                accounts, and outside creators posting under affiliate. This table ignores the
+                account filter above so the comparison stays whole.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Account type</th><th className="n">Videos</th><th className="n">Views</th>
+                    <th className="n">Share of views</th><th className="n">CTR</th>
+                    <th className="n">Attributed GMV</th><th className="n">Share of GMV</th>
+                    <th className="n">GMV / 1k views</th>
+                  </tr></thead>
+                  <tbody>
+                    {vidAuthor.map((a) => (
+                      <tr key={a.key}>
+                        <td><span className="sw sm" style={{ background: a.mau }} />{a.ten}</td>
+                        <td className="n">{n0(a.video)}</td>
+                        <td className="n">{mn1(a.views)}m</td>
+                        <td className="n muted">{pct(p1(a.views, vidCong(vidRows).views))}</td>
+                        <td className="n">{pct(a.ctr)}</td>
+                        <td className="n">{mn(a.gmv)}m</td>
+                        <td className="n muted">{pct(p1(a.gmv, vidCong(vidRows).gmv))}</td>
+                        <td className="n">{n0(a.gpm)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section id="s9-4">
+              <h2><span className="hno">9.4</span>Top creators — {monthNote}</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Creator</th><th>Type</th><th className="n">Videos</th>
+                    <th className="n">Views</th><th className="n">CTR</th>
+                    <th className="n">Attributed GMV</th><th className="n">GMV / 1k views</th>
+                    <th className="n">Orders</th>
+                  </tr></thead>
+                  <tbody>
+                    {vidCreator.map((c) => (
+                      <tr key={c.ten}>
+                        <td>{c.ten}{c.nick && <span className="muted"> · {c.nick}</span>}</td>
+                        <td className="muted">
+                          {VID_ACC.find((a) => a.key === c.acc)?.ten ?? '—'}
+                        </td>
+                        <td className="n">{n0(c.video)}</td>
+                        <td className="n">{mn1(c.views)}m</td>
+                        <td className="n">{pct(c.ctr)}</td>
+                        <td className="n">{mn(c.gmv)}m</td>
+                        <td className="n">{n0(c.gpm)}</td>
+                        <td className="n">{n0(c.don)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">Top 30 by attributed GMV.</p>
+            </section>
+
+            <section id="s9-5">
+              <h2><span className="hno">9.5</span>Top videos — {monthNote}</h2>
+              <div className="filters">
+                {([
+                  { k: 'gmv', t: 'Attributed GMV' },
+                  { k: 'views', t: 'Views' },
+                  { k: 'gpm', t: 'GMV / 1k views' },
+                  { k: 'ctr', t: 'Product CTR' },
+                ] as const).map((m) => (
+                  <button key={m.k} className={`chip ${vidMetric === m.k ? 'on' : ''}`}
+                    onClick={() => setVidMetric(m.k)}>{m.t}</button>
+                ))}
+              </div>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Video</th><th>Creator</th><th>Product</th><th className="n">Views</th>
+                    <th className="n">CTR</th><th className="n">Attributed GMV</th>
+                    <th className="n">GMV / 1k views</th><th className="n">Orders</th>
+                  </tr></thead>
+                  <tbody>
+                    {vidTop.map((r) => (
+                      <tr key={`${r.video_nhan}-${r.thang}`}>
+                        <td>
+                          {r.video_url
+                            ? <a href={r.video_url} target="_blank" rel="noreferrer">{r.video_nhan}</a>
+                            : r.video_nhan}
+                          <span className="muted"> {mmyy(r.thang)}</span>
+                        </td>
+                        <td className="muted">{r.username ?? '—'}</td>
+                        <td className="muted">{r.model_short ?? r.product_name}</td>
+                        <td className="n">{n0(Number(r.views) || 0)}</td>
+                        <td className="n">{pct((Number(r.click_through_rate) || 0) * 100)}</td>
+                        <td className="n">{mn(Number(r.gmv) || 0)}m</td>
+                        <td className="n">{n0(Number(r.gpm) || 0)}</td>
+                        <td className="n">{n0(Number(r.sku_orders) || 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Top 40. On the two rate views, videos under 1,000 views are left out — a video
+                with 80 views and one order shows an enormous rate that means nothing.
+              </p>
+            </section>
+
+            <section id="s9-6">
+              <h2><span className="hno">9.6</span>By product — {monthNote}</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Product</th><th className="n">Videos</th><th className="n">Views</th>
+                    <th className="n">CTR</th><th className="n">Attributed GMV</th>
+                    <th className="n">GMV / 1k views</th><th className="n">Orders</th>
+                  </tr></thead>
+                  <tbody>
+                    {vidSP.map((r) => (
+                      <tr key={r.ten}>
+                        <td>{r.ten}</td>
+                        <td className="n">{n0(r.video)}</td>
+                        <td className="n">{mn1(r.views)}m</td>
+                        <td className="n">{pct(r.ctr)}</td>
+                        <td className="n">{mn(r.gmv)}m</td>
+                        <td className="n">{n0(r.gpm)}</td>
+                        <td className="n">{n0(r.don)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                The product shown is the first one pinned to the video. A video with several
+                products in the basket is counted once, under that first product.
+              </p>
+            </section>
+
+            <section id="s9-7">
+              <h2><span className="hno">9.7</span>Attributed versus kept — {monthNote}</h2>
+              <p className="sub">
+                The only place on this dashboard where TikTok&rsquo;s attribution sits beside real
+                orders. The match runs on video id against the affiliate order feed, so it covers
+                creator videos only: a video on our own channels carries no commission, so TikTok
+                never ties an order to it and never will. That is an API boundary, not missing sync.
+              </p>
+              {vidAff.length === 0 ? (
+                <div className="note">No video in this period matched an affiliate order.</div>
+              ) : (
+                <div className="tablewrap">
+                  <table>
+                    <thead><tr>
+                      <th>Video</th><th>Creator</th><th>Product</th>
+                      <th className="n">Views</th>
+                      <th className="n">TikTok GMV</th><th className="n">TikTok orders</th>
+                      <th className="n">Real orders</th><th className="n">Cancelled</th>
+                      <th className="n">GMV booked</th><th className="n">GMV kept</th>
+                    </tr></thead>
+                    <tbody>
+                      {vidAff.map((r) => {
+                        const don = Number(r.aff_don || 0)
+                        const huy = Number(r.aff_huy || 0)
+                        return (
+                          <tr key={`${r.video_nhan}-${r.thang}`}>
+                            <td>
+                              {r.video_url
+                                ? <a href={r.video_url} target="_blank" rel="noreferrer">{r.video_nhan}</a>
+                                : r.video_nhan}
+                              <span className="muted"> {mmyy(r.thang)}</span>
+                            </td>
+                            <td className="muted">{r.username ?? '—'}</td>
+                            <td className="muted">{r.model_short ?? r.product_name}</td>
+                            <td className="n">{n0(Number(r.views) || 0)}</td>
+                            <td className="n muted">{mn(Number(r.gmv) || 0)}m</td>
+                            <td className="n muted">{n0(Number(r.sku_orders) || 0)}</td>
+                            <td className="n">{n0(don)}</td>
+                            <td className="n" style={{ color: don >= 5 && p1(huy, don) > 80 ? 'var(--bad)' : 'inherit' }}>
+                              {pct(p1(huy, don))}
+                            </td>
+                            <td className="n">{mn(Number(r.aff_gmv_dat) || 0)}m</td>
+                            <td className="n" style={{ fontWeight: 600 }}>
+                              {mn(Number(r.aff_gmv_con) || 0)}m
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="note hot">
+                <b>The gap between the two GMV columns is the whole point of this sheet.</b>{' '}
+                TikTok&rsquo;s figure is what the content appeared to earn; GMV kept is what
+                survived to the shop&rsquo;s books. A video can top section 9.5 on attributed GMV
+                and still leave almost nothing here. Rank creative, and ad budget behind it, on the
+                last column.
+              </div>
             </section>
           </>
         )}
