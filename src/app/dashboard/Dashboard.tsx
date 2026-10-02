@@ -165,6 +165,28 @@ export type VideoThang = {
   aff_don: number | null; aff_huy: number | null
   aff_gmv_dat: number | null; aff_gmv_con: number | null
 }
+/** v_product_kenh — phễu sản phẩm × kênh × tháng.
+ *
+ *  TÁM KÊNH KHÔNG RỜI NHAU, ĐỪNG CỘNG CẢ TÁM: SHOP_TAB cắt ngang mọi kênh
+ *  khác, AFF_LIVE và AFF_VIDEO nằm trong AFF_TOTAL, và TOTAL là tổng của
+ *  shop. Muốn chia phần thì chỉ dùng bốn khối
+ *  SELLER_LIVE + SELLER_VIDEO + SELLER_CARD + AFF_TOTAL.
+ *
+ *  gmv tính cả đơn huỷ. Riêng khối TOTAL có refunds / refunded_items —
+ *  tiền và số món không về, theo chính TikTok. */
+export type ProductKenh = {
+  thang: string; kenh: string; san_pham: string; category: string
+  product_impressions: number | null; product_clicks: number | null
+  add_cart_count: number | null; add_cart_users: number | null
+  unique_product_impressions: number | null; unique_clicks: number | null
+  orders: number | null; sku_orders: number | null
+  items_sold: number | null; estimated_customers: number | null
+  gmv: number | null; aov: number | null
+  refunds: number | null; refunded_items: number | null; refund_customers: number | null
+  gross_merchandise_value: number | null; shipping_fees: number | null
+  new_live_count: number | null; new_video_count: number | null
+  avg_daily_creator_posted_content: number | null
+}
 export type CampMatrix = {
   ngay: string; category: string
   dat_loai: string; dat_thu_tu: number; huy_loai: string; huy_thu_tu: number
@@ -274,6 +296,7 @@ type Props = {
   adsObjective: AdsObjective[]; adsObjectiveDay: AdsObjectiveDay[]
   huyAffiliate: HuyAffiliate[]
   videoThang: VideoThang[]
+  productKenh: ProductKenh[]
 }
 
 /* ============================== helpers ============================== */
@@ -429,6 +452,15 @@ const SECTIONS = [
       { ten: 'Who posts them', subs: ['By account type', 'Top creators'] },
       { ten: 'Which ones work', subs: ['Top videos', 'Reach vs revenue', 'By product'] },
       { ten: 'Do the orders stick', ghi: 'chỉ video affiliate', subs: ['Attributed vs kept'] },
+    ],
+  },
+  {
+    id: 'Traffic', ten: 'Product traffic',
+    groups: [
+      { ten: '', ghi: 'số TikTok quy kết', subs: ['The funnel'] },
+      { ten: 'By channel', subs: ['Channel funnel', 'Month by month'] },
+      { ten: 'By product', subs: ['Product funnel', 'Where each one leaks'] },
+      { ten: 'Refunds', ghi: 'theo TikTok', subs: ['What never arrives'] },
     ],
   },
   { id: 'Glossary', ten: 'Glossary', groups: [] },
@@ -1684,7 +1716,7 @@ export default function Dashboard({
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
   campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel, liveOverview, adsObjective, adsObjectiveDay,
-  huyAffiliate, videoThang,
+  huyAffiliate, videoThang, productKenh,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -4032,6 +4064,137 @@ export default function Dashboard({
   )
 
 
+  /* ======================= sheet Product traffic =======================
+     Nguồn: /analytics/202605/shop_products/performance, mỗi sản phẩm được
+     TikTok tách sẵn thành 8 khối kênh.
+
+     BẪY LỚN NHẤT: TÁM KÊNH KHÔNG RỜI NHAU. SHOP_TAB cắt ngang mọi kênh
+     khác, AFF_LIVE và AFF_VIDEO nằm trong AFF_TOTAL. Cộng cả tám ra con
+     số vô nghĩa. Mọi chỗ cần "chia phần" dưới đây chỉ dùng bốn khối
+     SELLER_LIVE + SELLER_VIDEO + SELLER_CARD + AFF_TOTAL — đã đo là xấp xỉ
+     TOTAL (sai số dưới 1%).
+
+     Số tiền và số đơn là TikTok quy kết, tính cả đơn huỷ. Riêng khối TOTAL
+     có refunds — tiền không về, theo chính TikTok. */
+
+  const TR_KENH = [
+    { key: 'SELLER_LIVE', ten: 'Seller live', mau: 'var(--c1)' },
+    { key: 'SELLER_CARD', ten: 'Product card', mau: 'var(--c2)' },
+    { key: 'SELLER_VIDEO', ten: 'Seller video', mau: 'var(--c3)' },
+    { key: 'AFF_TOTAL', ten: 'Affiliate', mau: 'var(--bad)' },
+  ] as const
+  /** Khối cắt ngang — để riêng, không bao giờ cộng chung với bốn khối trên. */
+  const TR_CAT_NGANG = [
+    { key: 'SHOP_TAB', ten: 'Shop tab' },
+    { key: 'AFF_LIVE', ten: '— affiliate live' },
+    { key: 'AFF_VIDEO', ten: '— affiliate video' },
+  ] as const
+
+  const trRows = useMemo(
+    () => productKenh
+      .filter((r) => goodMonths.includes(r.thang))
+      .filter((r) => cat === 'all' || r.category === cat),
+    [productKenh, goodMonths, cat],
+  )
+
+  const trCong = (rows: ProductKenh[]) => {
+    const t = rows.reduce((a, r) => ({
+      imp: a.imp + Number(r.product_impressions || 0),
+      click: a.click + Number(r.product_clicks || 0),
+      atc: a.atc + Number(r.add_cart_count || 0),
+      don: a.don + Number(r.orders || 0),
+      pcs: a.pcs + Number(r.items_sold || 0),
+      gmv: a.gmv + Number(r.gmv || 0),
+      hoan: a.hoan + Number(r.refunds || 0),
+      hoanMon: a.hoanMon + Number(r.refunded_items || 0),
+    }), { imp: 0, click: 0, atc: 0, don: 0, pcs: 0, gmv: 0, hoan: 0, hoanMon: 0 })
+    return {
+      ...t,
+      ctr: t.imp ? (t.click / t.imp) * 100 : 0,
+      atcRate: t.click ? (t.atc / t.click) * 100 : 0,
+      cvr: t.click ? (t.don / t.click) * 100 : 0,
+      aov: t.don ? t.gmv / t.don : 0,
+      giuLai: t.gmv ? ((t.gmv - t.hoan) / t.gmv) * 100 : 0,
+    }
+  }
+
+  const trTotal = useMemo(
+    () => trCong(trRows.filter((r) => r.kenh === 'TOTAL')),
+    [trRows],
+  )
+
+  const trTheoKenh = useMemo(
+    () => [...TR_KENH, ...TR_CAT_NGANG].map((k) => ({
+      ...k, catNgang: !TR_KENH.some((x) => x.key === k.key),
+      ...trCong(trRows.filter((r) => r.kenh === k.key)),
+    })),
+    [trRows],
+  )
+
+  /** Mẫu số để tính thị phần: bốn khối rời nhau, KHÔNG phải TOTAL và
+   *  không bao giờ gồm SHOP_TAB. */
+  const trNenGmv = useMemo(
+    () => TR_KENH.reduce(
+      (a, k) => a + trCong(trRows.filter((r) => r.kenh === k.key)).gmv, 0),
+    [trRows],
+  )
+
+  const trThang = useMemo(() => {
+    const m = new Map<string, ProductKenh[]>()
+    for (const r of trRows) if (r.kenh === 'TOTAL') m.set(r.thang, [...(m.get(r.thang) ?? []), r])
+    return Array.from(m.entries())
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([ky, rows]) => {
+        const kenh = Object.fromEntries(TR_KENH.map((k) => [
+          k.key,
+          trCong(trRows.filter((r) => r.thang === ky && r.kenh === k.key)).gmv,
+        ]))
+        return { ky, ...trCong(rows), kenh }
+      })
+  }, [trRows])
+
+  const trSanPham = useMemo(() => {
+    const m = new Map<string, ProductKenh[]>()
+    for (const r of trRows) if (r.kenh === 'TOTAL') m.set(r.san_pham, [...(m.get(r.san_pham) ?? []), r])
+    return Array.from(m.entries())
+      .map(([ten, rows]) => ({ ten, ...trCong(rows) }))
+      .filter((x) => x.imp > 0)
+      .sort((a, b) => b.gmv - a.gmv)
+  }, [trRows])
+
+  /** Mỗi sản phẩm rò nhiều nhất ở bước nào.
+   *
+   *  So với trung vị của chính tập sản phẩm đang lọc, không so với một
+   *  chuẩn cố định — ngành hàng này chuyển đổi khác hẳn ngành khác, lấy
+   *  chuẩn ngoài vào là tô đỏ cả bảng. */
+  const trRoRi = useMemo(() => {
+    const ds = trSanPham.filter((x) => x.click >= 200)
+    if (!ds.length) return []
+    const giua = (xs: number[]) => {
+      const a = xs.slice().sort((x, y) => x - y)
+      return a.length ? a[Math.floor(a.length / 2)] : 0
+    }
+    const mCtr = giua(ds.map((x) => x.ctr))
+    const mAtc = giua(ds.map((x) => x.atcRate))
+    const mCvr = giua(ds.map((x) => x.cvr))
+    return ds.map((x) => {
+      const khoang = [
+        { buoc: 'Hiển thị → bấm', ty: mCtr ? x.ctr / mCtr : 1, v: x.ctr, chuan: mCtr },
+        { buoc: 'Bấm → thêm giỏ', ty: mAtc ? x.atcRate / mAtc : 1, v: x.atcRate, chuan: mAtc },
+        { buoc: 'Bấm → đơn', ty: mCvr ? x.cvr / mCvr : 1, v: x.cvr, chuan: mCvr },
+      ]
+      const te = khoang.slice().sort((a, b) => a.ty - b.ty)[0]
+      return { ...x, te }
+    }).sort((a, b) => a.te.ty - b.te.ty)
+  }, [trSanPham])
+
+  const trHoan = useMemo(
+    () => trSanPham.filter((x) => x.gmv > 0 && x.hoan > 0)
+      .sort((a, b) => b.hoan - a.hoan),
+    [trSanPham],
+  )
+
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
@@ -4104,7 +4267,7 @@ export default function Dashboard({
         </div>
 
         <p className="foot">
-          {sec === 'Summary' || sec === 'Videos'
+          {sec === 'Summary' || sec === 'Videos' || sec === 'Traffic'
             ? `Always monthly — the day ranges do not apply here. Showing ${monthNote}.`
             : sec === 'Discounts'
               ? `Mostly day-level. Showing ${dayNote}. The monthly blocks at the bottom follow the month chips instead.`
@@ -8618,6 +8781,225 @@ export default function Dashboard({
                 and still leave almost nothing here. Rank creative, and ad budget behind it, on the
                 last column.
               </div>
+            </section>
+          </>
+        )}
+
+
+        {/* ==================== PRODUCT TRAFFIC ==================== */}
+        {sec === 'Traffic' && (
+          <>
+            <section id="s10-1">
+              <h2><span className="hno">10.1</span>The funnel — {monthNote}</h2>
+              <p className="sub">
+                TikTok breaks every product into eight channel blocks, each with its own funnel.
+                Monthly only — the endpoint aggregates over the window you ask for and history
+                stops at about 180 days.
+              </p>
+              <div className="tiles" style={{ marginTop: 18 }}>
+                <Tile label="Product impressions" value={mn1(trTotal.imp)} unit=" mn" />
+                <Tile label="Product clicks" value={n0(trTotal.click)}
+                  sub={`CTR ${pct(trTotal.ctr)}`} />
+                <Tile label="Added to cart" value={n0(trTotal.atc)}
+                  sub={`${pct(trTotal.atcRate)} of clicks`} />
+                <Tile label="Orders" value={n0(trTotal.don)}
+                  sub={`${pct(trTotal.cvr)} of clicks`} />
+                <Tile label="Attributed GMV" value={bn(trTotal.gmv)} unit=" bn" />
+                <Tile label="AOV" value={mn1(trTotal.aov)} unit=" mn" />
+                <Tile label="Refunded by TikTok" value={bn(trTotal.hoan)} unit=" bn"
+                  tone="bad" sub={`${n0(trTotal.hoanMon)} items`} />
+                <Tile label="GMV that stays" value={pct(trTotal.giuLai)}
+                  tone={trTotal.giuLai < 40 ? 'bad' : undefined}
+                  sub="TikTok's own refund figure" />
+              </div>
+              <div className="note">
+                <b>This is the first independent check on our cancellation rate.</b> The refund
+                figure comes from TikTok, computed on their side with no input from our order
+                table — and it lands in the same place our own books do. The long-running question
+                of whether we were counting cancellations wrongly can be closed: we were not.
+              </div>
+            </section>
+
+            <section id="s10-2">
+              <h2><span className="hno">10.2</span>Channel funnel — {monthNote}</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Channel</th><th className="n">Impressions</th><th className="n">Clicks</th>
+                    <th className="n">CTR</th><th className="n">Added to cart</th>
+                    <th className="n">Click → cart</th><th className="n">Click → order</th>
+                    <th className="n">GMV</th><th className="n">Share</th>
+                  </tr></thead>
+                  <tbody>
+                    {trTheoKenh.map((k) => (
+                      <tr key={k.key} className={k.catNgang ? 'muted' : undefined}>
+                        <td>
+                          {!k.catNgang && 'mau' in k
+                            && <span className="sw sm" style={{ background: k.mau }} />}
+                          {k.ten}
+                        </td>
+                        <td className="n">{mn1(k.imp)}m</td>
+                        <td className="n">{n0(k.click)}</td>
+                        <td className="n">{pct(k.ctr)}</td>
+                        <td className="n">{k.atc ? n0(k.atc) : '—'}</td>
+                        <td className="n">{k.atc ? pct(k.atcRate) : '—'}</td>
+                        <td className="n" style={{
+                          fontWeight: k.catNgang ? 400 : 600,
+                          color: !k.catNgang && k.cvr > 0 && k.cvr < 0.2 ? 'var(--bad)' : 'inherit',
+                        }}>{k.don ? pct(k.cvr) : '—'}</td>
+                        <td className="n">{bn(k.gmv)}bn</td>
+                        <td className="n muted">{k.catNgang ? '—' : pct(p1(k.gmv, trNenGmv))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="note warn">
+                <b>The three grey rows overlap the ones above them and must never be added in.</b>{' '}
+                Shop tab cuts across every other channel — the same order can appear there and in
+                seller live. Affiliate live and affiliate video are parts of affiliate, not
+                additions to it. Share is computed against seller live + product card + seller
+                video + affiliate only, which is the one set that adds up.
+              </div>
+              <div className="note hot">
+                <b>Reach and intent are not the same thing, and this table prices the difference.</b>{' '}
+                Affiliate earns the highest click-through of any channel yet converts those clicks
+                into orders at a rate roughly seventy times worse than seller live. It is the same
+                pattern the Videos sheet found from a completely separate endpoint, which is why it
+                is worth believing. Clicks bought on the affiliate side are curiosity; clicks in a
+                live room are intent.
+              </div>
+            </section>
+
+            <section id="s10-3">
+              <h2><span className="hno">10.3</span>Month by month</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Month</th><th className="n">Impressions</th><th className="n">CTR</th>
+                    <th className="n">Click → cart</th><th className="n">Click → order</th>
+                    <th className="n">GMV</th>
+                    {TR_KENH.map((k) => <th className="n" key={k.key}>{k.ten}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {trThang.map((r) => (
+                      <tr key={r.ky}>
+                        <td>{mmyy(r.ky)}</td>
+                        <td className="n">{mn1(r.imp)}m</td>
+                        <td className="n">{pct(r.ctr)}</td>
+                        <td className="n">{pct(r.atcRate)}</td>
+                        <td className="n">{pct(r.cvr)}</td>
+                        <td className="n">{bn(r.gmv)}bn</td>
+                        {TR_KENH.map((k) => (
+                          <td className="n muted" key={k.key}>{bn(r.kenh[k.key] ?? 0)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">Channel columns in VND bn, attributed, before cancellation.</p>
+            </section>
+
+            <section id="s10-4">
+              <h2><span className="hno">10.4</span>Product funnel — {monthNote}</h2>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Product</th><th className="n">Impressions</th><th className="n">Clicks</th>
+                    <th className="n">CTR</th><th className="n">Click → cart</th>
+                    <th className="n">Click → order</th><th className="n">GMV</th>
+                    <th className="n">AOV</th>
+                  </tr></thead>
+                  <tbody>
+                    {trSanPham.map((r) => (
+                      <tr key={r.ten}>
+                        <td>{r.ten}</td>
+                        <td className="n">{mn1(r.imp)}m</td>
+                        <td className="n">{n0(r.click)}</td>
+                        <td className="n">{pct(r.ctr)}</td>
+                        <td className="n">{pct(r.atcRate)}</td>
+                        <td className="n">{pct(r.cvr)}</td>
+                        <td className="n">{bn(r.gmv)}bn</td>
+                        <td className="n muted">{mn1(r.aov)}m</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section id="s10-5">
+              <h2><span className="hno">10.5</span>Where each one leaks — {monthNote}</h2>
+              <p className="sub">
+                For every product, the funnel step furthest below the median of the products shown
+                here. The benchmark is this shop&rsquo;s own middle, not an outside standard: a
+                robot vacuum converts nothing like a mop head, and borrowing a benchmark would
+                paint the whole table red. Products under 200 clicks are left out.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Product</th><th>Weakest step</th><th className="n">Its rate</th>
+                    <th className="n">Median here</th><th className="n">Gap</th>
+                    <th className="n">Clicks</th><th className="n">GMV</th>
+                  </tr></thead>
+                  <tbody>
+                    {trRoRi.map((r) => (
+                      <tr key={r.ten}>
+                        <td>{r.ten}</td>
+                        <td>{r.te.buoc}</td>
+                        <td className="n">{pct(r.te.v)}</td>
+                        <td className="n muted">{pct(r.te.chuan)}</td>
+                        <td className="n" style={{ color: r.te.ty < 0.5 ? 'var(--bad)' : 'inherit', fontWeight: 600 }}>
+                          {r.te.ty < 1 ? `−${Math.round((1 - r.te.ty) * 100)}%` : `+${Math.round((r.te.ty - 1) * 100)}%`}
+                        </td>
+                        <td className="n">{n0(r.click)}</td>
+                        <td className="n">{bn(r.gmv)}bn</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                A weak first step is a listing problem — thumbnail, title, price on the card. A weak
+                last step is a page or offer problem. They have different owners.
+              </p>
+            </section>
+
+            <section id="s10-6">
+              <h2><span className="hno">10.6</span>What never arrives — {monthNote}</h2>
+              <p className="sub">
+                TikTok&rsquo;s own refund figures, independent of our order table. Useful precisely
+                because nothing on this dashboard feeds it.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Product</th><th className="n">GMV</th><th className="n">Refunded</th>
+                    <th className="n">Items refunded</th><th className="n">GMV that stays</th>
+                  </tr></thead>
+                  <tbody>
+                    {trHoan.map((r) => (
+                      <tr key={r.ten}>
+                        <td>{r.ten}</td>
+                        <td className="n">{bn(r.gmv)}bn</td>
+                        <td className="n" style={{ color: 'var(--bad)' }}>{bn(r.hoan)}bn</td>
+                        <td className="n">{n0(r.hoanMon)}</td>
+                        <td className="n" style={{
+                          fontWeight: 600,
+                          color: r.giuLai < 30 ? 'var(--bad)' : r.giuLai > 60 ? 'var(--ok)' : 'inherit',
+                        }}>{pct(r.giuLai)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                TikTok&rsquo;s refunds cover cancelled and returned orders together, so this will
+                not match the cancellation sheet line for line. The point is that it lands in the
+                same region from an independent direction.
+              </p>
             </section>
           </>
         )}
