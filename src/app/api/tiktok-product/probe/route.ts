@@ -20,9 +20,25 @@ export const maxDuration = 300
 const LIST = '/analytics/202605/shop_products/performance'
 const DETAIL = (id: string) => `/analytics/202509/shop_products/${id}/performance`
 
+/** Rút gọn kết quả 1D: đếm số interval, giữ 2 cái đầu làm mẫu. */
+function tomTat(d: unknown) {
+  const perf = (d as { performance?: { intervals?: unknown[] } })?.performance
+  const iv = perf?.intervals ?? []
+  return {
+    so_interval: iv.length,
+    hai_interval_dau: iv.slice(0, 2),
+    co_ratings: Boolean((d as { performance?: { ratings?: unknown[] } })?.performance?.ratings?.length),
+    so_top_contents: ((d as { performance?: { top_contents?: unknown[] } })?.performance?.top_contents ?? []).length,
+  }
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url)
   const days = Math.min(Number(url.searchParams.get('days') ?? '30'), 60)
+  // granularity=1D: thử xem Detail có trả theo NGÀY không. Nếu có thì mới
+  // dựng được DoD cho phễu sản phẩm — endpoint List gộp cả khoảng, không
+  // bao giờ tách ngày ra được.
+  const gran = url.searchParams.get('gran') === '1D' ? '1D' : 'ALL'
   const ngay = (back: number) =>
     new Date(Date.now() - back * 86_400_000).toISOString().slice(0, 10)
 
@@ -73,7 +89,7 @@ export async function GET(request: Request) {
           query: {
             start_date_ge: ngay(days),
             end_date_lt: ngay(0),
-            granularity: 'ALL',
+            granularity: gran,
             currency: 'LOCAL',
           },
         })
@@ -94,8 +110,10 @@ export async function GET(request: Request) {
       khoi_co_du_lieu: coSo,
       mau_list: products.slice(0, 1),
       detail_cua: topId ?? null,
+      detail_gran: gran,
       detail_loi: loiDetail,
-      detail,
+      // Ở chế độ 1D chỉ in 2 interval đầu — in cả tháng thì không đọc nổi.
+      detail: gran === '1D' ? tomTat(detail) : detail,
     })
   } catch (e) {
     return NextResponse.json(
