@@ -1237,48 +1237,87 @@ function LiveHead({ rows, series, fmtCot, fmtDuong, fmtAds }: {
  */
 
 /**
- * Dải chip chọn sản phẩm.
+ * Hộp chọn sản phẩm: ô tìm, lọc theo dải giá, danh sách cuộn được.
  *
- * Thay cho thẻ select vì ở đây việc chọn là việc làm đi làm lại: mở
- * dropdown, đọc, chọn, đóng, rồi lặp lại cho sản phẩm thứ hai là bốn thao
- * tác cho mỗi lần đổi. Chip thì mọi lựa chọn nằm sẵn trước mắt, và ở chế
- * độ nhiều lựa chọn thì nhìn một cái là biết đang chọn những gì — dropdown
- * không bao giờ cho thấy điều đó.
+ * Shop có hơn ba mươi máy. Trải hết thành chip thì tràn ngang và phải cuộn
+ * ngang để tìm — tệ hơn cả dropdown. Dropdown thì ngược lại, giấu hết lựa
+ * chọn và ở chế độ nhiều lựa chọn không bao giờ cho thấy đang chọn gì.
  *
- * `mau` chỉ truyền ở chế độ nhiều lựa chọn: chấm màu trên chip phải khớp
- * với màu đường trong biểu đồ, nếu không người đọc phải tự dò.
+ * Nên: thứ đang chọn hiện thành thẻ màu ở trên (bấm để bỏ), phần còn lại
+ * nằm trong danh sách cuộn, gõ để lọc. Màu trên thẻ khớp màu đường trong
+ * biểu đồ, nếu không người đọc phải tự dò legend.
  */
-function ChonSP({ ds, chon, doi, nhieu, mau, trong }: {
-  ds: { ten: string; phu?: string }[]
+function ChonSP({ ds, chon, doi, nhieu, mau, trong, toiDa }: {
+  ds: { ten: string; phu?: string; dai?: string }[]
   chon: string[]
   doi: (ten: string) => void
   nhieu?: boolean
   mau?: (ten: string) => string | null
   trong?: string
+  toiDa?: number
 }) {
+  const [tim, setTim] = useState('')
+  const [dai, setDai] = useState('')
+
+  const cacDai = Array.from(new Set(ds.map((x) => x.dai).filter(Boolean))) as string[]
+  const loc = ds.filter((x) =>
+    (!dai || x.dai === dai)
+    && (!tim || x.ten.toLowerCase().includes(tim.toLowerCase())))
+
   return (
-    <div className="chips">
-      {trong && (
-        <button className={`chip ${chon.length === 0 ? 'on' : ''}`} onClick={() => doi('')}>
-          {trong}
-        </button>
+    <div className="spbox">
+      {chon.length > 0 && (
+        <div className="sp-pills">
+          {chon.map((ten) => (
+            <button key={ten} className="sp-pill"
+              style={mau ? { background: mau(ten) ?? 'var(--muted)' } : undefined}
+              onClick={() => doi(ten)}>
+              {ten}<span className="sp-x">×</span>
+            </button>
+          ))}
+          {nhieu && toiDa && (
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              {chon.length} of {toiDa} · picking another drops the oldest
+            </span>
+          )}
+        </div>
       )}
-      {ds.map((x) => {
-        const on = chon.includes(x.ten)
-        const c = on && mau ? mau(x.ten) : null
-        return (
-          <button key={x.ten} className={`chip ${on ? 'on' : ''}`} onClick={() => doi(x.ten)}>
-            {c && <i className="swl" style={{ background: c }} />}
-            {x.ten}
-            {x.phu && <span className="chip-s">{x.phu}</span>}
+
+      <div className="sp-ctl">
+        <input className="sp-tim" value={tim} placeholder="Search products…"
+          onChange={(e) => setTim(e.target.value)} />
+        {cacDai.length > 1 && (
+          <>
+            <button className={`chip ${dai === '' ? 'on' : ''}`} onClick={() => setDai('')}>
+              All prices
+            </button>
+            {cacDai.map((d) => (
+              <button key={d} className={`chip ${dai === d ? 'on' : ''}`}
+                onClick={() => setDai((q) => (q === d ? '' : d))}>{d}</button>
+            ))}
+          </>
+        )}
+        {trong && (
+          <button className={`chip ${chon.length === 0 ? 'on' : ''}`} onClick={() => doi('')}>
+            {trong}
           </button>
-        )
-      })}
-      {nhieu && chon.length > 0 && (
-        <span className="muted" style={{ fontSize: 12.5 }}>
-          {chon.length} of 3 picked
-        </span>
-      )}
+        )}
+      </div>
+
+      <div className="sp-list">
+        {loc.length === 0
+          ? <div className="sp-none">Nothing matches.</div>
+          : loc.map((x) => {
+            const on = chon.includes(x.ten)
+            return (
+              <button key={x.ten} className={`sp-item ${on ? 'on' : ''}`} onClick={() => doi(x.ten)}>
+                <span className="sp-n">{x.ten}</span>
+                {x.dai && <span className="sp-b">{x.dai}</span>}
+                {x.phu && <span className="sp-g">{x.phu}</span>}
+              </button>
+            )
+          })}
+      </div>
     </div>
   )
 }
@@ -4507,6 +4546,17 @@ export default function Dashboard({
     if (trSoSanh) return trSoSanh
     return trLuoi.slice(0, 3).map((x) => x.ten)
   }, [trSoSanh, trLuoi])
+
+  /** Tên sản phẩm -> dải giá, lấy từ AOV của chính nó trong kỳ đang lọc.
+   *  Dùng cho bộ lọc giá ở hộp chọn sản phẩm. */
+  const trDaiCua = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const x of trSanPham) {
+      const d = DAI_GIA.find((g) => x.aov >= g.min && x.aov < g.max)
+      if (d) m.set(x.ten, d.ten)
+    }
+    return m
+  }, [trSanPham])
 
   const trHoan = useMemo(
     () => trSanPham.filter((x) => x.gmv > 0 && x.hoan > 0)
@@ -9291,7 +9341,9 @@ export default function Dashboard({
                 ten million cannot have their CTRs averaged.
               </p>
               <ChonSP
-                ds={trLuoi.map((x) => ({ ten: x.ten, phu: `${bn(x.tong.gmv)}bn` }))}
+                ds={trLuoi.map((x) => ({
+                  ten: x.ten, phu: `${bn(x.tong.gmv)}bn`, dai: trDaiCua.get(x.ten),
+                }))}
                 chon={trSp ? [trSp] : []}
                 doi={(ten) => setTrSp((p) => (p === ten ? '' : ten))}
                 trong={`All products (${trLuoi.length})`}
@@ -9403,9 +9455,12 @@ export default function Dashboard({
                 product; where all three turn together, the cause is the shop or the platform.
               </p>
               <ChonSP
-                ds={trLuoi.map((x) => ({ ten: x.ten, phu: `${bn(x.tong.gmv)}bn` }))}
+                ds={trLuoi.map((x) => ({
+                  ten: x.ten, phu: `${bn(x.tong.gmv)}bn`, dai: trDaiCua.get(x.ten),
+                }))}
                 chon={trBa.filter(Boolean)}
                 nhieu
+                toiDa={3}
                 mau={(ten) => {
                   const i = trBa.indexOf(ten)
                   return i < 0 ? null : ['var(--c1)', 'var(--c2)', 'var(--c3)'][i]
@@ -9710,8 +9765,27 @@ const CSS = `
 .muted{color:var(--muted);font-weight:400}
 .up{color:var(--ok)}
 .down{color:var(--bad)}
-.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 14px}
-.chip-s{margin-left:6px;opacity:.55;font-variant-numeric:tabular-nums}
+.spbox{margin:0 0 16px}
+.sp-pills{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.sp-pill{display:inline-flex;align-items:center;gap:7px;font:inherit;font-size:12.5px;
+  padding:5px 10px;border-radius:999px;border:0;color:#fff;cursor:pointer}
+.sp-x{opacity:.8;font-size:15px;line-height:1}
+.sp-ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sp-tim{font:inherit;font-size:12.5px;padding:6px 10px;border-radius:8px;
+  border:1px solid var(--line);background:var(--surface);color:var(--ink);min-width:190px}
+.sp-tim::placeholder{color:var(--muted)}
+.sp-list{margin-top:8px;max-height:168px;overflow:auto;border:1px solid var(--line);
+  border-radius:10px;background:var(--surface)}
+.sp-item{display:flex;width:100%;gap:10px;align-items:baseline;font:inherit;font-size:12.5px;
+  padding:7px 12px;background:none;border:0;border-bottom:1px solid var(--line);
+  color:var(--ink);cursor:pointer;text-align:left}
+.sp-item:last-child{border-bottom:0}
+.sp-item:hover{background:rgba(127,127,127,.09)}
+.sp-item.on{background:rgba(127,127,127,.16);font-weight:600}
+.sp-n{flex:1}
+.sp-b{color:var(--muted);font-size:11.5px}
+.sp-g{color:var(--muted);font-variant-numeric:tabular-nums;min-width:62px;text-align:right}
+.sp-none{padding:10px 12px;color:var(--muted);font-size:12.5px}
 .fp{margin:0 0 4px}
 .fp-h{display:flex;justify-content:space-between;align-items:baseline;
   padding:0 2px 3px;font-size:11.5px}
