@@ -450,7 +450,7 @@ const SECTIONS = [
       { ten: '', ghi: 'số TikTok quy kết', subs: ['Key numbers'] },
       { ten: 'Over time', ghi: 'MoM', subs: ['Month by month'] },
       { ten: 'Who posts them', subs: ['By account type', 'Top creators'] },
-      { ten: 'Which ones work', subs: ['Top videos', 'Reach vs revenue', 'By product'] },
+      { ten: 'Which ones work', subs: ['Top videos', 'By product'] },
       { ten: 'Do the orders stick', ghi: 'chỉ video affiliate', subs: ['Attributed vs kept'] },
     ],
   },
@@ -728,6 +728,67 @@ const GLOSSARY: Nhom[] = [
         ten: 'Data freshness',
         dinh_nghia: 'Orders sync once a day at 03:00 Vietnam time and keep running until caught up.',
         ghi_chu: 'The sync re-reads the last two days on every run, so status changes on recent orders are picked up rather than frozen.',
+      },
+      {
+        ten: 'Why Videos and Product traffic start in May 2026',
+        dinh_nghia: 'Both analytics endpoints refuse any window older than roughly 180 days.',
+        ghi_chu: 'The oldest month drops off as time passes and cannot be fetched again, so those two syncs have to be run regularly. Everything else on this dashboard can be rebuilt from scratch at any time; these two cannot.',
+        canh_bao: true,
+      },
+    ],
+  },
+  {
+    nhom: 'Content and traffic',
+    mo_ta: 'Terms used only on the Videos and Product traffic sheets. Everything in this group is TikTok\u2019s own attribution — counted before cancellation, and one order can be credited to more than one piece of content. None of it is comparable with Seller GMV or Seller NMV, and subtracting one from the other produces a number that means nothing.',
+    terms: [
+      {
+        ten: 'Attributed GMV',
+        dinh_nghia: 'Order value TikTok credits to a video, a live room, a product card or the Shop tab.',
+        ghi_chu: 'Same family as gross revenue on the Advertising sheet. Includes orders that later cancelled.',
+        canh_bao: true,
+      },
+      {
+        ten: 'GMV per 1k views',
+        dinh_nghia: 'Attributed GMV divided by views, times a thousand. Written GPM.',
+        ct: 'attributed GMV ÷ views × 1,000',
+        ghi_chu: 'Recomputed from totals everywhere it appears. Averaging per-video GPM gives a different and wrong answer, because a rate cannot be averaged across different denominators.',
+      },
+      {
+        ten: 'Product CTR',
+        dinh_nghia: 'Share of people who tapped the product after seeing it.',
+        ct: 'product clicks ÷ product impressions',
+      },
+      {
+        ten: 'Click to order',
+        dinh_nghia: 'Share of product clicks that became an order.',
+        ct: 'orders ÷ product clicks',
+        ghi_chu: 'The sharpest divide on the dashboard: affiliate content converts clicks roughly seventy times worse than a live room, measured independently on two different endpoints.',
+      },
+      {
+        ten: 'Added to cart',
+        dinh_nghia: 'Times the product was put in a basket, and the share of clicks that did so.',
+        ghi_chu: 'Only the Product traffic sheet has this. It separates a listing that is never opened from one that is opened and then abandoned.',
+      },
+      {
+        ten: 'The eight channel blocks',
+        dinh_nghia: 'TikTok splits each product into total, seller live, seller video, seller product card, affiliate total, affiliate live, affiliate video and Shop tab.',
+        ghi_chu: 'They do not partition. Shop tab cuts across every other channel, and affiliate live and affiliate video sit inside affiliate total. Adding all eight overshoots the real total by a wide margin. Only seller live + seller video + product card + affiliate total add up, and that is the set every share on the dashboard uses.',
+        canh_bao: true,
+      },
+      {
+        ten: 'Refunded (TikTok)',
+        dinh_nghia: 'Money TikTok reports as refunded on a product, covering cancellations and returns together.',
+        ghi_chu: 'Computed entirely on TikTok\u2019s side with no input from our order table, which is what makes it useful: it lands in the same region as the cancellation rate measured from our own books. It will not match line for line, because returns are in it and the two use different cut-offs.',
+      },
+      {
+        ten: 'Account type',
+        dinh_nghia: 'Official accounts are the shop\u2019s own three channels; marketing accounts are the paid-promotion handles; affiliate accounts are outside creators.',
+      },
+      {
+        ten: 'Why own-channel videos have no cancellation rate',
+        dinh_nghia: 'TikTok ties an order to a piece of content only when a commission has to be paid.',
+        ghi_chu: 'The order payload carries no content, creator or live-room field at all — 45 fields, none of them about where the order came from. So cancellation by content exists for affiliate videos and for nothing else. It is a boundary of the API, not a gap in the sync.',
+        canh_bao: true,
       },
     ],
   },
@@ -8516,6 +8577,13 @@ export default function Dashboard({
                 window older than about 180 days, so the oldest month here quietly drops off as
                 time passes. Nothing is missing — it cannot be fetched at all.
               </p>
+              <div className="note">
+                <b>The Robot / Handheld filter cuts harder here than elsewhere.</b> A video is
+                assigned a category through the product pinned to it, and a fifth of videos have
+                no product we recognise. Picking a category drops those rows rather than parking
+                them somewhere, so totals under a category filter will not add up to the all-
+                categories total. Leave it on All for anything you plan to quote.
+              </div>
               <div className="note warn">
                 <b>Every money and order figure on this sheet is TikTok&rsquo;s attribution, not the
                 shop&rsquo;s books.</b> It is the same kind of number as gross revenue on the
@@ -8794,7 +8862,8 @@ export default function Dashboard({
               <p className="sub">
                 TikTok breaks every product into eight channel blocks, each with its own funnel.
                 Monthly only — the endpoint aggregates over the window you ask for and history
-                stops at about 180 days.
+                stops at about 180 days. Products with no catalogue match fall into their own row
+                rather than disappearing, so the category filter here is safe to use.
               </p>
               <div className="tiles" style={{ marginTop: 18 }}>
                 <Tile label="Product impressions" value={mn1(trTotal.imp)} unit=" mn" />
