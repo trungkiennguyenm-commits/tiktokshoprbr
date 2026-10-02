@@ -8349,6 +8349,9 @@ export default function Dashboard({
                 Straight from TikTok Shop analytics, one row per video per month. The API
                 aggregates over the window you ask for and never returns a daily series, so this
                 sheet follows the month chips above; the 7- and 30-day buttons do not apply.
+                History starts in May 2026 and goes no further back: the endpoint refuses any
+                window older than about 180 days, so the oldest month here quietly drops off as
+                time passes. Nothing is missing — it cannot be fetched at all.
               </p>
               <div className="note warn">
                 <b>Every money and order figure on this sheet is TikTok&rsquo;s attribution, not the

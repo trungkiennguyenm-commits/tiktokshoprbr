@@ -22,9 +22,19 @@ import { ttsRequest } from '@/lib/tts/sign'
  * 4. Số tiền và số đơn ở đây là QUY KẾT CỦA TIKTOK, không trừ huỷ. Muốn
  *    biết đơn có sống không thì phải nối sang affiliate_order_skus theo
  *    video id — và chỉ video affiliate mới nối được.
+ *
+ * 5. CỬA SỔ LOOKBACK ~180 NGÀY. Hỏi tháng cũ hơn thì trả 28001022, không
+ *    phải lỗi code và chạy lại bao nhiêu lần cũng vậy. Đã đo: mốc 01/04
+ *    (184 ngày) bị từ chối, mốc 01/05 (154 ngày) thì qua. Vì vậy lịch sử
+ *    video chỉ lùi được tới khoảng 6 tháng và sẽ TRƯỢT DẦN — tháng cũ
+ *    nhất rụng đi khi thời gian trôi. Hàm này bỏ qua trước các tháng ngoài
+ *    cửa sổ thay vì gọi để nhận lỗi.
  */
 const PATH = '/analytics/202605/shop_videos/performance'
 const TRANG_TOI_DA = 40
+/** Cửa sổ lookback của endpoint, tính bằng ngày. Để 175 thay vì 180 cho
+ *  có biên — TikTok tính theo múi giờ shop, không theo UTC. */
+const LOOKBACK_NGAY = 175
 
 type Tien = { amount?: string; currency?: string }
 type Video = {
@@ -85,12 +95,22 @@ export async function syncShopVideos(soThang = 1, lui = 0) {
   const db = supabaseAdmin()
 
   const errors: string[] = []
+  const boQua: string[] = []
   let doc = 0
   let ghi = 0
   let trang = 0
 
+  const somNhat = Date.now() - LOOKBACK_NGAY * 86_400_000
+
   for (const { dau, cuoi } of cacThang(soThang, lui)) {
     const thang = ngayISO(dau)
+
+    // Ngoài cửa sổ lookback: bỏ qua im lặng. Gọi cũng chỉ nhận 28001022.
+    if (dau.getTime() < somNhat) {
+      boQua.push(thang)
+      continue
+    }
+
     // Tháng đang chạy dở thì chốt ở hôm nay, đừng hỏi ngày tương lai.
     const hetNgay = cuoi.getTime() > Date.now() ? ngayISO(new Date()) : ngayISO(cuoi)
     let pageToken: string | undefined
@@ -187,5 +207,10 @@ export async function syncShopVideos(soThang = 1, lui = 0) {
     }
   }
 
-  return { months: soThang, lui, videos: doc, rows: ghi, pages: trang, errors }
+  return {
+    months: soThang, lui, videos: doc, rows: ghi, pages: trang,
+    // Tháng nằm ngoài cửa sổ ~180 ngày của API. Không phải lỗi.
+    bo_qua_ngoai_cua_so: boQua,
+    errors,
+  }
 }
