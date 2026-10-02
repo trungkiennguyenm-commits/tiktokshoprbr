@@ -1823,6 +1823,13 @@ export default function Dashboard({
   const [vidAcc, setVidAcc] = useState('')
   /** Sheet Product traffic: chỉ số đang xem ở lưới sản phẩm × tháng. */
   const [trMetric, setTrMetric] = useState<'imp' | 'ctr' | 'atcRate' | 'cvr' | 'gmv' | 'don'>('cvr')
+  /** Bỏ phụ kiện và quà tặng khỏi sheet Product traffic.
+   *  Chúng là 25 trong 56 dòng sản phẩm nhưng gần như không có doanh thu,
+   *  và chúng kéo mọi tỷ lệ trung bình lệch đi vì giá rẻ hơn máy hàng
+   *  chục lần. Mặc định ẩn, bật lại được. */
+  const [trChiMay, setTrChiMay] = useState(true)
+  /** Sản phẩm đang soi ở 10.5. Rỗng = xem lưới tất cả. */
+  const [trSp, setTrSp] = useState('')
   const toggleAff = (k: string) =>
     setAffMo((p) => {
       const n = new Set(p)
@@ -4154,11 +4161,14 @@ export default function Dashboard({
     { key: 'AFF_VIDEO', ten: '— affiliate video' },
   ] as const
 
+  const TR_PHU_KIEN = ['accessory', 'gift']
+
   const trRows = useMemo(
     () => productKenh
       .filter((r) => goodMonths.includes(r.thang))
-      .filter((r) => cat === 'all' || r.category === cat),
-    [productKenh, goodMonths, cat],
+      .filter((r) => cat === 'all' || r.category === cat)
+      .filter((r) => !trChiMay || !TR_PHU_KIEN.includes(r.category)),
+    [productKenh, goodMonths, cat, trChiMay],
   )
 
   const trCong = (rows: ProductKenh[]) => {
@@ -8934,6 +8944,17 @@ export default function Dashboard({
                 stops at about 180 days. Products with no catalogue match fall into their own row
                 rather than disappearing, so the category filter here is safe to use.
               </p>
+              <div className="filters" style={{ marginTop: 16 }}>
+                <button className={`chip ${trChiMay ? 'on' : ''}`}
+                  onClick={() => setTrChiMay(true)}>Machines only</button>
+                <button className={`chip ${trChiMay ? '' : 'on'}`}
+                  onClick={() => setTrChiMay(false)}>Include accessories &amp; gifts</button>
+                <span className="muted" style={{ fontSize: 12.5 }}>
+                  {trChiMay
+                    ? 'Accessories and gifts are hidden — they are 25 of the 56 product rows and almost none of the revenue.'
+                    : 'Accessories and gifts included — they sell for a fraction of a machine, so blended rates will shift.'}
+                </span>
+              </div>
               <div className="tiles" style={{ marginTop: 18 }}>
                 <Tile label="Product impressions" value={mn1(trTotal.imp)} unit=" mn" />
                 <Tile label="Product clicks" value={n0(trTotal.click)}
@@ -9090,11 +9111,74 @@ export default function Dashboard({
                 ten million cannot have their CTRs averaged.
               </p>
               <div className="filters">
-                {TR_CHI_SO.map((m) => (
-                  <button key={m.key} className={`chip ${trMetric === m.key ? 'on' : ''}`}
-                    onClick={() => setTrMetric(m.key)}>{m.ten}</button>
-                ))}
+                <select className="drop wide" value={trSp} onChange={(e) => setTrSp(e.target.value)}>
+                  <option value="">All products ({trLuoi.length}) — grid of one metric</option>
+                  {trLuoi.map((x) => (
+                    <option key={x.ten} value={x.ten}>{x.ten} — full funnel</option>
+                  ))}
+                </select>
+                {trSp && <button className="lnk" onClick={() => setTrSp('')}>Back to the grid</button>}
               </div>
+              {!trSp && (
+                <div className="filters">
+                  {TR_CHI_SO.map((m) => (
+                    <button key={m.key} className={`chip ${trMetric === m.key ? 'on' : ''}`}
+                      onClick={() => setTrMetric(m.key)}>{m.ten}</button>
+                  ))}
+                </div>
+              )}
+              {trSp ? (() => {
+                const r = trLuoi.find((x) => x.ten === trSp)
+                if (!r) return <div className="note">No data for this product in the period shown.</div>
+                /* Phễu đầy đủ của MỘT sản phẩm: mỗi dòng một bước, mỗi cột
+                   một tháng. Xen kẽ số tuyệt đối và tỷ lệ theo đúng thứ tự
+                   người ta đi qua phễu, để đọc dọc là thấy chỗ rơi. */
+                const buoc = [
+                  { ten: 'Impressions', lay: (c: typeof r.tong) => c.imp, dinh: (v: number) => `${mn1(v)}m`, ty: false },
+                  { ten: 'Clicks', lay: (c: typeof r.tong) => c.click, dinh: (v: number) => n0(v), ty: false },
+                  { ten: '  CTR', lay: (c: typeof r.tong) => c.ctr, dinh: (v: number) => pct(v), ty: true },
+                  { ten: 'Added to cart', lay: (c: typeof r.tong) => c.atc, dinh: (v: number) => n0(v), ty: false },
+                  { ten: '  Click → cart', lay: (c: typeof r.tong) => c.atcRate, dinh: (v: number) => pct(v), ty: true },
+                  { ten: 'Orders', lay: (c: typeof r.tong) => c.don, dinh: (v: number) => n0(v), ty: false },
+                  { ten: '  Click → order', lay: (c: typeof r.tong) => c.cvr, dinh: (v: number) => pct(v), ty: true },
+                  { ten: 'Items sold', lay: (c: typeof r.tong) => c.pcs, dinh: (v: number) => n0(v), ty: false },
+                  { ten: 'GMV', lay: (c: typeof r.tong) => c.gmv, dinh: (v: number) => `${bn(v)}bn`, ty: false },
+                  { ten: '  AOV', lay: (c: typeof r.tong) => c.aov, dinh: (v: number) => `${mn1(v)}m`, ty: true },
+                  { ten: 'Refunded', lay: (c: typeof r.tong) => c.hoan, dinh: (v: number) => `${bn(v)}bn`, ty: false },
+                  { ten: '  GMV that stays', lay: (c: typeof r.tong) => c.giuLai, dinh: (v: number) => pct(v), ty: true },
+                ]
+                return (
+                  <div className="tablewrap">
+                    <table>
+                      <thead><tr>
+                        <th>{r.ten}</th>
+                        {trThang.map((t) => <th className="n" key={t.ky}>{mmyy(t.ky)}</th>)}
+                        <th className="n">Total</th><th className="n">Latest MoM</th>
+                      </tr></thead>
+                      <tbody>
+                        {buoc.map((b) => {
+                          const cuoi = r.o[r.o.length - 1]
+                          const truoc = r.o[r.o.length - 2]
+                          return (
+                            <tr key={b.ten} className={b.ty ? 'muted' : undefined}>
+                              <td style={{ paddingLeft: b.ty ? 26 : 8 }}>{b.ten.trim()}</td>
+                              {r.o.map((c, i) => (
+                                <td className="n" key={i}>{c ? b.dinh(b.lay(c)) : '—'}</td>
+                              ))}
+                              <td className="n" style={{ fontWeight: 600 }}>
+                                {b.ty ? b.dinh(b.lay(r.tong)) : b.dinh(b.lay(r.tong))}
+                              </td>
+                              <td className="n">
+                                <Dd a={cuoi ? b.lay(cuoi) : undefined} b={truoc ? b.lay(truoc) : undefined} />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              })() : (
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -9123,9 +9207,12 @@ export default function Dashboard({
                   </tbody>
                 </table>
               </div>
+              )}
               <p className="foot">
                 Months with no row for a product show a dash: the product sold nothing and drew no
-                impressions that month, which is not the same as a zero rate.
+                impressions that month, which is not the same as a zero rate. Indented rows are
+                rates, each computed inside its own cell; the Total column recomputes them across
+                the whole period rather than averaging the months.
               </p>
             </section>
 
