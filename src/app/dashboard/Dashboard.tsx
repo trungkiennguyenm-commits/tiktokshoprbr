@@ -186,6 +186,10 @@ export type ProductKenh = {
   gross_merchandise_value: number | null; shipping_fees: number | null
   new_live_count: number | null; new_video_count: number | null
   avg_daily_creator_posted_content: number | null
+  /** Chưa có trong product_catalog: tên đang lấy tạm từ bảng video hoặc
+   *  từ đuôi product_id, và chưa có ngành hàng nên bộ lọc Robot/Handheld
+   *  sẽ bỏ sót nó. */
+  chua_gan: boolean
 }
 export type CampMatrix = {
   ngay: string; category: string
@@ -4574,6 +4578,17 @@ export default function Dashboard({
     }
     return m
   }, [trSanPham])
+
+  /** Sản phẩm chưa có trong product_catalog mà đã phát sinh doanh thu.
+   *  Phải nhắc ngay trên mặt sheet: chưa gắn thì chưa có ngành hàng, nên
+   *  bộ lọc Robot/Handheld bỏ sót, và dải giá cũng không xếp đúng. */
+  const trChuaGan = useMemo(
+    () => trSanPham
+      .filter((x) => trRows.some((r) => r.san_pham === x.ten && r.chua_gan))
+      .filter((x) => x.gmv > 0)
+      .sort((a, b) => b.gmv - a.gmv),
+    [trSanPham, trRows],
+  )
 
   const trHoan = useMemo(
     () => trSanPham.filter((x) => x.gmv > 0 && x.hoan > 0)
@@ -9213,6 +9228,19 @@ export default function Dashboard({
                     : 'Accessories and gifts included — they sell for a fraction of a machine, so blended rates will shift.'}
                 </span>
               </div>
+              {trChuaGan.length > 0 && (
+                <div className="note warn">
+                  <b>{trChuaGan.length} product{trChuaGan.length > 1 ? 's are' : ' is'} missing from
+                  the catalogue</b>, so {trChuaGan.length > 1 ? 'they are' : 'it is'} named from the
+                  video feed or by the tail of the product id, and carr{trChuaGan.length > 1 ? 'y' : 'ies'}
+                  {' '}no category — meaning the Robot / Handheld filter skips{' '}
+                  {trChuaGan.length > 1 ? 'them' : 'it'} and the price bands misplace{' '}
+                  {trChuaGan.length > 1 ? 'them' : 'it'}:{' '}
+                  {trChuaGan.slice(0, 6).map((x) => `${x.ten} (${mn(x.gmv)}m)`).join(' · ')}
+                  {trChuaGan.length > 6 && ` and ${trChuaGan.length - 6} more`}. Adding them to
+                  product_catalog fixes every sheet at once.
+                </div>
+              )}
               <div className="tiles" style={{ marginTop: 18 }}>
                 <Tile label="Product impressions" value={mn1(trTotal.imp)} unit=" mn" />
                 <Tile label="Product clicks" value={n0(trTotal.click)}
