@@ -353,7 +353,7 @@ type RangeKey = (typeof RANGES)[number]['key']
 
 const SECTIONS = [
   {
-    id: 'Summary', ten: 'Summary',
+    id: 'Summary', ten: 'Summary', phan: 'I',
     groups: [
       { ten: '', subs: ['At a glance'] },
       { ten: 'Month over month', ghi: 'this sheet is MoM — day by day lives on Sales',
@@ -363,7 +363,7 @@ const SECTIONS = [
     ],
   },
   {
-    id: 'Sales', ten: 'Sales',
+    id: 'Sales', ten: 'Sales', phan: 'I',
     groups: [
       { ten: 'Totals', ghi: 'whole filtered range', subs: ['Range totals', 'GMV, NMV, cancellations'] },
       { ten: 'Daily', ghi: 'DoD, regardless of the toggle', subs: ['NMV, ads and ATR', 'LGM vs PGM'] },
@@ -373,7 +373,7 @@ const SECTIONS = [
     ],
   },
   {
-    id: 'Products', ten: 'Products',
+    id: 'Products', ten: 'Product performance', phan: 'II',
     groups: [
       { ten: 'Category', ghi: 'robot vs handheld',
         subs: ['Cards', 'Seller NMV', 'Cancellation rate', 'Detail table'] },
@@ -383,42 +383,18 @@ const SECTIONS = [
     ],
   },
   {
-    id: 'Advertising', ten: 'Advertising',
+    id: 'Traffic', ten: 'Product funnel', phan: 'II',
     groups: [
-      { ten: 'Daily', ghi: 'DoD', subs: ['Spend and ATR', 'Spend vs Seller NMV', 'Day by day'] },
-      { ten: 'Monthly', ghi: 'MoM', subs: ['NMV, ads and ATR', 'LGM vs PGM', 'Spend by month'] },
-      { ten: 'Campaigns', ghi: 'TikTok ads reporting', subs: ['Ranking', 'By objective'] },
+      { ten: '', ghi: 'số TikTok quy kết', subs: ['The funnel'] },
+      { ten: 'By channel', subs: ['Channel funnel', 'Month by month'] },
+      { ten: 'By product',
+        subs: ['Product funnel', 'Trend by product', 'Compare three products',
+          'By price band', 'Where each one leaks'] },
+      { ten: 'Refunds', ghi: 'theo TikTok', subs: ['What never arrives'] },
     ],
   },
   {
-    id: 'Livestream', ten: 'Livestream',
-    groups: [
-      { ten: '', subs: ['Key numbers', 'Daily overview'] },
-      { ten: 'Our revenue', ghi: 'from orders, net of cancellations',
-        subs: ['Revenue by room', 'Products by room', 'Hours and schedule'] },
-      { ten: 'Top of funnel', ghi: 'shop level — feed impressions, TikTok attribution',
-        subs: ['Feed into the room'] },
-      { ten: 'Room performance', ghi: 'from TikTok live reporting, gross GMV',
-        subs: ['Rooms side by side', 'Traffic and engagement', 'Funnel'] },
-      { ten: 'Day by day', ghi: 'TikTok live',
-        subs: ['Room by period', 'Audience', 'Conversion', 'Engagement vs CTR'] },
-      { ten: 'Detail', subs: ['Top sessions', 'Creator rooms'] },
-    ],
-  },
-  {
-    id: 'Discounts', ten: 'Discounts',
-    groups: [
-      { ten: '', subs: ['Key numbers'] },
-      { ten: 'Daily', ghi: 'DoD',
-        subs: ['Booked vs kept', 'Customer vs platform', 'Daily detail',
-        'Valid subsidy by model', 'Funding split by model', 'Discount spend', 'Discount rates',
-        'Detail by model'] },
-      { ten: 'Monthly', ghi: 'MoM', subs: ['Overview', 'Funding split', 'NMV composition', 'Booked vs kept'] },
-      { ten: 'Price band', subs: ['Valid subsidy', 'Voucher placement'] },
-    ],
-  },
-  {
-    id: 'Cancellations', ten: 'Cancellations',
+    id: 'Cancellations', ten: 'Cancellations', phan: 'II',
     groups: [
       { ten: '', subs: ['Key numbers', 'Journey of an order', 'Rate per period'] },
       { ten: 'When they die', ghi: 'and what each one costs',
@@ -433,19 +409,22 @@ const SECTIONS = [
     ],
   },
   {
-    id: 'P&L', ten: 'P&L',
+    id: 'Livestream', ten: 'Livestream', phan: 'III',
     groups: [
-      { ten: 'Per unit', ghi: 'platform fees appear only on this sheet',
-        subs: ['List price to cash', 'What erodes NMV'] },
-      { ten: 'Month by month', subs: ['P&L by month'] },
+      { ten: '', subs: ['Key numbers', 'Daily overview'] },
+      { ten: 'Our revenue', ghi: 'from orders, net of cancellations',
+        subs: ['Revenue by room', 'Products by room', 'Hours and schedule'] },
+      { ten: 'Top of funnel', ghi: 'shop level — feed impressions, TikTok attribution',
+        subs: ['Feed into the room'] },
+      { ten: 'Room performance', ghi: 'from TikTok live reporting, gross GMV',
+        subs: ['Rooms side by side', 'Traffic and engagement', 'Funnel'] },
+      { ten: 'Day by day', ghi: 'TikTok live',
+        subs: ['Room by period', 'Audience', 'Conversion', 'Engagement vs CTR'] },
+      { ten: 'Detail', subs: ['Top sessions', 'Creator rooms'] },
     ],
   },
-  /* Đặt SAU P&L chứ không cạnh Livestream, dù về nội dung nó thuộc về đó.
-     Chèn vào giữa sẽ đánh số lại toàn bộ sheet phía sau — 7.15 thành 8.15 —
-     mà số hiệu đã đi vào trao đổi hằng ngày. Giữ số cũ quan trọng hơn thứ
-     tự đẹp. */
   {
-    id: 'Videos', ten: 'Videos',
+    id: 'Videos', ten: 'Video', phan: 'III',
     groups: [
       { ten: '', ghi: 'số TikTok quy kết', subs: ['Key numbers'] },
       { ten: 'Over time', ghi: 'MoM', subs: ['Month by month'] },
@@ -455,22 +434,54 @@ const SECTIONS = [
     ],
   },
   {
-    id: 'Traffic', ten: 'Product traffic',
+    id: 'Advertising', ten: 'Advertising', phan: 'III',
     groups: [
-      { ten: '', ghi: 'số TikTok quy kết', subs: ['The funnel'] },
-      { ten: 'By channel', subs: ['Channel funnel', 'Month by month'] },
-      { ten: 'By product',
-        subs: ['Product funnel', 'Trend by product', 'Compare three products',
-          'By price band', 'Where each one leaks'] },
-      { ten: 'Refunds', ghi: 'theo TikTok', subs: ['What never arrives'] },
+      { ten: 'Daily', ghi: 'DoD', subs: ['Spend and ATR', 'Spend vs Seller NMV', 'Day by day'] },
+      { ten: 'Monthly', ghi: 'MoM', subs: ['NMV, ads and ATR', 'LGM vs PGM', 'Spend by month'] },
+      { ten: 'Campaigns', ghi: 'TikTok ads reporting', subs: ['Ranking', 'By objective'] },
     ],
   },
-  { id: 'Glossary', ten: 'Glossary', groups: [] },
+  {
+    id: 'Discounts', ten: 'Discounts', phan: 'III',
+    groups: [
+      { ten: '', subs: ['Key numbers'] },
+      { ten: 'Daily', ghi: 'DoD',
+        subs: ['Booked vs kept', 'Customer vs platform', 'Daily detail',
+        'Valid subsidy by model', 'Funding split by model', 'Discount spend', 'Discount rates',
+        'Detail by model'] },
+      { ten: 'Monthly', ghi: 'MoM', subs: ['Overview', 'Funding split', 'NMV composition', 'Booked vs kept'] },
+      { ten: 'Price band', subs: ['Valid subsidy', 'Voucher placement'] },
+    ],
+  },
+  {
+    id: 'P&L', ten: 'P&L', phan: 'IV',
+    groups: [
+      { ten: 'Per unit', ghi: 'platform fees appear only on this sheet',
+        subs: ['List price to cash', 'What erodes NMV'] },
+      { ten: 'Month by month', subs: ['P&L by month'] },
+    ],
+  },
+  /* Thanh trái gom sheet theo 4 phần La Mã. Thứ tự này đi theo đường ra
+     quyết định: tình hình ra sao (I), bán cái gì (II), kéo bằng cách nào
+     (III), còn lại bao nhiêu (IV). Số hiệu sheet bám theo vị trí trong
+     mảng này, nên chèn hay đổi chỗ là đánh số lại toàn bộ phía sau —
+     bảng đối chiếu số cũ nằm trong Glossary. */
+  { id: 'Glossary', ten: 'Glossary', phan: 'V', groups: [] },
 ] as const
 
 type Sec = (typeof SECTIONS)[number]['id']
 
 /** Số hiệu của phần, ví dụ Products là 3. Glossary không đánh số. */
+/** Tên bốn phần của mục lục. Thứ tự đi theo đường ra quyết định:
+ *  tình hình ra sao → bán cái gì → kéo bằng cách nào → còn lại bao nhiêu. */
+const PHAN_TEN: Record<string, string> = {
+  I: 'Performance',
+  II: 'Product',
+  III: 'Growth levers',
+  IV: 'Money',
+  V: 'Reference',
+}
+
 const secNo = (id: Sec) => {
   const i = SECTIONS.findIndex((s) => s.id === id)
   return id === 'Glossary' ? null : i + 1
@@ -732,7 +743,13 @@ const GLOSSARY: Nhom[] = [
         ghi_chu: 'The sync re-reads the last two days on every run, so status changes on recent orders are picked up rather than frozen.',
       },
       {
-        ten: 'Why Videos and Product traffic start in May 2026',
+        ten: 'Sheet numbers changed on 3 Oct 2026',
+        dinh_nghia: 'The sheets were regrouped into four parts, and the numbers follow the new order.',
+        ghi_chu: 'Old → new: Advertising 4 → 8 · Livestream 5 → 6 · Discounts 6 → 9 · Cancellations 7 → 5 · P&L 8 → 10 · Video 9 → 7 · Product funnel 10 → 4. Summary, Sales and Product performance kept 1, 2 and 3. So an old reference to 7.15 is now 5.15, and 4.4 is now 8.4 — the part after the dot never moved.',
+        canh_bao: true,
+      },
+      {
+        ten: 'Why Video and Product funnel start in May 2026',
         dinh_nghia: 'Both analytics endpoints refuse any window older than roughly 180 days.',
         ghi_chu: 'The oldest month drops off as time passes and cannot be fetched again, so those two syncs have to be run regularly. Everything else on this dashboard can be rebuilt from scratch at any time; these two cannot.',
         canh_bao: true,
@@ -4651,11 +4668,21 @@ export default function Dashboard({
         {/* Thanh điều hướng trái. Dưới 1100px nó tự nằm ngang thành dải tab
             như cũ, nên mở trên điện thoại không vỡ. */}
         <nav className="side">
-          {SECTIONS.map((sc) => {
+          {SECTIONS.map((sc, si) => {
             const no = secNo(sc.id)
             const on = sec === sc.id
+            // Tiêu đề phần chỉ in ở sheet ĐẦU TIÊN của phần đó, nên thứ tự
+            // trong SECTIONS phải gom các sheet cùng phần liền nhau. Tách
+            // rời ra là tiêu đề in lặp.
+            const dauPhan = si === 0 || SECTIONS[si - 1].phan !== sc.phan
             return (
-              <div key={sc.id} className={`side-g ${on ? 'on' : ''}`}>
+              <Fragment key={sc.id}>
+              {dauPhan && (
+                <div className="side-p">
+                  <span className="side-pn">{sc.phan}</span>{PHAN_TEN[sc.phan]}
+                </div>
+              )}
+              <div className={`side-g ${on ? 'on' : ''}`}>
                 <button className="side-s" onClick={() => setSec(sc.id)}>
                   {no && <span className="side-n">{no}</span>}
                   {sc.ten}
@@ -4681,6 +4708,7 @@ export default function Dashboard({
                   </div>
                 )}
               </div>
+              </Fragment>
             )
           })}
         </nav>
@@ -5678,8 +5706,8 @@ export default function Dashboard({
         {/* ==================== ADVERTISING ==================== */}
         {sec === 'Advertising' && (
           <>
-            <section id="s4-1">
-              <h2><span className="hno">4.1</span>{dayNote} — ad spend</h2>
+            <section id="s8-1">
+              <h2><span className="hno">8.1</span>{dayNote} — ad spend</h2>
               <p className="sub">
                 This tab is in USD, the currency the ad budget is set in. VND accounts and VND
                 revenue are converted at one fixed rate held in the database, so ATR is unaffected
@@ -5710,8 +5738,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s4-2">
-              <h2><span className="hno">4.2</span>Spend per day, against Seller NMV · DoD</h2>
+            <section id="s8-2">
+              <h2><span className="hno">8.2</span>Spend per day, against Seller NMV · DoD</h2>
               <p className="sub">
                 Columns split LIVE GMV Max from Product GMV Max. The red line is ATR &mdash; total
                 ad spend (including C-Ads) divided by that day&rsquo;s Seller NMV, on the right axis.
@@ -5743,8 +5771,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s4-3">
-              <h2><span className="hno">4.3</span>Day by day</h2>
+            <section id="s8-3">
+              <h2><span className="hno">8.3</span>Day by day</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -5780,12 +5808,12 @@ export default function Dashboard({
               </p>
             </section>
 
-            <div id="s4-4">{chartRevAtr('4.4')}</div>
+            <div id="s8-4">{chartRevAtr('8.4')}</div>
 
-            <div id="s4-5">{chartAdsMix('4.5')}</div>
+            <div id="s8-5">{chartAdsMix('8.5')}</div>
 
-            <section id="s4-6">
-              <h2><span className="hno">4.6</span>Ad spend by month — {monthNote}</h2>
+            <section id="s8-6">
+              <h2><span className="hno">8.6</span>Ad spend by month — {monthNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -5819,8 +5847,8 @@ export default function Dashboard({
               <p className="foot">All money in USD.</p>
             </section>
 
-            <section id="s4-7">
-              <h2><span className="hno">4.7</span>Campaigns — {monthNote}</h2>
+            <section id="s8-7">
+              <h2><span className="hno">8.7</span>Campaigns — {monthNote}</h2>
               <p className="sub">
                 Every campaign that spent in the selected months, biggest first. KOC handle and model
                 are read off the campaign name, so they follow the team&rsquo;s naming convention — a
@@ -5856,8 +5884,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s4-8">
-              <h2><span className="hno">4.8</span>Spend by campaign objective — {periodNote} · {dod}</h2>
+            <section id="s8-8">
+              <h2><span className="hno">8.8</span>Spend by campaign objective — {periodNote} · {dod}</h2>
               <p className="sub">
                 Everything that is not GMV Max used to land in one unlabelled bucket, so the money
                 going to branding was in the data but invisible. This splits it by what each
@@ -5951,8 +5979,8 @@ export default function Dashboard({
         {/* ===================== LIVESTREAM ===================== */}
         {sec === 'Livestream' && (
           <>
-            <section id="s5-1">
-              <h2><span className="hno">5.1</span>Livestream — {monthNote}</h2>
+            <section id="s6-1">
+              <h2><span className="hno">6.1</span>Livestream — {monthNote}</h2>
               <p className="sub">
                 Session data straight from TikTok Shop, not from our order table. It starts in
                 Apr 2026: the API refuses any window older than about 180 days. The sheet follows
@@ -5992,8 +6020,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-2">
-              <h2><span className="hno">5.2</span>Daily overview · DoD</h2>
+            <section id="s6-2">
+              <h2><span className="hno">6.2</span>Daily overview · DoD</h2>
               <p className="sub">
                 Column height is that day&rsquo;s live GMV, split by room. The red line is GMV per
                 1.000 views on its own right-hand scale. The strip underneath is LIVE GMV Max spend
@@ -6119,8 +6147,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-3">
-              <h2><span className="hno">5.3</span>Revenue by room — {kenhNgay ? 'DoD' : 'MoM'}</h2>
+            <section id="s6-3">
+              <h2><span className="hno">6.3</span>Revenue by room — {kenhNgay ? 'DoD' : 'MoM'}</h2>
               <p className="sub">
                 Everything above this point uses the GMV TikTok books against a live session, gross,
                 before cancellations. This block uses <b>our own order data</b> instead: revenue
@@ -6224,8 +6252,8 @@ export default function Dashboard({
               )}
             </section>
 
-            <section id="s5-4">
-              <h2><span className="hno">5.4</span>Products by room</h2>
+            <section id="s6-4">
+              <h2><span className="hno">6.4</span>Products by room</h2>
               <p className="sub">
                 Which room sells which machine. TikTok&rsquo;s own live reporting cannot answer this
                 &mdash; it gives one GMV figure per session with no product breakdown. This comes
@@ -6293,8 +6321,8 @@ export default function Dashboard({
               )}
             </section>
 
-            <section id="s5-5">
-              <h2><span className="hno">5.5</span>Hours and schedule</h2>
+            <section id="s6-5">
+              <h2><span className="hno">6.5</span>Hours and schedule</h2>
               <p className="sub">
                 Days are grouped by how long the room streamed that day. The line shows what an
                 hour of streaming was worth inside each group, so it reads left to right as: does
@@ -6587,8 +6615,8 @@ export default function Dashboard({
               )}
             </section>
 
-            <section id="s5-6">
-              <h2><span className="hno">5.6</span>From the feed into the room — {periodNote}</h2>
+            <section id="s6-6">
+              <h2><span className="hno">6.6</span>From the feed into the room — {periodNote}</h2>
               <p className="sub">
                 The step the dashboard could not see until now: people scrolling past a live room,
                 and how many of them tapped in. <b>Shows</b> is how often a room was put in front of
@@ -6679,8 +6707,8 @@ export default function Dashboard({
               )}
             </section>
 
-            <section id="s5-7">
-              <h2><span className="hno">5.7</span>Rooms side by side</h2>
+            <section id="s6-7">
+              <h2><span className="hno">6.7</span>Rooms side by side</h2>
               <p className="sub">
                 The rooms differ enough in scale that totals alone mislead. GMV per 1k views is the
                 column to read across &mdash; it puts a big room with cheap traffic next to a small
@@ -6761,8 +6789,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-8">
-              <h2><span className="hno">5.8</span>Traffic and engagement by room</h2>
+            <section id="s6-8">
+              <h2><span className="hno">6.8</span>Traffic and engagement by room</h2>
               <p className="sub">
                 Everything here is per 1.000 views rather than a total, because the three rooms pull
                 very different volumes and raw counts only restate that. Views counts every entry
@@ -6936,8 +6964,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-9">
-              <h2><span className="hno">5.9</span>Funnel by room</h2>
+            <section id="s6-9">
+              <h2><span className="hno">6.9</span>Funnel by room</h2>
               <p className="sub">
                 From a view to a paid order. Each percentage is against the step immediately above
                 it, so a weak room shows exactly where it loses people rather than only that it
@@ -7028,8 +7056,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-10">
-              <h2><span className="hno">5.10</span>Room by period</h2>
+            <section id="s6-10">
+              <h2><span className="hno">6.10</span>Room by period</h2>
               <p className="sub">
                 The same numbers as a grid. Reading along a row shows how steady a room is; reading
                 down a column shows which room carried a given day. Shading is relative to the
@@ -7114,8 +7142,8 @@ export default function Dashboard({
               </div>
                         </section>
 
-            <section id="s5-11">
-              <h2><span className="hno">5.11</span>Audience per day</h2>
+            <section id="s6-11">
+              <h2><span className="hno">6.11</span>Audience per day</h2>
               <p className="sub">
                 Columns split each day&rsquo;s views into people seen for the first time that day
                 and the views they came back for. The red line is the engagement rate &mdash; likes,
@@ -7149,8 +7177,8 @@ export default function Dashboard({
               <p className="foot">Our own rooms only — creator rooms report no engagement data.</p>
             </section>
 
-            <section id="s5-12">
-              <h2><span className="hno">5.12</span>Traffic and conversion per day</h2>
+            <section id="s6-12">
+              <h2><span className="hno">6.12</span>Traffic and conversion per day</h2>
               <p className="sub">
                 Columns are live GMV split between our rooms and creator rooms. The red line is the
                 product click-through rate in our rooms &mdash; impressions that turned into a tap
@@ -7183,8 +7211,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s5-13">
-              <h2><span className="hno">5.13</span>Engagement vs CTR vs GMV</h2>
+            <section id="s6-13">
+              <h2><span className="hno">6.13</span>Engagement vs CTR vs GMV</h2>
               <p className="sub">
                 One bubble is one day of one room. Across: engagement rate. Up: product CTR. Size:
                 that day&rsquo;s GMV. If talking to the room is what drives people to tap the
@@ -7243,8 +7271,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s5-14">
-              <h2><span className="hno">5.14</span>Top sessions</h2>
+            <section id="s6-14">
+              <h2><span className="hno">6.14</span>Top sessions</h2>
               <p className="sub">
                 The {Math.min(40, liveTop.length)} biggest of {n0(liveTop.length)} sessions in the
                 selected months. Worth reading next to the title &mdash; the stream name is the only
@@ -7285,8 +7313,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s5-15">
-              <h2><span className="hno">5.15</span>Creator rooms</h2>
+            <section id="s6-15">
+              <h2><span className="hno">6.15</span>Creator rooms</h2>
               <p className="sub">
                 Rooms that sold our products but are not ours. They register themselves the first
                 time one appears, so the list grows on its own as the team works with new creators.
@@ -7341,8 +7369,8 @@ export default function Dashboard({
               {modelSel && <button className="lnk" onClick={() => setModelSel('')}>Clear model filter</button>}
             </div>
 
-            <section id="s6-1">
-              <h2><span className="hno">6.1</span>{dayNote} — key numbers</h2>
+            <section id="s9-1">
+              <h2><span className="hno">9.1</span>{dayNote} — key numbers</h2>
               <p className="sub">
                 Discount money for the filtered days. Booked is what was put behind the orders;
                 valid is what survived to an order that was not cancelled.
@@ -7367,8 +7395,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s6-2">
-              <h2><span className="hno">6.2</span>Subsidy booked and capture rate per day · DoD</h2>
+            <section id="s9-2">
+              <h2><span className="hno">9.2</span>Subsidy booked and capture rate per day · DoD</h2>
               <p className="sub">
                 Column height is the whole platform subsidy TikTok booked that day. The
                 solid part landed on orders that survived — real money. The pale part was booked
@@ -7403,8 +7431,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-3">
-              <h2><span className="hno">6.3</span>Who paid for the revenue, per day</h2>
+            <section id="s9-3">
+              <h2><span className="hno">9.3</span>Who paid for the revenue, per day</h2>
               <p className="sub">
                 Column height is Seller NMV, split into the cash the customer paid and the subsidy
                 TikTok reimbursed on those same live orders. The line is the subsidy share — how
@@ -7434,8 +7462,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-4">
-              <h2><span className="hno">6.4</span>Subsidy detail per day</h2>
+            <section id="s9-4">
+              <h2><span className="hno">9.4</span>Subsidy detail per day</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -7486,8 +7514,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s6-5">
-              <h2><span className="hno">6.5</span>Valid subsidy by model, per day</h2>
+            <section id="s9-5">
+              <h2><span className="hno">9.5</span>Valid subsidy by model, per day</h2>
               <p className="sub">
                 Only the subsidy on live orders, split by model. Use the model filter above to
                 isolate one and compare it against the rest.
@@ -7503,8 +7531,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-6">
-              <h2><span className="hno">6.6</span>Who funds the discount — {dayNote}</h2>
+            <section id="s9-6">
+              <h2><span className="hno">9.6</span>Who funds the discount — {dayNote}</h2>
               <p className="sub">
                 Percentage of list price. Blue is money the shop gives up, orange is funded by
                 TikTok. Only the blue part eats into your margin.
@@ -7525,8 +7553,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s6-7">
-              <h2><span className="hno">6.7</span>Discount spend per day</h2>
+            <section id="s9-7">
+              <h2><span className="hno">9.7</span>Discount spend per day</h2>
               <StackChart
                 data={dayShown.map((r) => ({ ky: r.ky, a: r.seller_disc, b: r.platform_disc }))}
                 fmt={bn} label={ddmm} names={['Seller funded', 'Platform funded']}
@@ -7538,8 +7566,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-8">
-              <h2><span className="hno">6.8</span>Discount rates per day</h2>
+            <section id="s9-8">
+              <h2><span className="hno">9.8</span>Discount rates per day</h2>
               <p className="sub">Both as a percentage of list price, so they are directly comparable.</p>
               <div className="tablewrap">
                 <table>
@@ -7568,8 +7596,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn.</p>
             </section>
 
-            <section id="s6-9">
-              <h2><span className="hno">6.9</span>Discount detail by model — {dayNote}</h2>
+            <section id="s9-9">
+              <h2><span className="hno">9.9</span>Discount detail by model — {dayNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -7608,8 +7636,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s6-10">
-              <h2><span className="hno">6.10</span>Monthly overview</h2>
+            <section id="s9-10">
+              <h2><span className="hno">9.10</span>Monthly overview</h2>
               <p className="sub">
                 One row per month, totals only. The month-by-month breakdown by model and by price
                 band lives in the <b>MoM Summary</b> tab — this tab stays day-level.
@@ -7654,8 +7682,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn. Follows the month chips, not the day range.</p>
             </section>
 
-            <section id="s6-11">
-              <h2><span className="hno">6.11</span>Who funds the discount, month by month</h2>
+            <section id="s9-11">
+              <h2><span className="hno">9.11</span>Who funds the discount, month by month</h2>
               <p className="sub">
                 Stacked spend: blue is money you gave up, orange is money TikTok gave up.
                 Only the blue part hits your margin.
@@ -7671,8 +7699,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-12">
-              <h2><span className="hno">6.12</span>What Seller NMV is actually made of</h2>
+            <section id="s9-12">
+              <h2><span className="hno">9.12</span>What Seller NMV is actually made of</h2>
               <p className="sub">
                 Column height is Seller NMV, split into the cash the customer actually paid and the
                 subsidy TikTok funded on the same live orders. The two add up to Seller NMV exactly
@@ -7700,8 +7728,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-13">
-              <h2><span className="hno">6.13</span>Subsidy booked vs subsidy kept, by month</h2>
+            <section id="s9-13">
+              <h2><span className="hno">9.13</span>Subsidy booked vs subsidy kept, by month</h2>
               <p className="sub">
                 The whole column is what TikTok put behind your orders. Solid is what survived to
                 a live order; pale is what cancelled away. The green line is the share of Seller GMV
@@ -7770,8 +7798,8 @@ export default function Dashboard({
               <p className="foot">Money in VND bn.</p>
             </section>
 
-            <section id="s6-14">
-              <h2><span className="hno">6.14</span>Valid subsidy as a share of Seller NMV, by price band</h2>
+            <section id="s9-14">
+              <h2><span className="hno">9.14</span>Valid subsidy as a share of Seller NMV, by price band</h2>
               <p className="sub">
                 Greener means TikTok is carrying more of that band&rsquo;s revenue. A band warming
                 up month after month is where the platform is moving its voucher money.
@@ -7811,8 +7839,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s6-15">
-              <h2><span className="hno">6.15</span>Where the platform is putting its voucher money</h2>
+            <section id="s9-15">
+              <h2><span className="hno">9.15</span>Where the platform is putting its voucher money</h2>
               <p className="sub">
                 Platform discount as a percentage of list price, by band and month. If TikTok
                 shifts funding from one band to another — say from 5–10M up to 10–15M — it shows
@@ -7858,8 +7886,8 @@ export default function Dashboard({
         {/* =================== CANCELLATIONS =================== */}
         {sec === 'Cancellations' && (
           <>
-            <section id="s7-1">
-              <h2><span className="hno">7.1</span>{periodNote} — key numbers</h2>
+            <section id="s5-1">
+              <h2><span className="hno">5.1</span>{periodNote} — key numbers</h2>
               <p className="sub">
                 What cancellations cost over the filtered range, in money as well as in units.
               </p>
@@ -7882,8 +7910,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-2">
-              <h2><span className="hno">7.2</span>The journey of an order — {motThang ? mmyy(motThang) : 'all months'}</h2>
+            <section id="s5-2">
+              <h2><span className="hno">5.2</span>The journey of an order — {motThang ? mmyy(motThang) : 'all months'}</h2>
               <p className="sub">
                 Three ways an order can end, on one real time axis. Bars are <b>medians</b>; the open
                 diamond is the <b>average</b>. Where the two are far apart, a long tail is pulling
@@ -7946,8 +7974,8 @@ export default function Dashboard({
               )}
             </section>
 
-            <section id="s7-3">
-              <h2><span className="hno">7.3</span>Cancellation rate per {periodWord} · {dod}</h2>
+            <section id="s5-3">
+              <h2><span className="hno">5.3</span>Cancellation rate per {periodWord} · {dod}</h2>
               <p className="sub">Internal target is 40% or below.</p>
               <DeltaChart
                 data={pt((r) => r.cancel_rate)} color="var(--bad)" fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
@@ -7958,8 +7986,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s7-4">
-              <h2><span className="hno">7.4</span>How long after ordering do orders die — {periodNote}</h2>
+            <section id="s5-4">
+              <h2><span className="hno">5.4</span>How long after ordering do orders die — {periodNote}</h2>
               <p className="sub">
                 Twelve buckets at day resolution, and one line drawn through them: whether the
                 courier had already collected the parcel. That line is what decides the cost, and
@@ -8025,8 +8053,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-5">
-              <h2><span className="hno">7.5</span>Before or after the courier collected — {periodNote} · {dod}</h2>
+            <section id="s5-5">
+              <h2><span className="hno">5.5</span>Before or after the courier collected — {periodNote} · {dod}</h2>
               <p className="sub">
                 The one split that decides what a cancellation actually costs. TikTok stamps a
                 <code> collection_time</code> on the order the moment the courier takes the parcel,
@@ -8099,8 +8127,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-6">
-              <h2><span className="hno">7.6</span>Why orders are cancelled — {periodNote} · {dod}</h2>
+            <section id="s5-6">
+              <h2><span className="hno">5.6</span>Why orders are cancelled — {periodNote} · {dod}</h2>
               <p className="sub">
                 TikTok returns a reason and an initiator on every cancelled order, so this is the
                 shop&rsquo;s own data, not an inference from timing. The wording arrives in
@@ -8164,8 +8192,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-7">
-              <h2><span className="hno">7.7</span>Cancellations across the month — {periodNote}</h2>
+            <section id="s5-7">
+              <h2><span className="hno">5.7</span>Cancellations across the month — {periodNote}</h2>
               <p className="sub">
                 Time runs left to right through the month, so the whole shape is visible rather than
                 only the days that have names. The names sit under the axis:
@@ -8293,8 +8321,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-8">
-              <h2><span className="hno">7.8</span>Reason mix by campaign day — {periodNote}</h2>
+            <section id="s5-8">
+              <h2><span className="hno">5.8</span>Reason mix by campaign day — {periodNote}</h2>
               <p className="sub">
                 The same day types as 7.6, but split by <i>why</i> rather than <i>when</i>. Each row
                 is 100% of the cancellations on that day type, so the columns say which reason a
@@ -8321,8 +8349,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-9">
-              <h2><span className="hno">7.9</span>Order day vs cancel day — {periodNote}</h2>
+            <section id="s5-9">
+              <h2><span className="hno">5.9</span>Order day vs cancel day — {periodNote}</h2>
               <p className="sub">
                 Where orders placed on each day type actually die. Each row is 100% of the
                 cancellations from orders <i>placed</i> on that day type, split by the day type they
@@ -8357,8 +8385,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-10">
-              <h2><span className="hno">7.10</span>Cancellation rate by model, month by month</h2>
+            <section id="s5-10">
+              <h2><span className="hno">5.10</span>Cancellation rate by model, month by month</h2>
               <p className="sub">Darker is worse. A row that heats up month after month is a product problem, not a seasonal one.</p>
               <Matrix
                 corner="Model"
@@ -8379,8 +8407,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s7-11">
-              <h2><span className="hno">7.11</span>Every model, worst first — {periodNote}</h2>
+            <section id="s5-11">
+              <h2><span className="hno">5.11</span>Every model, worst first — {periodNote}</h2>
               <p className="sub">
                 All {skuF.length} models that sold anything in the range, ranked by cancellation
                 rate. The ones under {HUY_MODEL_TOI_THIEU} gross units are marked <i>thin</i>, drawn
@@ -8411,8 +8439,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s7-12">
-              <h2><span className="hno">7.12</span>Before vs after pickup, by model — {periodNote}</h2>
+            <section id="s5-12">
+              <h2><span className="hno">5.12</span>Before vs after pickup, by model — {periodNote}</h2>
               <p className="sub">
                 One split, two owners. <b>Before pickup</b> means the order died while the parcel was
                 still in the warehouse — nothing moved, the loss is the sale. <b>After pickup</b>
@@ -8508,8 +8536,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s7-13">
-              <h2><span className="hno">7.13</span>Cancellation detail by model — {periodNote}</h2>
+            <section id="s5-13">
+              <h2><span className="hno">5.13</span>Cancellation detail by model — {periodNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -8538,8 +8566,8 @@ export default function Dashboard({
               </div>
               <p className="foot">Value lost = Seller GMV minus Seller NMV — the money that walked out with the cancelled orders.</p>
             </section>
-            <section id="s7-14">
-              <h2><span className="hno">7.14</span>Affiliate orders by content type — {periodNote}</h2>
+            <section id="s5-14">
+              <h2><span className="hno">5.14</span>Affiliate orders by content type — {periodNote}</h2>
               <p className="sub">
                 Affiliate orders only — the ones that carry a creator commission. Our own three
                 live rooms are not in here, because a shop&apos;s own live pays no commission. This
@@ -8576,8 +8604,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s7-15">
-              <h2><span className="hno">7.15</span>Product → creator → video — {periodNote}</h2>
+            <section id="s5-15">
+              <h2><span className="hno">5.15</span>Product → creator → video — {periodNote}</h2>
               <p className="sub">
                 Click a product to see which creators sold it, then a creator to see which videos.
                 Every creator and every video is listed, down to the ones with a single order.
@@ -8660,8 +8688,8 @@ export default function Dashboard({
                 never turns into money.
               </p>
             </section>
-            <section id="s7-16">
-              <h2><span className="hno">7.16</span>Video orders in detail — {periodNote}</h2>
+            <section id="s5-16">
+              <h2><span className="hno">5.16</span>Video orders in detail — {periodNote}</h2>
               <p className="sub">
                 Built to answer one question: is creator-video demand clean enough to put Product
                 GMV Max money behind. Read the band table first — comparing the headline rates
@@ -8762,8 +8790,8 @@ export default function Dashboard({
         {/* ======================== P&L ======================== */}
         {sec === 'P&L' && (
           <>
-            <section id="s8-1">
-              <h2><span className="hno">8.1</span>From list price to cash — {periodNote}</h2>
+            <section id="s10-1">
+              <h2><span className="hno">10.1</span>From list price to cash — {periodNote}</h2>
               <p className="sub">
                 Cancelled orders excluded. This is a draft — COGS, platform fees, affiliate
                 commission and ad spend are still missing.
@@ -8819,8 +8847,8 @@ export default function Dashboard({
               })()}
             </section>
 
-            <section id="s8-2">
-              <h2><span className="hno">8.2</span>Seller NMV and what erodes it, by month</h2>
+            <section id="s10-2">
+              <h2><span className="hno">10.2</span>Seller NMV and what erodes it, by month</h2>
               <p className="sub">
                 Green is Seller NMV recognised, red is the discount the shop funded itself. Together they
                 equal the list price of non-cancelled orders. Always monthly.
@@ -8837,8 +8865,8 @@ export default function Dashboard({
               />
             </section>
 
-            <section id="s8-3">
-              <h2><span className="hno">8.3</span>P&amp;L by month</h2>
+            <section id="s10-3">
+              <h2><span className="hno">10.3</span>P&amp;L by month</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -8876,8 +8904,8 @@ export default function Dashboard({
         {/* ======================== VIDEOS ======================== */}
         {sec === 'Videos' && (
           <>
-            <section id="s9-1">
-              <h2><span className="hno">9.1</span>Video performance — {monthNote}</h2>
+            <section id="s7-1">
+              <h2><span className="hno">7.1</span>Video performance — {monthNote}</h2>
               <p className="sub">
                 Straight from TikTok Shop analytics, one row per video per month. The API
                 aggregates over the window you ask for and never returns a daily series, so this
@@ -8926,8 +8954,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s9-2">
-              <h2><span className="hno">9.2</span>Month by month</h2>
+            <section id="s7-2">
+              <h2><span className="hno">7.2</span>Month by month</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -8958,8 +8986,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s9-3">
-              <h2><span className="hno">9.3</span>By account type — {monthNote}</h2>
+            <section id="s7-3">
+              <h2><span className="hno">7.3</span>By account type — {monthNote}</h2>
               <p className="sub">
                 Three populations with different economics: our own three channels, the marketing
                 accounts, and outside creators posting under affiliate. This table ignores the
@@ -8991,8 +9019,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s9-4">
-              <h2><span className="hno">9.4</span>Top creators — {monthNote}</h2>
+            <section id="s7-4">
+              <h2><span className="hno">7.4</span>Top creators — {monthNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -9022,8 +9050,8 @@ export default function Dashboard({
               <p className="foot">Top 30 by attributed GMV.</p>
             </section>
 
-            <section id="s9-5">
-              <h2><span className="hno">9.5</span>Top videos — {monthNote}</h2>
+            <section id="s7-5">
+              <h2><span className="hno">7.5</span>Top videos — {monthNote}</h2>
               <div className="filters">
                 {([
                   { k: 'gmv', t: 'Attributed GMV' },
@@ -9069,8 +9097,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s9-6">
-              <h2><span className="hno">9.6</span>By product — {monthNote}</h2>
+            <section id="s7-6">
+              <h2><span className="hno">7.6</span>By product — {monthNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -9099,8 +9127,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s9-7">
-              <h2><span className="hno">9.7</span>Attributed versus kept — {monthNote}</h2>
+            <section id="s7-7">
+              <h2><span className="hno">7.7</span>Attributed versus kept — {monthNote}</h2>
               <p className="sub">
                 The only place on this dashboard where TikTok&rsquo;s attribution sits beside real
                 orders. The match runs on video id against the affiliate order feed, so it covers
@@ -9166,8 +9194,8 @@ export default function Dashboard({
         {/* ==================== PRODUCT TRAFFIC ==================== */}
         {sec === 'Traffic' && (
           <>
-            <section id="s10-1">
-              <h2><span className="hno">10.1</span>The funnel — {monthNote}</h2>
+            <section id="s4-1">
+              <h2><span className="hno">4.1</span>The funnel — {monthNote}</h2>
               <p className="sub">
                 TikTok breaks every product into eight channel blocks, each with its own funnel.
                 Monthly only — the endpoint aggregates over the window you ask for and history
@@ -9209,8 +9237,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s10-2">
-              <h2><span className="hno">10.2</span>Channel funnel — {monthNote}</h2>
+            <section id="s4-2">
+              <h2><span className="hno">4.2</span>Channel funnel — {monthNote}</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -9260,8 +9288,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s10-3">
-              <h2><span className="hno">10.3</span>Month by month</h2>
+            <section id="s4-3">
+              <h2><span className="hno">4.3</span>Month by month</h2>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -9290,8 +9318,8 @@ export default function Dashboard({
               <p className="foot">Channel columns in VND bn, attributed, before cancellation.</p>
             </section>
 
-            <section id="s10-4">
-              <h2><span className="hno">10.4</span>Product funnel — {monthNote}</h2>
+            <section id="s4-4">
+              <h2><span className="hno">4.4</span>Product funnel — {monthNote}</h2>
               {trDoi && (
                 <div className="note">
                   <b>Whole shop, {mmyy(trDoi.nay.ky)} against {mmyy(trDoi.truoc.ky)}:</b>{' '}
@@ -9331,8 +9359,8 @@ export default function Dashboard({
             </section>
 
 
-            <section id="s10-5">
-              <h2><span className="hno">10.5</span>Trend by product — {monthNote}</h2>
+            <section id="s4-5">
+              <h2><span className="hno">4.5</span>Trend by product — {monthNote}</h2>
               <p className="sub">
                 One metric at a time, every product down the side, every month across. Read a row
                 for a product&rsquo;s own trajectory; read a column for a month where the whole
@@ -9446,8 +9474,8 @@ export default function Dashboard({
             </section>
 
 
-            <section id="s10-6">
-              <h2><span className="hno">10.6</span>Compare three products — {monthNote}</h2>
+            <section id="s4-6">
+              <h2><span className="hno">4.6</span>Compare three products — {monthNote}</h2>
               <p className="sub">
                 One panel per funnel stage, the same months running along the bottom. Pick three
                 products below and read down a column: the same month at every stage, for all
@@ -9510,8 +9538,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s10-7">
-              <h2><span className="hno">10.7</span>By price band — {monthNote}</h2>
+            <section id="s4-7">
+              <h2><span className="hno">4.7</span>By price band — {monthNote}</h2>
               <p className="sub">
                 Products grouped by their own average order value in this period, so the bands
                 move with promotions rather than sitting on a fixed list. The question this answers
@@ -9582,8 +9610,8 @@ export default function Dashboard({
               </div>
             </section>
 
-            <section id="s10-8">
-              <h2><span className="hno">10.8</span>Where each one leaks — {monthNote}</h2>
+            <section id="s4-8">
+              <h2><span className="hno">4.8</span>Where each one leaks — {monthNote}</h2>
               <p className="sub">
                 For every product, the funnel step furthest below the median of the products shown
                 here. The benchmark is this shop&rsquo;s own middle, not an outside standard: a
@@ -9620,8 +9648,8 @@ export default function Dashboard({
               </p>
             </section>
 
-            <section id="s10-9">
-              <h2><span className="hno">10.9</span>What never arrives — {monthNote}</h2>
+            <section id="s4-9">
+              <h2><span className="hno">4.9</span>What never arrives — {monthNote}</h2>
               <p className="sub">
                 TikTok&rsquo;s own refund figures, independent of our order table. Useful precisely
                 because nothing on this dashboard feeds it.
@@ -9765,6 +9793,10 @@ const CSS = `
 .muted{color:var(--muted);font-weight:400}
 .up{color:var(--ok)}
 .down{color:var(--bad)}
+.side-p{margin:18px 0 6px;padding:0 4px;display:flex;align-items:baseline;gap:7px;
+  font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.side-p:first-child{margin-top:0}
+.side-pn{font-size:11.5px;font-weight:700;letter-spacing:.04em;color:var(--ink);opacity:.5}
 .spbox{margin:0 0 16px}
 .sp-pills{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
 .sp-pill{display:inline-flex;align-items:center;gap:7px;font:inherit;font-size:12.5px;
