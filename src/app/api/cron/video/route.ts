@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { syncShopVideos } from '@/lib/video/sync'
+import { goiTiep } from '@/lib/cron/chain'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -53,6 +54,8 @@ export async function GET(request: Request) {
         })
         .eq('id', run.id)
     }
+    goiTiep(url.origin, '/api/cron/affiliate?days=60', secret, 'video')
+
     return NextResponse.json({ ok: true, ...res })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

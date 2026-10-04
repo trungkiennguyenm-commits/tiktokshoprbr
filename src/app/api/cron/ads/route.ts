@@ -53,7 +53,8 @@ export async function GET(request: Request) {
     }
 
     // Gọi tiếp phần livestream. Gói Hobby chỉ cho 2 cron job (refresh-tokens
-    // và orders), nên chuỗi hằng ngày là orders → ads → live.
+    // và orders), nên cả chuỗi hằng đêm móc đuôi nhau:
+    //   orders → ads → live → product → video → affiliate
     //
     // Mắt xích này TRƯỚC ĐÂY KHÔNG TỒN TẠI: chú thích ở /api/cron/live nói
     // "được lượt đồng bộ quảng cáo gọi tiếp" nhưng thực tế chưa ai nối, nên

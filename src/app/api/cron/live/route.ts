@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { goiTiep } from '@/lib/cron/chain'
 import { syncLive } from '@/lib/live/sync'
 import { syncLiveOverview } from '@/lib/live/overview'
 
@@ -51,6 +52,9 @@ export async function GET(request: Request) {
         error_message: res.errors.slice(0, 5).join(' | ') || null,
       }).eq('id', run.id)
     }
+    // Chuỗi hằng đêm đi tiếp: product → video → affiliate.
+    goiTiep(url.origin, '/api/cron/product?months=2', secret, 'live')
+
     return NextResponse.json({ ok: true, ...res, overview: ov.rows })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
