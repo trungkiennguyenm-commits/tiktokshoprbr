@@ -478,6 +478,15 @@ type Sec = (typeof SECTIONS)[number]['id']
 /** Số hiệu của phần, ví dụ Products là 3. Glossary không đánh số. */
 /** Tên bốn phần của mục lục. Thứ tự đi theo đường ra quyết định:
  *  tình hình ra sao → bán cái gì → kéo bằng cách nào → còn lại bao nhiêu. */
+/** Tháng đang chạy dở, dạng 'YYYY-MM-01'.
+ *
+ *  Hai sheet Product funnel và Video lấy số đã gộp sẵn theo tháng từ
+ *  TikTok, nên tháng hiện tại luôn là tháng cụt — ngày 2 thì nó chỉ có số
+ *  của ngày 1. Vẽ nó cạnh các tháng đủ 30 ngày thì mọi đường đều lao
+ *  xuống đáy và mọi MoM đều ra khoảng −98%: con số vô nghĩa nhưng trông
+ *  như thật. Mặc định loại ra, bật lại được. */
+const THANG_NAY = `${new Date().toISOString().slice(0, 7)}-01`
+
 const PHAN_TEN: Record<string, string> = {
   I: 'Performance',
   II: 'Product',
@@ -2047,6 +2056,8 @@ export default function Dashboard({
   /** Sheet Videos: tiêu chí xếp hạng và bộ lọc loại tài khoản. */
   const [vidMetric, setVidMetric] = useState<'gmv' | 'views' | 'gpm' | 'ctr'>('gmv')
   const [vidAcc, setVidAcc] = useState('')
+  /** Sheet Video: có tính tháng đang chạy dở không. Mặc định không. */
+  const [vidThangCut, setVidThangCut] = useState(false)
   /** Sheet Product traffic: chỉ số đang xem ở lưới sản phẩm × tháng. */
   const [trMetric, setTrMetric] = useState<'imp' | 'ctr' | 'atcRate' | 'cvr' | 'gmv' | 'don'>('cvr')
   /** Bỏ phụ kiện và quà tặng khỏi sheet Product traffic.
@@ -2054,6 +2065,8 @@ export default function Dashboard({
    *  và chúng kéo mọi tỷ lệ trung bình lệch đi vì giá rẻ hơn máy hàng
    *  chục lần. Mặc định ẩn, bật lại được. */
   const [trChiMay, setTrChiMay] = useState(true)
+  /** Có tính tháng đang chạy dở không. Mặc định không. */
+  const [trThangCut, setTrThangCut] = useState(false)
   /** Sản phẩm đang soi ở 10.5. Rỗng = xem lưới tất cả. */
   const [trSp, setTrSp] = useState('')
   /** Ba sản phẩm đang so ở 10.6.
@@ -4249,8 +4262,9 @@ export default function Dashboard({
   const vidRows = useMemo(
     () => videoThang
       .filter((r) => goodMonths.includes(r.thang))
-      .filter((r) => cat === 'all' || r.category === cat),
-    [videoThang, goodMonths, cat],
+      .filter((r) => cat === 'all' || r.category === cat)
+      .filter((r) => vidThangCut || r.thang !== THANG_NAY),
+    [videoThang, goodMonths, cat, vidThangCut],
   )
 
   const vidLoc = useMemo(
@@ -4400,8 +4414,9 @@ export default function Dashboard({
     () => productKenh
       .filter((r) => goodMonths.includes(r.thang))
       .filter((r) => cat === 'all' || r.category === cat)
-      .filter((r) => !trChiMay || !TR_PHU_KIEN.includes(r.category)),
-    [productKenh, goodMonths, cat, trChiMay],
+      .filter((r) => !trChiMay || !TR_PHU_KIEN.includes(r.category))
+      .filter((r) => trThangCut || r.thang !== THANG_NAY),
+    [productKenh, goodMonths, cat, trChiMay, trThangCut],
   )
 
   const trCong = (rows: ProductKenh[]) => {
@@ -8952,6 +8967,13 @@ export default function Dashboard({
                   {VID_ACC.map((a) => <option key={a.key} value={a.key}>{a.ten}</option>)}
                 </select>
                 {vidAcc && <button className="lnk" onClick={() => setVidAcc('')}>Clear</button>}
+                <button className={`chip ${vidThangCut ? 'on' : ''}`}
+                  onClick={() => setVidThangCut((q) => !q)}>
+                  {vidThangCut ? 'Current month included' : 'Current month excluded'}
+                </button>
+                <span className="muted" style={{ fontSize: 12.5 }}>
+                  The running month holds only a few days, so it is left out until it closes.
+                </span>
               </div>
               <div className="tiles" style={{ marginTop: 16 }}>
                 <Tile label="Videos" value={n0(vidTot.video)}
@@ -9225,10 +9247,18 @@ export default function Dashboard({
                   onClick={() => setTrChiMay(true)}>Machines only</button>
                 <button className={`chip ${trChiMay ? '' : 'on'}`}
                   onClick={() => setTrChiMay(false)}>Include accessories &amp; gifts</button>
+                <button className={`chip ${trThangCut ? 'on' : ''}`}
+                  onClick={() => setTrThangCut((q) => !q)}>
+                  {trThangCut ? 'Current month included' : 'Current month excluded'}
+                </button>
                 <span className="muted" style={{ fontSize: 12.5 }}>
                   {trChiMay
-                    ? 'Accessories and gifts are hidden — they are 25 of the 56 product rows and almost none of the revenue.'
-                    : 'Accessories and gifts included — they sell for a fraction of a machine, so blended rates will shift.'}
+                    ? 'Accessories and gifts hidden.'
+                    : 'Accessories and gifts included — blended rates will shift.'}
+                  {' '}
+                  {trThangCut
+                    ? 'The running month is in, and it is only a few days long — every trend and MoM against it is misleading.'
+                    : 'The running month is left out until it closes: it holds only a few days, so plotting it beside full months drives every line to the floor.'}
                 </span>
               </div>
               {trChuaGan.length > 0 && (
