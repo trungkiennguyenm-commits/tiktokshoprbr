@@ -618,7 +618,8 @@ const GLOSSARY: Nhom[] = [
       {
         ten: 'Campaign day',
         dinh_nghia: 'Where a date sits in that month\u2019s sale calendar.',
-        ct: 'DDAY = double date (4/4, 5/5 \u2026 9/9) \u00b7 D-3\u2026D-1 before it \u00b7 D+1\u2026D+3 after it \u00b7 MMS = 14\u201315 \u00b7 Payday = 24\u201325 \u00b7 BAU = the rest',
+ct: 'DDAY = double date (4/4, 5/5 … 9/9) · D-3…D-1 before it · D+1…D+3 after it · MMS = 14–15 · Payday = 24–25 · the ordinary days in between are split into four BAU stretches by where they fall: early, after DDAY, mid-month, month-end',
+
         ghi_chu: 'D+1\u2026D+3 is not a TikTok label \u2014 it is ours, added because the question is what happens to orders AFTER a campaign ends. When a D+ day collides with MMS (December, November), D+ wins.',
       },
       {
@@ -912,15 +913,28 @@ const khoangTho = (tt: number) =>
 /** Mốc đầu tiên đã nằm sau khi shipper lấy hàng (thu_tu 7 = 2–3 days). */
 const MOC_SAU_LAY = 7
 
-/** Thứ tự đọc của các loại ngày campaign, trùng với f_thu_tu_ngay() ở DB. */
-const NGAY_TT = ['D-3', 'D-2', 'D-1', 'DDAY', 'D+1', 'D+2', 'D+3',
-  'MMS (14-15)', 'Payday (24-25)', 'BAU']
-/** Ba cụm để đọc nhanh: trước / trong / sau DDAY, rồi hai loại sale khác, rồi BAU. */
+/** Thứ tự đọc của các loại ngày campaign, trùng với f_thu_tu_ngay() ở DB.
+ *
+ *  BAU được tách làm bốn đoạn và nằm XEN KẼ giữa các đợt, theo đúng dòng
+ *  chảy của tháng. Gộp hết vào một ô "BAU" đặt cuối bảng là giấu mất chính
+ *  thứ cần so: ngày thường ngay sau DDAY không giống ngày thường trước
+ *  Payday. Có đoạn sẽ rỗng ở vài tháng — tháng 10 có DDAY ngày 10 nên
+ *  "BAU after DDAY" không còn ngày nào. Rỗng là đúng, không phải thiếu. */
+const NGAY_TT = ['BAU early', 'D-3', 'D-2', 'D-1', 'DDAY', 'D+1', 'D+2', 'D+3',
+  'BAU after DDAY', 'MMS (14-15)', 'BAU mid-month',
+  'Payday (24-25)', 'BAU month-end']
+/** Đợt sale lấy màu riêng; bốn đoạn BAU dùng chung một họ xám, đậm dần
+ *  theo chiều đi của tháng — cùng là ngày thường nên không được tranh màu
+ *  với đợt sale, nhưng vẫn phải phân biệt được với nhau. */
 const NGAY_MAU: Record<string, string> = {
   'D-3': '#7FA8C9', 'D-2': '#4E86B8', 'D-1': '#2563A8', 'DDAY': '#B31B4A',
   'D+1': '#C2620B', 'D+2': '#D4863A', 'D+3': '#E0A868',
-  'MMS (14-15)': '#5B4A9E', 'Payday (24-25)': '#1F7A4D', 'BAU': '#8A94A6',
+  'MMS (14-15)': '#5B4A9E', 'Payday (24-25)': '#1F7A4D',
+  'BAU early': '#B6BDC9', 'BAU after DDAY': '#98A1B0',
+  'BAU mid-month': '#7A8494', 'BAU month-end': '#5E6775',
 }
+/** Ngày thường hay không — dùng thay cho so sánh === 'BAU' ở khắp nơi. */
+const laBAU = (l: string | null | undefined) => !!l && l.startsWith('BAU')
 
 /* Chín nhóm lý do huỷ. Hai nhóm lớn nhất (giao thất bại, không còn nhu cầu)
    lấy màu đậm; nhóm "có giá tốt hơn" lấy màu nổi riêng vì nó là nhóm duy nhất
@@ -2441,7 +2455,20 @@ export default function Dashboard({
       })
       .filter((r): r is NonNullable<typeof r> => r !== null)
 
-    const bau = rows.find((r) => r.loai === 'BAU')
+    // Mốc so sánh là TOÀN BỘ ngày thường gộp lại, không phải một đoạn.
+    // Tính lại tỷ lệ từ tử số và mẫu số của cả bốn đoạn — lấy trung bình
+    // bốn tỷ lệ sẽ cho số khác và sai, vì bốn đoạn dài ngắn rất khác nhau
+    // (BAU mid-month có 8 ngày, BAU after DDAY có khi không ngày nào).
+    const dsBau = rows.filter((r) => laBAU(r.loai))
+    const bau = dsBau.length
+      ? {
+        ...dsBau[0],
+        loai: 'BAU (all)',
+        item: dsBau.reduce((a, r) => a + r.item, 0),
+        huy: dsBau.reduce((a, r) => a + r.huy, 0),
+        rate: p1(dsBau.reduce((a, r) => a + r.huy, 0), dsBau.reduce((a, r) => a + r.item, 0)),
+      }
+      : undefined
     return { rows, bau }
   }, [campTong, huyChiTiet, keys, byMonth, cat])
 
@@ -2529,7 +2556,7 @@ export default function Dashboard({
           // với tỷ lệ huỷ chung ở 7.2 nên hai con số so thẳng được với nhau.
           pctSauDat: p1(l.sau, t.item),
           nhan: t.nhan.size === 1 ? Array.from(t.nhan)[0] : null,
-          nhanCoThe: Array.from(t.nhan).filter((x) => x !== 'BAU'),
+          nhanCoThe: Array.from(t.nhan).filter((x) => !laBAU(x)),
         }
       })
       .filter((r): r is NonNullable<typeof r> => r !== null)
@@ -8232,7 +8259,7 @@ export default function Dashboard({
                 only the days that have names. The names sit under the axis:
                 <b> DDAY</b> is the double date (4/4, 5/5 … 9/9), <b>D-3</b> to <b>D-1</b> the three
                 days before it, <b>D+1</b> to <b>D+3</b> the three days after, <b>MMS</b> the
-                14th–15th, <b>Payday</b> the 24th–25th, everything else BAU. Bars are the mix of
+                14th–15th, <b>Payday</b> the 24th–25th. The ordinary days in between are not one bucket: they are split into four stretches by where they fall in the month — early, after DDAY, mid-month, month-end — and sit between the campaign blocks in calendar order, so a quiet stretch can be read against the sale that preceded it. Bars are the mix of
                 time-to-cancel, each column normalised to 100%.
                 <br /><br />
                 <b>The red line is the warehouse load</b> — of every unit ordered that day, the
@@ -8266,7 +8293,7 @@ export default function Dashboard({
                   const r = campNgay.rows[i]
                   if (!r) return null
                   return (
-                    <><b>{r.nhanTruc}</b>{r.nhan && r.nhan !== 'BAU' ? ` · ${r.nhan}` : ''}
+                    <><b>{r.nhanTruc}</b>{r.nhan && !laBAU(r.nhan) ? ` · ${r.nhan}` : ''}
                       {campNgay.theoNgayThat ? '' : ` · ${r.soNgay} day${r.soNgay === 1 ? '' : 's'} in range`}<br />
                       <b style={{ color: 'var(--bad)' }}>After pickup {pct(r.pctSauDat)}</b>
                       {' '}— {n0(r.sauLay)} of {n0(r.item)} units ordered<br />
@@ -8293,7 +8320,7 @@ export default function Dashboard({
                   // chữ dính vào nhau. Chỉ in ở cột đầu của mỗi chuỗi liên tiếp,
                   // màu chữ vẫn cho biết cột sau thuộc cùng một loại.
                   const truoc = campNgay.rows[i - 1]?.nhan
-                  const hien = r.nhan && r.nhan !== 'BAU' && r.nhan !== truoc
+                  const hien = r.nhan && !laBAU(r.nhan) && r.nhan !== truoc
                   return (
                     <div key={r.ky}>
                       {hien && (
@@ -8332,7 +8359,7 @@ export default function Dashboard({
                           <td className="n">{n0(r.huy)}</td>
                           <td className="n" style={{ color: r.rate > 70 ? 'var(--bad)' : 'inherit' }}>{pct(r.rate)}</td>
                           <td className="n muted">
-                            {r.loai === 'BAU' || d == null ? '—' : `${d > 0 ? '+' : ''}${d} pp`}
+                            {laBAU(r.loai) || d == null ? '—' : `${d > 0 ? '+' : ''}${d} pp`}
                           </td>
                           <td className="n">{pct(r.nhanh)}</td>
                           <td className="n">{pct(r.cham)}</td>
