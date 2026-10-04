@@ -2060,6 +2060,9 @@ export default function Dashboard({
    *  null = chưa đụng vào, lấy mặc định. Mảng rỗng = đã bỏ chọn hết, phải
    *  tôn trọng — nếu lại nhảy về mặc định thì nút bỏ chọn trông như hỏng. */
   const [trSoSanh, setTrSoSanh] = useState<string[] | null>(null)
+  /** Lọc bảng 4.4 theo sản phẩm. Rỗng = hiện tất cả. Không giới hạn số
+   *  lượng vì đây là bảng, không phải biểu đồ — thêm dòng không làm rối. */
+  const [trLocSp, setTrLocSp] = useState<string[]>([])
   const toggleAff = (k: string) =>
     setAffMo((p) => {
       const n = new Set(p)
@@ -9360,6 +9363,18 @@ export default function Dashboard({
                   owner — reach, listing, price, page.
                 </div>
               )}
+              <ChonSP
+                ds={trSanPham.map((x) => ({
+                  ten: x.ten, phu: `${bn(x.gmv)}bn`, dai: trDaiCua.get(x.ten),
+                }))}
+                chon={trLocSp}
+                nhieu
+                doi={(ten) => setTrLocSp((q) => (
+                  ten === '' ? []
+                    : q.includes(ten) ? q.filter((z) => z !== ten)
+                      : [...q, ten]))}
+                trong={`All products (${trSanPham.length})`}
+              />
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -9369,7 +9384,9 @@ export default function Dashboard({
                     <th className="n">AOV</th>
                   </tr></thead>
                   <tbody>
-                    {trSanPham.map((r) => (
+                    {trSanPham
+                      .filter((r) => trLocSp.length === 0 || trLocSp.includes(r.ten))
+                      .map((r) => (
                       <tr key={r.ten}>
                         <td>{r.ten}</td>
                         <td className="n">{mn1(r.imp)}m</td>
