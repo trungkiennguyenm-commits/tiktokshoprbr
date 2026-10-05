@@ -1,5 +1,6 @@
-import { NextResponse, after } from 'next/server'
+import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { goiTiep } from '@/lib/cron/chain'
 import { syncAds } from '@/lib/ads/sync'
 
 export const runtime = 'nodejs'
@@ -65,24 +66,7 @@ export async function GET(request: Request) {
     // Phải gọi qua TÊN MIỀN PRODUCTION: địa chỉ riêng của từng bản deploy bị
     // Deployment Protection chặn 401 trước khi tới code (xem chú thích dài
     // trong /api/cron/sync).
-    {
-      const host = process.env.VERCEL_PROJECT_PRODUCTION_URL
-      const liveUrl = new URL((host ? `https://${host}` : url.origin) + '/api/cron/live')
-      after(async () => {
-        try {
-          await fetch(liveUrl.toString(), {
-            headers: { authorization: `Bearer ${secret}` },
-            cache: 'no-store',
-            signal: AbortSignal.timeout(15_000),
-          })
-        } catch (e) {
-          const name = e instanceof Error ? e.name : ''
-          // Hết 15s nghĩa là nó đang chạy thật, bỏ đi là đúng.
-          if (name === 'TimeoutError' || name === 'AbortError') return
-          console.error('[ads] gọi tiếp /api/cron/live thất bại:', e)
-        }
-      })
-    }
+    goiTiep(url.origin, '/api/cron/live', secret, 'ads')
 
     return NextResponse.json({ ok: true, ...res })
   } catch (err) {
