@@ -373,7 +373,8 @@ const SECTIONS = [
       { ten: 'Daily', ghi: 'DoD, regardless of the toggle', subs: ['NMV, ads and ATR', 'LGM vs PGM'] },
       { ten: 'Subsidy', subs: ['Valid subsidy vs NMV'] },
       { ten: 'By period', ghi: 'follows the DoD / MoM toggle',
-        subs: ['Seller NMV', 'Net quantity', 'Robot vs handheld', 'Detail table'] },
+        subs: ['Seller NMV', 'Net quantity', 'Robot vs handheld', 'Detail table',
+          'SKU day by day'] },
     ],
   },
   {
@@ -1960,6 +1961,77 @@ function Matrix({ cols, rows, fmt, heat, corner }: {
   )
 }
 
+
+/**
+ * Bảng gọn đặt ngay dưới một biểu đồ.
+ *
+ * Sheet Sales là sheet được mở mỗi sáng, nên mỗi biểu đồ cần con số nằm
+ * ngay bên dưới chứ không bắt cuộn xuống bảng tổng ở 2.9. Kỳ MỚI NHẤT xếp
+ * TRÊN CÙNG: thứ cần xem hằng ngày phải ở ngay tầm mắt, ngược với biểu đồ
+ * vốn chạy từ trái sang phải theo thời gian.
+ *
+ * Cột `dod` tự tính thay đổi so với kỳ liền kề trong chính tập đang hiện.
+ * Nếu đang lọc theo ngày thì đó là DoD, theo tháng thì là MoM — không cần
+ * truyền gì thêm.
+ */
+function BangDuoi<T extends { ky: string }>({ rows, lbl, cot, mo = 10 }: {
+  rows: T[]
+  lbl: (k: string) => string
+  cot: { ten: string; lay: (r: T) => number | null; in: (v: number) => string; dod?: boolean }[]
+  mo?: number
+}) {
+  const [het, setHet] = useState(false)
+  if (!rows.length) return null
+  // Đảo ngược để kỳ mới nhất lên đầu, nhưng vẫn cần kỳ liền TRƯỚC nó để
+  // tính thay đổi — nên giữ chỉ số gốc thay vì cắt mảng rồi mới đảo.
+  const idx = rows.map((_, i) => i).reverse()
+  const hien = het ? idx : idx.slice(0, mo)
+
+  return (
+    <>
+      <div className="tablewrap">
+        <table>
+          <thead><tr>
+            <th>{lbl(rows[rows.length - 1].ky).length > 6 ? 'Period' : 'Day'}</th>
+            {cot.map((c) => (
+              <Fragment key={c.ten}>
+                <th className="n">{c.ten}</th>
+                {c.dod && <th className="n">±</th>}
+              </Fragment>
+            ))}
+          </tr></thead>
+          <tbody>
+            {hien.map((i) => (
+              <tr key={rows[i].ky}>
+                <td>{lbl(rows[i].ky)}</td>
+                {cot.map((c) => {
+                  const v = c.lay(rows[i])
+                  const truoc = i > 0 ? c.lay(rows[i - 1]) : null
+                  return (
+                    <Fragment key={c.ten}>
+                      <td className="n">{v == null ? '—' : c.in(v)}</td>
+                      {c.dod && (
+                        <td className="n">
+                          <Dd a={v ?? undefined} b={truoc ?? undefined} />
+                        </td>
+                      )}
+                    </Fragment>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > mo && (
+        <button className="lnk" onClick={() => setHet((q) => !q)}>
+          {het ? `Show the last ${mo}` : `Show all ${rows.length}`}
+        </button>
+      )}
+    </>
+  )
+}
+
 function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string }) {
   const [all, setAll] = useState(false)
   const view = all ? rows : rows.slice(-14)
@@ -2056,6 +2128,8 @@ export default function Dashboard({
       return n
     })
   const [sortKey, setSortKey] = useState<keyof SkuAgg>('nmv')
+  /** Chỉ số đang xem ở lưới model × kỳ của sheet Sales (2.10). */
+  const [sgMetric, setSgMetric] = useState<'net' | 'gross' | 'cancel'>('net')
   const [mixMetric, setMixMetric] = useState<'gmv' | 'so_luong' | 'gross' | 'cancel'>('gmv')
   /** Bảng model mix: bật thì mỗi ô là % của cột ngày đó thay vì số tuyệt đối. */
   const [mixShare, setMixShare] = useState(false)
@@ -2190,6 +2264,44 @@ export default function Dashboard({
       .filter((r) => cat === 'all' || r.category === cat),
     [byMonth, skuMonthly, skuDaily, keys, cat],
   )
+  /* ---- lưới model × kỳ cho 2.10 ----
+     Sheet Sales là sheet mở mỗi sáng, nên cần một chỗ thấy ngay model nào
+     vừa đổi chiều, không phải sang sheet Product performance rồi lọc.
+
+     Tỷ lệ huỷ tính lại trong từng ô từ chính tử số và mẫu số của ô đó.
+     Cột Total cũng tính lại trên cả kỳ chứ không bình quân các ngày — một
+     ngày bán 2 máy huỷ 1 và một ngày bán 200 máy huỷ 20 không thể lấy
+     trung bình hai tỷ lệ 50% và 10%. */
+  const sgLuoi = useMemo(() => {
+    const ky = Array.from(keys).sort()
+    const m = new Map<string, Map<string, { gross: number; net: number; huy: number }>>()
+    for (const r of skuRowsAll) {
+      if (!m.has(r.model)) m.set(r.model, new Map())
+      const g = m.get(r.model)!
+      const c = g.get(r.ky) ?? { gross: 0, net: 0, huy: 0 }
+      c.gross += Number(r.so_luong || 0)
+      c.net += Number(r.sl_chua_huy || 0)
+      c.huy += Number(r.sl_huy || 0)
+      g.set(r.ky, c)
+    }
+    const lay = (c: { gross: number; net: number; huy: number } | undefined) => (c ? {
+      net: c.net, gross: c.gross, cancel: p1(c.huy, c.gross),
+    } : null)
+    return {
+      ky,
+      hang: Array.from(m.entries())
+        .map(([model, g]) => {
+          const tong = Array.from(g.values()).reduce(
+            (a, c) => ({ gross: a.gross + c.gross, net: a.net + c.net, huy: a.huy + c.huy }),
+            { gross: 0, net: 0, huy: 0 },
+          )
+          return { model, o: ky.map((k) => lay(g.get(k))), tong: lay(tong)! }
+        })
+        .filter((r) => r.tong.gross > 0)
+        .sort((a, b) => b.tong.net - a.tong.net),
+    }
+  }, [skuRowsAll, keys])
+
   const skuRows = useMemo(
     () => (modelSel ? skuRowsAll.filter((r) => r.model === modelSel) : skuRowsAll),
     [skuRowsAll, modelSel],
@@ -5254,6 +5366,16 @@ export default function Dashboard({
                   )
                 }}
               />
+              <BangDuoi
+                rows={shown} lbl={lbl}
+                cot={[
+                  { ten: 'Seller GMV', lay: (r) => r.gmv, in: (v) => `${bn(v)}bn`, dod: true },
+                  { ten: 'Seller NMV', lay: (r) => r.nmv, in: (v) => `${bn(v)}bn`, dod: true },
+                  { ten: 'Lost to cancels', lay: (r) => r.gmv_mat_do_huy, in: (v) => `${bn(v)}bn` },
+                  { ten: 'Completed', lay: (r) => r.nmv_hoan_tat, in: (v) => `${bn(v)}bn` },
+                  { ten: 'Cancel %', lay: (r) => r.cancel_rate, in: (v) => pct(v) },
+                ]}
+              />
             </section>
 
             <div id="s2-3">{chartRevAtrDay('2.3')}</div>
@@ -5362,6 +5484,14 @@ export default function Dashboard({
                     {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% vs previous period</>}</>
                 )}
               />
+              <BangDuoi
+                rows={shown} lbl={lbl}
+                cot={[
+                  { ten: 'Seller NMV', lay: (r) => r.nmv, in: (v) => `${bn(v)}bn`, dod: true },
+                  { ten: 'Completed', lay: (r) => r.nmv_hoan_tat, in: (v) => `${bn(v)}bn` },
+                  { ten: 'Customer-funded', lay: (r) => r.khach_tra, in: (v) => `${bn(v)}bn` },
+                ]}
+              />
             </section>
 
             <section id="s2-7">
@@ -5373,6 +5503,15 @@ export default function Dashboard({
                   <><b>{lbl(d.ky)}</b><br />{n0(d.v)} net pcs
                     {dl != null && <><br />{dl >= 0 ? '▲' : '▼'} {Math.abs(dl)}% vs previous period</>}</>
                 )}
+              />
+              <BangDuoi
+                rows={shown} lbl={lbl}
+                cot={[
+                  { ten: 'Net pcs', lay: (r) => r.sl_chua_huy, in: n0, dod: true },
+                  { ten: 'Gross pcs', lay: (r) => r.so_luong, in: n0, dod: true },
+                  { ten: 'Cancelled', lay: (r) => r.sl_huy, in: n0 },
+                  { ten: 'Cancel %', lay: (r) => r.cancel_rate, in: (v) => pct(v) },
+                ]}
               />
             </section>
 
@@ -5388,11 +5527,79 @@ export default function Dashboard({
                     <br />Total {n0(d.a + d.b)} pcs · Robot share {p1(d.a, d.a + d.b)}%</>
                 )}
               />
+              <BangDuoi
+                rows={splitByCat(srcShown, (r) => r.sl_chua_huy)} lbl={lbl}
+                cot={[
+                  { ten: 'Robot', lay: (r) => r.a, in: n0, dod: true },
+                  { ten: 'Handheld', lay: (r) => r.b, in: n0, dod: true },
+                  { ten: 'Total', lay: (r) => r.a + r.b, in: n0 },
+                  { ten: 'Robot share', lay: (r) => p1(r.a, r.a + r.b), in: (v) => pct(v) },
+                ]}
+              />
             </section>
 
             <section id="s2-9">
               <h2><span className="hno">2.9</span>Detail by {periodWord}</h2>
               <SeriesTable rows={shown} lbl={lbl} />
+            </section>
+
+
+            <section id="s2-10">
+              <h2><span className="hno">2.10</span>SKU day by day · {dod}</h2>
+              <p className="sub">
+                Every model down the side, every {periodWord} across. Built for the morning glance:
+                one look tells you which model moved and whether the move was volume or
+                cancellations. Newest {periodWord} is the last column, matching the charts above.
+              </p>
+              <div className="filters">
+                {([
+                  { k: 'net', t: 'Net pcs' },
+                  { k: 'gross', t: 'Gross pcs' },
+                  { k: 'cancel', t: 'Cancel %' },
+                ] as const).map((m) => (
+                  <button key={m.k} className={`chip ${sgMetric === m.k ? 'on' : ''}`}
+                    onClick={() => setSgMetric(m.k)}>{m.t}</button>
+                ))}
+              </div>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Model</th>
+                    {sgLuoi.ky.map((k) => <th className="n" key={k}>{lbl(k)}</th>)}
+                    <th className="n">Total</th>
+                    <th className="n">Latest {dod}</th>
+                  </tr></thead>
+                  <tbody>
+                    {sgLuoi.hang.map((r) => {
+                      const inSo = (v: number) => (sgMetric === 'cancel' ? pct(v) : n0(v))
+                      const cuoi = r.o[r.o.length - 1]
+                      const truoc = r.o[r.o.length - 2]
+                      return (
+                        <tr key={r.model}>
+                          <td>{r.model}</td>
+                          {r.o.map((c, i) => (
+                            <td className="n" key={i} style={{
+                              color: sgMetric === 'cancel' && c && c.cancel > 80
+                                ? 'var(--bad)' : 'inherit',
+                            }}>{c ? inSo(c[sgMetric]) : '—'}</td>
+                          ))}
+                          <td className="n" style={{ fontWeight: 600 }}>{inSo(r.tong[sgMetric])}</td>
+                          <td className="n">
+                            <Dd a={cuoi ? cuoi[sgMetric] : undefined}
+                              b={truoc ? truoc[sgMetric] : undefined} />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                A dash means the model sold nothing that {periodWord} — not a zero rate. Cancel % is
+                recomputed inside each cell, and the Total column across the whole range rather than
+                averaged: a day selling 2 units with 1 cancelled and a day selling 200 with 20
+                cancelled are 50% and 10%, and their average is not the 10.4% that actually happened.
+              </p>
             </section>
 
             <div className="note warn">
