@@ -3638,18 +3638,25 @@ export default function Dashboard({
   const k1 = (v: number, views: number) => (views > 0 ? Math.round((v / views) * 1000 * 10) / 10 : 0)
 
   /* ---- hiệu quả theo kênh bán ----
-     Ngưỡng phủ sóng 60%: TikTok chỉ trả room_id trên line item từ 05/2026, và
-     tới 07/2026 mới phủ ổn định ~65–70%. Tháng nào dưới ngưỡng thì null KHÔNG
-     có nghĩa là "ngoài live" mà là "không biết" — vẽ ra chỉ gây hiểu sai, nên
-     cắt hẳn khỏi bảng thay vì để người đọc tự đoán. */
-  const KENH_NGUONG = 60
+     KHÔNG còn ngưỡng phủ sóng. Trước đây cắt tháng dưới 60% vì dòng không
+     có room_id bị dồn vào "Ngoài live", tức là nhìn giống "bán ngoài phòng
+     live" trong khi thật ra là "không biết đến từ đâu".
+
+     Bỏ ngưỡng vì nó không chữa được gì: tháng 9 phủ 64,7% thì vẫn có 35%
+     dòng rơi nhầm vào "Ngoài live" mà vẫn được hiện. Ngưỡng chỉ giấu tháng
+     tệ nhất chứ không làm các tháng còn lại đúng hơn, và nó giấu im lặng —
+     người xem không biết vì sao tháng 10 biến mất.
+
+     Thay bằng: hiện hết, và in ĐỘ PHỦ của từng tháng ngay cạnh bảng để
+     người đọc tự trừ hao. Số liệu không tốt hơn, nhưng mức độ không chắc
+     chắn thì nhìn thấy được. */
   const kenhThang = useMemo(() => {
     const ok = new Set<string>()
     for (const r of kenhMonthly) {
       const k = String(r.thang).slice(0, 7)
       // Hai điều kiện: đủ phủ sóng tag phòng, VÀ nằm trong các tháng đang chọn
       // ở thanh chip phía trên. Thiếu vế sau thì phần này đứng yên khi lọc.
-      if (Number(r.phu_song || 0) >= KENH_NGUONG && liveKeep.has(k)) ok.add(k)
+      if (liveKeep.has(k)) ok.add(k)
     }
     return Array.from(ok).sort()
   }, [kenhMonthly, liveKeep])
@@ -3720,7 +3727,6 @@ export default function Dashboard({
     const rows = new Map<string, Map<string, KenhDay>>()
     const ngays = new Set<string>()
     for (const r of kenhDaily) {
-      if (Number(r.phu_song || 0) < KENH_NGUONG) continue
       const d = String(r.ngay)
       if (!liveKeep.has(d.slice(0, 7))) continue
       ngays.add(d)
@@ -3802,7 +3808,6 @@ export default function Dashboard({
     const rows = new Map<string, Map<string, { nmv: number; net: number; gross: number; huy: number }>>()
     const tongCot = new Map<string, number>()
     for (const r of kenhSku) {
-      if (Number(r.phu_song || 0) < KENH_NGUONG) continue
       if (!liveKeep.has(String(r.thang).slice(0, 7))) continue
       if (!cot.includes(r.kenh)) continue
       const m = rows.get(r.model) ?? new Map()
@@ -5285,16 +5290,17 @@ export default function Dashboard({
                   </p>
 
                   <div className="note warn">
-                    <b>Only months where most order lines carry a room tag are shown.</b> TikTok
-                    started returning the live room on order lines in May 2026 and reached steady
-                    coverage from July{' '}
-                    ({kenhBang.thang.map((k) => `${mmyy(`${k}-01`)} ${kenhBang.phu.get(k)}%`).join(' · ')}).
-                    Anything earlier is left out rather than shown as &ldquo;outside live&rdquo;,
-                    because an untagged line back then means <i>unknown</i>, not <i>not from a
-                    live</i>. Even in the months shown, roughly a third of lines carry no tag; those
-                    sit in &ldquo;Ngoài live&rdquo;, so treat that row as an upper bound.
-                    &ldquo;Live (không rõ phòng)&rdquo; is a tagged line whose room is older than the
-                    175-day live history we can pull.
+                    <b>&ldquo;Ngoài live&rdquo; is an upper bound, not a measurement.</b> TikTok
+                    started returning the live room on order lines in May 2026 and has never tagged
+                    all of them. Every untagged line falls into that row, so it holds genuine
+                    non-live sales plus everything whose origin is simply unknown — the row says
+                    <i>at most this much</i>, never <i>this much</i>. Tag coverage by month:{' '}
+                    {kenhBang.thang.map((k) => `${mmyy(`${k}-01`)} ${kenhBang.phu.get(k)}%`).join(' · ')}.
+                    At 58% coverage four lines in ten land there by default, so compare the rooms
+                    with each other rather than against that row, and check the coverage figure
+                    before reading a month-on-month shift as a real change.
+                    &ldquo;Live (không rõ phòng)&rdquo; is different: the line is tagged, but the
+                    room is older than the 175-day live history we can pull.
                   </div>
                 </>
               )}
@@ -6510,10 +6516,14 @@ export default function Dashboard({
                     orders never paid for the ads.
                   </p>
                   <div className="note warn">
-                    Only months where most order lines carry a room tag are included{' '}
-                    ({kenhBang.thang.map((k) => `${mmyy(`${k}-01`)} ${kenhBang.phu.get(k)}%`).join(' · ')}).
-                    TikTok began tagging in May 2026. Roughly a third of lines still carry no tag
-                    and land in &ldquo;Ngoài live&rdquo;, so read that row as an upper bound.
+                    <b>&ldquo;Ngoài live&rdquo; is an upper bound, not a measurement.</b> TikTok
+                    only tags an order line with its live room some of the time, and every untagged
+                    line falls into that row — so it holds real non-live sales plus everything whose
+                    origin is simply unknown. Tag coverage by month:{' '}
+                    {kenhBang.thang.map((k) => `${mmyy(`${k}-01`)} ${kenhBang.phu.get(k)}%`).join(' · ')}.
+                    A month at 58% coverage is putting four lines in ten into that row by default,
+                    so compare rooms with each other rather than against it, and watch the coverage
+                    figure before reading any month-on-month shift as a real change.
                   </div>
                 </>
               )}
