@@ -2211,6 +2211,18 @@ export default function Dashboard({
     () => (selMonths.size ? allMonths.filter((m) => selMonths.has(m)) : allMonths),
     [allMonths, selMonths],
   )
+  /** Có tháng nào NGOÀI tháng đang chạy trong bộ lọc không.
+   *
+   *  Chốt "loại tháng đang chạy" sinh ra để tránh đặt tháng cụt cạnh tháng
+   *  đủ 30 ngày. Khi người dùng chỉ chọn đúng tháng hiện tại thì không có
+   *  gì để so, chốt đó thành vô nghĩa — mà hậu quả thì nặng: cả sheet
+   *  trắng trơn, không một dòng giải thích. Nên trong trường hợp đó tự bật
+   *  lại. */
+  const chiCoThangNay = useMemo(
+    () => goodMonths.length > 0 && goodMonths.every((m) => m === THANG_NAY),
+    [goodMonths],
+  )
+
 
   const keys = useMemo(() => {
     const all = rollup(src, 'all')
@@ -4407,8 +4419,8 @@ export default function Dashboard({
     () => videoThang
       .filter((r) => goodMonths.includes(r.thang))
       .filter((r) => cat === 'all' || r.category === cat)
-      .filter((r) => vidThangCut || r.thang !== THANG_NAY),
-    [videoThang, goodMonths, cat, vidThangCut],
+      .filter((r) => vidThangCut || chiCoThangNay || r.thang !== THANG_NAY),
+    [videoThang, goodMonths, cat, vidThangCut, chiCoThangNay],
   )
 
   const vidLoc = useMemo(
@@ -4559,8 +4571,8 @@ export default function Dashboard({
       .filter((r) => goodMonths.includes(r.thang))
       .filter((r) => cat === 'all' || r.category === cat)
       .filter((r) => !trChiMay || !TR_PHU_KIEN.includes(r.category))
-      .filter((r) => trThangCut || r.thang !== THANG_NAY),
-    [productKenh, goodMonths, cat, trChiMay, trThangCut],
+      .filter((r) => trThangCut || chiCoThangNay || r.thang !== THANG_NAY),
+    [productKenh, goodMonths, cat, trChiMay, trThangCut, chiCoThangNay],
   )
 
   const trCong = (rows: ProductKenh[]) => {
@@ -9216,7 +9228,9 @@ export default function Dashboard({
                   {vidThangCut ? 'Current month included' : 'Current month excluded'}
                 </button>
                 <span className="muted" style={{ fontSize: 12.5 }}>
-                  The running month holds only a few days, so it is left out until it closes.
+                  {chiCoThangNay
+                    ? 'The running month is the only one picked, so it is shown — it holds just a few days.'
+                    : 'The running month holds only a few days, so it is left out until it closes. Pick it on its own to see it.'}
                 </span>
               </div>
               <div className="tiles" style={{ marginTop: 16 }}>
@@ -9500,9 +9514,11 @@ export default function Dashboard({
                     ? 'Accessories and gifts hidden.'
                     : 'Accessories and gifts included — blended rates will shift.'}
                   {' '}
-                  {trThangCut
-                    ? 'The running month is in, and it is only a few days long — every trend and MoM against it is misleading.'
-                    : 'The running month is left out until it closes: it holds only a few days, so plotting it beside full months drives every line to the floor.'}
+                  {chiCoThangNay
+                    ? 'The running month is the only one picked, so it is shown — there is nothing to compare it against, which is the only reason it is normally left out. Remember it holds just a few days.'
+                    : trThangCut
+                      ? 'The running month is in, and it is only a few days long — every trend and MoM against it is misleading.'
+                      : 'The running month is left out until it closes: it holds only a few days, so plotting it beside full months drives every line to the floor. Pick it on its own to see it.'}
                 </span>
               </div>
               {trChuaGan.length > 0 && (
