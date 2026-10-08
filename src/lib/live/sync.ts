@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import { getShopContext } from '@/lib/tts/connection'
 import { ttsRequest } from '@/lib/tts/sign'
+import { ymdVN } from '@/lib/tts/ngay'
 
 /**
  * Đồng bộ phiên livestream từ TikTok Shop Analytics.
@@ -56,7 +57,9 @@ type Session = {
   }
 }
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10)
+/** Ngày theo múi giờ shop. Dùng UTC ở đây là mất đúng một ngày mỗi
+ *  lượt chạy — xem ghi chú trong lib/tts/ngay.ts. */
+const ymd = ymdVN
 
 /** Giây epoch → ISO. TikTok trả chuỗi số, không phải ISO. */
 const toIso = (v?: string) => {

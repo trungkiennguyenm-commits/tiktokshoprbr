@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import { getShopContext } from '@/lib/tts/connection'
 import { ttsRequest } from '@/lib/tts/sign'
+import { ymdVN } from '@/lib/tts/ngay'
 
 /**
  * Kéo phễu từng sản phẩm, tách theo kênh, về shop_product_channel_monthly.
@@ -32,6 +33,9 @@ const soChuoi = (s: unknown) => {
   return Number.isFinite(v) ? v : null
 }
 const soNguyen = (n: unknown) => (typeof n === 'number' ? n : null)
+/** Mốc tháng tự dựng bằng Date.UTC nên toISOString là đúng cho chúng.
+ *  Riêng mốc "hôm nay" phải theo múi giờ shop, nếu không tháng đang chạy
+ *  thiếu mất ngày gần nhất — xem lib/tts/ngay.ts. */
 const ngayISO = (d: Date) => d.toISOString().slice(0, 10)
 
 /** Tên khối của TikTok → tên kênh ngắn dùng trong bảng. */
@@ -125,7 +129,7 @@ export async function syncProductChannels(soThang = 1, lui = 0) {
     const thang = ngayISO(dau)
     if (dau.getTime() < somNhat) { boQua.push(thang); continue }
 
-    const hetNgay = cuoi.getTime() > Date.now() ? ngayISO(new Date()) : ngayISO(cuoi)
+    const hetNgay = cuoi.getTime() > Date.now() ? ymdVN() : ngayISO(cuoi)
     let pageToken: string | undefined
 
     for (let i = 0; i < TRANG_TOI_DA; i++) {

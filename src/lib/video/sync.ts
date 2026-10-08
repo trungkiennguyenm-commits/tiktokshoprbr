@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import { getShopContext } from '@/lib/tts/connection'
 import { ttsRequest } from '@/lib/tts/sign'
+import { ymdVN } from '@/lib/tts/ngay'
 
 /**
  * Kéo hiệu suất từng video về bảng shop_video_monthly.
@@ -76,6 +77,9 @@ const soChuoi = (s?: string) => {
   const v = Number(s ?? NaN)
   return Number.isFinite(v) ? v : null
 }
+/** Mốc tháng tự dựng bằng Date.UTC nên toISOString là đúng cho chúng.
+ *  Riêng mốc "hôm nay" phải theo múi giờ shop, nếu không tháng đang chạy
+ *  thiếu mất ngày gần nhất — xem lib/tts/ngay.ts. */
 const ngayISO = (d: Date) => d.toISOString().slice(0, 10)
 
 /** Danh sách tháng cần kéo, mới nhất trước. */
@@ -112,7 +116,7 @@ export async function syncShopVideos(soThang = 1, lui = 0) {
     }
 
     // Tháng đang chạy dở thì chốt ở hôm nay, đừng hỏi ngày tương lai.
-    const hetNgay = cuoi.getTime() > Date.now() ? ngayISO(new Date()) : ngayISO(cuoi)
+    const hetNgay = cuoi.getTime() > Date.now() ? ymdVN() : ngayISO(cuoi)
     let pageToken: string | undefined
 
     for (let i = 0; i < TRANG_TOI_DA; i++) {

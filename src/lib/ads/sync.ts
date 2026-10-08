@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase'
+import { ymdVN } from '@/lib/tts/ngay'
 import { ADS } from './config'
 import { adsGet, adsToken } from './client'
 
@@ -21,7 +22,8 @@ const REPORT_PATH = '/open_api/v1.3/gmv_max/report/get/'
  *  TikTok chấp nhận — đã kiểm chứng bằng cách gửi giá trị sai và đọc lỗi. */
 const PROMO_TYPES = ['LIVE_GMV_MAX', 'PRODUCT_GMV_MAX'] as const
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10)
+/** Ngày theo múi giờ shop — xem ghi chú trong lib/tts/ngay.ts. */
+const ymd = ymdVN
 
 /**
  * Tách tên campaign thành cột.

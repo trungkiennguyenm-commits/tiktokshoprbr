@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import { getShopContext } from '@/lib/tts/connection'
 import { ttsRequest } from '@/lib/tts/sign'
+import { ymdVNLui } from '@/lib/tts/ngay'
 
 /**
  * Đồng bộ tổng quan livestream CẤP SHOP.
@@ -62,8 +63,9 @@ const soChuoi = (s?: string) => {
 export async function syncLiveOverview(days = 30) {
   const ctx = await getShopContext()
   const db = supabaseAdmin()
-  const ngay = (back: number) =>
-    new Date(Date.now() - back * 86_400_000).toISOString().slice(0, 10)
+  // Ngày theo múi giờ shop. Dùng UTC là lùi một ngày vì cron chạy 03:00
+  // giờ Việt Nam, tức 20:00 UTC hôm trước — xem lib/tts/ngay.ts.
+  const ngay = (back: number) => ymdVNLui(back)
 
   const errors: string[] = []
   let rows = 0
