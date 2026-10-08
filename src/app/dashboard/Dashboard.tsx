@@ -146,17 +146,17 @@ export type HuyAffiliate = {
  *   - aff_*: đơn thật trong sổ shop, chỉ có với video affiliate. Video kênh
  *     nhà luôn null vì TikTok chỉ gắn đơn với nội dung khi có hoa hồng —
  *     giới hạn của API, không phải sync thiếu. */
+/** View còn các cột title, duration, video_post_time, advertisable,
+ *  hash_tags, v_to_l_rate, video_finish_rate, attributed_gmv — không khai
+ *  ở đây vì không chỗ nào đọc, và page.tsx cũng không lấy chúng về
+ *  (xem COT). Muốn dùng lại thì phải sửa cả hai chỗ. */
 export type VideoThang = {
   thang: string
   username: string | null; nick_name: string | null; author_type: string | null
-  title: string | null; duration: number | null
-  video_post_time: string | null; advertisable: boolean | null
-  hash_tags: string[] | null
   video_url: string | null; video_nhan: string
   views: number | null; product_impressions: number | null; product_clicks: number | null
   click_through_rate: number | null; ctor: number | null
-  v_to_l_rate: number | null; video_finish_rate: number | null
-  gmv: number | null; indirect_gmv: number | null; attributed_gmv: number | null
+  gmv: number | null; indirect_gmv: number | null
   gpm: number | null; sku_orders: number | null; items_sold: number | null
   likes: number | null; comments: number | null; shares: number | null
   new_followers: number | null
@@ -177,15 +177,10 @@ export type VideoThang = {
 export type ProductKenh = {
   thang: string; kenh: string; san_pham: string; category: string
   product_impressions: number | null; product_clicks: number | null
-  add_cart_count: number | null; add_cart_users: number | null
-  unique_product_impressions: number | null; unique_clicks: number | null
-  orders: number | null; sku_orders: number | null
-  items_sold: number | null; estimated_customers: number | null
+  add_cart_count: number | null
+  orders: number | null; sku_orders: number | null; items_sold: number | null
   gmv: number | null; aov: number | null
-  refunds: number | null; refunded_items: number | null; refund_customers: number | null
-  gross_merchandise_value: number | null; shipping_fees: number | null
-  new_live_count: number | null; new_video_count: number | null
-  avg_daily_creator_posted_content: number | null
+  refunds: number | null; refunded_items: number | null
   /** Chưa có trong product_catalog: tên đang lấy tạm từ bảng video hoặc
    *  từ đuôi product_id, và chưa có ngành hàng nên bộ lọc Robot/Handheld
    *  sẽ bỏ sót nó. */

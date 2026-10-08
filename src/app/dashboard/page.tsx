@@ -22,11 +22,14 @@ export const dynamic = 'force-dynamic'
  * chết. "canceling statement due to statement timeout" trên một view nhẹ
  * như v_shipping_daily là dấu hiệu của nghẽn, không phải của view đó.
  *
- * Giữ Promise.all ở chỗ gọi (nếu không TS gộp 27 kiểu trả về thành union),
+ * Giữ Promise.all ở chỗ gọi (nếu không TS gộp 30 kiểu trả về thành union),
  * chỉ xếp hàng bên trong fetchAll. Tăng số này chỉ nên làm cùng lúc với
  * nâng cấu hình DB.
+ *
+ * Hạ 6 -> 4 cùng lúc với COT bên dưới: hai thứ chữa cùng một bệnh từ hai
+ * đầu — COT giảm số byte mỗi lượt, số này giảm số lượt chạy cùng lúc.
  */
-const SONG_SONG = 6
+const SONG_SONG = 4
 let dangChay = 0
 const hangDoi: (() => void)[] = []
 
@@ -40,15 +43,48 @@ function traLuot() {
   hangDoi.shift()?.()
 }
 
+/**
+ * Cột cần lấy, cho những view mà `select *` tốn vô ích.
+ *
+ * `v_video_thang` nặng 7,1 MB cho 6.860 dòng nhưng tự nó chạy hết 22ms —
+ * toàn bộ chi phí là serialize JSON rồi đẩy qua 7 lần round-trip của
+ * PostgREST. Riêng `title` chiếm 3,3 MB và `hash_tags` 0,9 MB mà không có
+ * chỗ nào trong Dashboard đọc tới. Đây là lý do một view nhẹ như
+ * v_perf_monthly bị đẩy quá statement_timeout: nghẽn đường truyền, không
+ * phải view nào chậm.
+ *
+ * Chỉ liệt kê những view đủ lớn để bù công bảo trì. Bỏ hai cột khỏi một
+ * view 154 dòng không tiết kiệm gì mà lại thêm một chỗ để gõ sai tên.
+ *
+ * THÊM CỘT VÀO TYPE THÌ PHẢI THÊM VÀO ĐÂY, nếu không nó sẽ về undefined.
+ */
+const COT: Record<string, string> = {
+  v_video_thang: [
+    'thang', 'username', 'nick_name', 'author_type', 'video_url', 'video_nhan',
+    'views', 'product_impressions', 'product_clicks', 'click_through_rate', 'ctor',
+    'gmv', 'indirect_gmv', 'gpm', 'sku_orders', 'items_sold',
+    'likes', 'comments', 'shares', 'new_followers',
+    'product_name', 'model_short', 'category', 'so_product',
+    'aff_don', 'aff_huy', 'aff_gmv_dat', 'aff_gmv_con',
+  ].join(','),
+  v_product_kenh: [
+    'thang', 'kenh', 'san_pham', 'category',
+    'product_impressions', 'product_clicks', 'add_cart_count',
+    'orders', 'sku_orders', 'items_sold',
+    'gmv', 'aov', 'refunds', 'refunded_items', 'chua_gan',
+  ].join(','),
+}
+
 /** PostgREST caps a single response (1000 rows by default) and several of
  *  these views are already past that. Page until a short page comes back. */
 async function fetchAll<T>(db: ReturnType<typeof supabaseAdmin>, view: string): Promise<T[]> {
   const SIZE = 1000
   const out: T[] = []
+  const cot = COT[view] ?? '*'
   await xinLuot()
   try {
     for (let page = 0; page < 25; page++) {
-      const { data, error } = await db.from(view).select('*').range(page * SIZE, page * SIZE + SIZE - 1)
+      const { data, error } = await db.from(view).select(cot).range(page * SIZE, page * SIZE + SIZE - 1)
       if (error) throw new Error(`${view}: ${error.message}`)
       const rows = (data ?? []) as T[]
       out.push(...rows)
