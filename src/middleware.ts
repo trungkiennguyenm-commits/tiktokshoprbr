@@ -26,6 +26,7 @@ export const config = {
   /* /api/tiktok-ads là nơi TikTok trả trình duyệt về sau khi uỷ quyền. Chặn nó
      bằng mật khẩu thì auth_code mất khi bị đẩy sang /login — mà auth_code chỉ
      sống vài phút. Nó vô hại khi để mở: không có auth_code hợp lệ của đúng app
-     thì gọi vào chỉ nhận lỗi. */
-  matcher: ['/((?!login|api/login|api/cron|api/tiktok-ads|_next/static|_next/image|favicon.ico).*)'],
+     thì gọi vào chỉ nhận lỗi.
+     /api/livehub: LiveHub gọi server-to-server, tự kiểm khoá LIVEHUB_SYNC_SECRET. */
+  matcher: ['/((?!login|api/login|api/cron|api/tiktok-ads|api/livehub|_next/static|_next/image|favicon.ico).*)'],
 }
