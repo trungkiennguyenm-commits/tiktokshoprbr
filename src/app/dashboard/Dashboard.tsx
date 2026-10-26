@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart, StackChart, DeltaChart, RowBars, ComboChart, MultiStack,
   type Pt, type PtN,
@@ -289,13 +289,15 @@ type Props = {
   liveDaily: LiveDaily[]; liveMonthly: LiveMonth[]
   liveRooms: LiveRoomMonth[]; liveSessions: LiveSession[]; liveLgm: LiveLgm[]
   kenhMonthly: KenhMonth[]; kenhDaily: KenhDay[]; kenhSku: KenhSku[]
-  campTong: CampTong[]; campMatrix: CampMatrix[]; huyChiTiet: HuyChiTiet[]
-  huyModel: HuyModel[]; hanhTrinh: HanhTrinh[]; transitModel: TransitModel[]
+  campTong: CampTong[]; campMatrix: CampMatrix[]
+  hanhTrinh: HanhTrinh[]; transitModel: TransitModel[]
   liveOverview: LiveOverview[]
   adsObjective: AdsObjective[]; adsObjectiveDay: AdsObjectiveDay[]
   huyAffiliate: HuyAffiliate[]
-  videoThang: VideoThang[]
-  productKenh: ProductKenh[]
+  /* huyChiTiet, huyModel, videoThang, productKenh KHONG o day: bon nguon
+     nay nang 15,9 MB trong tong 21,6 MB cua trang, va moi cai chi duoc doc
+     trong dung mot sheet. Chung duoc tai qua /api/data/<khoa> khi sheet do
+     duoc mo — xem useLazy ben duoi va VIEW_LAZY trong lib/dashboard/tai. */
 }
 
 /* ============================== helpers ============================== */
@@ -2087,14 +2089,107 @@ function SeriesTable({ rows, lbl }: { rows: Rolled[]; lbl: (k: string) => string
   )
 }
 
+/* ======================= tai du lieu theo sheet ======================= */
+
+type Lazy<T> = { rows: T[]; dangTai: boolean; loi: string | null; thu: () => void }
+
+/**
+ * Tải một nguồn khi sheet của nó được mở, rồi giữ lại cho cả phiên.
+ *
+ * `can` bật lên khi người xem vào sheet đó. Tải xong thì nằm trong state,
+ * bấm qua bấm lại không gọi lại server.
+ *
+ * TẢI TRƯỚC Ở CHẾ ĐỘ NỀN: sau khi trang đã dựng xong thì kéo sẵn. Phải
+ * đặt SAU lần dựng đầu (không phải trong cùng đợt với trang) — nếu không
+ * thì lại thành tải hết một lượt y như cũ, chỉ đổi đường đi.
+ *
+ * `tre` GIÃN BỐN NGUỒN RA, đừng cho bằng nhau: để cùng 2 giây thì đúng
+ * giây thứ 2 cả bốn bắn một lượt, 16 MB cùng lúc — chính thứ đang tránh.
+ * Mở sheet nào thì sheet đó không phải chờ hết `tre`, nó kéo ngay.
+ *
+ * Middleware bảo vệ /api/data khi đã đặt DASHBOARD_PASSWORD, và lúc đó nó
+ * REDIRECT sang /login chứ không trả 401. fetch tự đi theo redirect nên
+ * phản hồi là HTML của trang login với status 200 — JSON.parse sẽ ném lỗi
+ * khó hiểu. Vì vậy kiểm content-type trước khi parse.
+ */
+function useLazy<T>(khoa: string, can: boolean, tre: number): Lazy<T> {
+  const [rows, setRows] = useState<T[]>([])
+  const [dangTai, setDangTai] = useState(false)
+  const [loi, setLoi] = useState<string | null>(null)
+  const xong = useRef(false)
+  const dangChay = useRef(false)
+
+  const keo = useCallback(async (buocLai = false) => {
+    if (dangChay.current) return
+    if (xong.current && !buocLai) return
+    dangChay.current = true
+    setDangTai(true)
+    setLoi(null)
+    try {
+      const res = await fetch(`/api/data/${khoa}`, { credentials: 'same-origin' })
+      const kieu = res.headers.get('content-type') ?? ''
+      if (!kieu.includes('application/json')) {
+        throw new Error(res.redirected || res.url.includes('/login')
+          ? 'Phiên đăng nhập đã hết — tải lại trang.'
+          : `Máy chủ trả về ${res.status}, không phải JSON.`)
+      }
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error ?? `Lỗi ${res.status}`)
+      setRows(data as T[])
+      xong.current = true
+    } catch (e) {
+      setLoi(e instanceof Error ? e.message : String(e))
+    } finally {
+      dangChay.current = false
+      setDangTai(false)
+    }
+  }, [khoa])
+
+  // Mở đúng sheet thì kéo ngay.
+  useEffect(() => { if (can) void keo() }, [can, keo])
+
+  // Không mở thì vẫn kéo sẵn, nhưng để sau khi trang đã dùng được.
+  useEffect(() => {
+    const t = setTimeout(() => { void keo() }, tre)
+    return () => clearTimeout(t)
+  }, [keo, tre])
+
+  return { rows, dangTai, loi, thu: () => void keo(true) }
+}
+
+/** Chỗ giữ sẵn trong lúc một sheet đang kéo dữ liệu của nó.
+ *
+ *  Phải thay cho nội dung chứ không đặt thêm bên trên: các memo trả [] khi
+ *  chưa có dữ liệu, nên nội dung lúc đó là một trang toàn số 0 — nhìn
+ *  giống số thật. */
+function ChoTai({ loi, thu }: { loi?: string | null; thu?: () => void }) {
+  return (
+    <div style={{ padding: '56px 20px', textAlign: 'center', color: loi ? '#b4232a' : '#777' }}>
+      {loi
+        ? (
+          <>
+            <p style={{ margin: 0, fontWeight: 600 }}>Không tải được dữ liệu cho sheet này</p>
+            <p style={{ margin: '6px 0 0', fontSize: 13 }}>{loi}</p>
+            {thu && (
+              <button onClick={thu} style={{ marginTop: 14, padding: '6px 14px', cursor: 'pointer' }}>
+                Thử lại
+              </button>
+            )}
+          </>
+        )
+        : <p style={{ margin: 0 }}>Đang tải dữ liệu của sheet này…</p>}
+    </div>
+  )
+}
+
 /* ================================ page ================================ */
 
 export default function Dashboard({
   monthly, daily, sku, skuMonthly, skuDaily, segMonthly, shipDaily,
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
-  campTong, campMatrix, huyChiTiet, huyModel, hanhTrinh, transitModel, liveOverview, adsObjective, adsObjectiveDay,
-  huyAffiliate, videoThang, productKenh,
+  campTong, campMatrix, hanhTrinh, transitModel, liveOverview, adsObjective, adsObjectiveDay,
+  huyAffiliate,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -2112,6 +2207,28 @@ export default function Dashboard({
 
   const [huySort, setHuySort] = useState<'sau' | 'instant'>('sau')
   const [sec, setSec] = useState<Sec>('Summary')
+
+  /* ===================== nguồn tải theo sheet =====================
+     Bốn nguồn nặng nhất không đi kèm lần dựng trang mà tự gọi khi sheet
+     của nó được mở. Đo 26/10: cả trang gửi 21,6 MB JSON, riêng bốn cái này
+     15,9 MB — mở sheet Sales cũng phải chờ xong 10,5 MB dữ liệu video.
+
+     Mỗi nguồn chỉ được đọc trong đúng một sheet (đã kiểm từng chỗ dùng),
+     nên tách được mà không sheet nào khác bị ảnh hưởng.
+
+     Trong lúc chờ, rows là [] — các memo bên dưới vẫn chạy bình thường và
+     cho số 0. Vì vậy ba sheet liên quan PHẢI hiện <ChoTai> thay cho nội
+     dung, nếu không người xem sẽ thấy một bảng số 0 và tin là thật. */
+  const huyChiTiet = useLazy<HuyChiTiet>('huyChiTiet', sec === 'Cancellations', 2000)
+  const huyModel = useLazy<HuyModel>('huyModel', sec === 'Cancellations', 4000)
+  const productKenh = useLazy<ProductKenh>('productKenh', sec === 'Traffic', 6000)
+  // videoThang keo cuoi: nang nhat (4,2 MB sau khi bo cot chet) va it mo nhat.
+  const videoThang = useLazy<VideoThang>('videoThang', sec === 'Videos', 9000)
+
+  const choCanc = huyChiTiet.dangTai || huyModel.dangTai
+  const loiCanc = huyChiTiet.loi ?? huyModel.loi
+  // Sheet Cancellations an hai nguon, bam Thu lai phai goi ca hai.
+  const thuCanc = () => { huyChiTiet.thu(); huyModel.thu() }
   const [cat, setCat] = useState<CatKey>('all')
   const [range, setRange] = useState<RangeKey>('mom')
   /** Chọn nhiều tháng để so sánh. Rỗng nghĩa là lấy hết. */
@@ -2547,7 +2664,7 @@ export default function Dashboard({
     // Cơ cấu mốc thời gian gộp về 6 nhóm thô cho biểu đồ theo loại ngày —
     // 12 nhóm mịn trên một trục 10 cột thì không đọc được.
     const mix = new Map<string, number[]>()
-    for (const r of huyChiTiet) {
+    for (const r of huyChiTiet.rows) {
       if (!giu(r.ngay) || !catOk(r.category)) continue
       const arr = mix.get(r.loai_ngay) ?? Array(KHOANG_TT.length).fill(0)
       arr[KHOANG_TT.indexOf(khoangTho(r.thu_tu))] += Number(r.so_luong || 0)
@@ -2589,7 +2706,7 @@ export default function Dashboard({
       }
       : undefined
     return { rows, bau }
-  }, [campTong, huyChiTiet, keys, byMonth, cat])
+  }, [campTong, huyChiTiet.rows, keys, byMonth, cat])
 
   /* ---- huỷ theo dòng chảy của tháng ----
      Trục ngang là thời gian thật, chạy từ đầu tháng tới cuối tháng, để thấy
@@ -2634,7 +2751,7 @@ export default function Dashboard({
     // Cơ cấu 12 mốc mịn + tách trước/sau khi shipper lấy hàng
     const mix = new Map<string, number[]>()
     const lay = new Map<string, { truoc: number; sau: number }>()
-    for (const r of huyChiTiet) {
+    for (const r of huyChiTiet.rows) {
       if (!giu(r.ngay) || !catOk(r.category)) continue
       const k = khoa(r.ngay)
       const sl = Number(r.so_luong || 0)
@@ -2681,7 +2798,7 @@ export default function Dashboard({
       .filter((r): r is NonNullable<typeof r> => r !== null)
 
     return { rows, theoNgayThat }
-  }, [campTong, huyChiTiet, keys, byMonth, cat])
+  }, [campTong, huyChiTiet.rows, keys, byMonth, cat])
 
   /* ---- lý do huỷ ----
      Lý do nằm ở cấp ĐƠN (orders.cancel_reason), không ở cấp dòng sản phẩm,
@@ -2689,7 +2806,7 @@ export default function Dashboard({
      mọi số huỷ khác trên dashboard. */
 
   const lyDo = useMemo(() => {
-    const rows = huyChiTiet
+    const rows = huyChiTiet.rows
       .filter((r) => (byMonth ? keys.has(`${r.ngay.slice(0, 7)}-01`) : keys.has(r.ngay)))
       .filter((r) => cat === 'all' || r.category === cat)
 
@@ -2755,7 +2872,7 @@ export default function Dashboard({
       theoKy: chuanHoa(theoKy, kyTT),
       theoNgay: chuanHoa(theoNgay, NGAY_TT),
     }
-  }, [huyChiTiet, keys, byMonth, cat])
+  }, [huyChiTiet.rows, keys, byMonth, cat])
 
   /* ---- trước hay sau khi shipper lấy hàng ----
      Câu hỏi vận hành thật sự. Đơn chết trước khi lấy hàng chỉ mất cơ hội bán;
@@ -2764,7 +2881,7 @@ export default function Dashboard({
      ngày 15" — nó rơi vào mốc 3–4 days. */
 
   const pickup = useMemo(() => {
-    const rows = huyChiTiet
+    const rows = huyChiTiet.rows
       .filter((r) => (byMonth ? keys.has(`${r.ngay.slice(0, 7)}-01`) : keys.has(r.ngay)))
       .filter((r) => cat === 'all' || r.category === cat)
 
@@ -2821,7 +2938,7 @@ export default function Dashboard({
       pctSau: p1(sau, truoc + sau),
       gioTrongTayShipper: nLay ? Math.round((gioLay / nLay) * 10) / 10 : null,
     }
-  }, [huyChiTiet, keys, byMonth, cat])
+  }, [huyChiTiet.rows, keys, byMonth, cat])
 
   /* ---- hành trình đơn hàng ----
      Trung vị không gộp được giữa các kỳ, nên thay vì cố tính lại ở client ta
@@ -2890,7 +3007,7 @@ export default function Dashboard({
       model: string; cat: string; dat: number; huy: number; instant: number
       truoc: number; sau: number; nmvSau: number; nmvTruoc: number
     }>()
-    for (const r of huyModel) {
+    for (const r of huyModel.rows) {
       if (!giu(r.ngay) || (cat !== 'all' && r.category !== cat)) continue
       const c = m.get(r.model)
         ?? { model: r.model, cat: r.category, dat: 0, huy: 0, instant: 0, truoc: 0, sau: 0, nmvSau: 0, nmvTruoc: 0 }
@@ -2933,7 +3050,7 @@ export default function Dashboard({
       ? (huySort === 'sau' ? b.pctSau - a.pctSau : b.pctTruoc - a.pctTruoc)
       : (a.mong ? 1 : -1)))
     return { rows, tb, tong, soMong: rows.length - day.length, soModel: rows.length }
-  }, [huyModel, keys, byMonth, cat, huySort])
+  }, [huyModel.rows, keys, byMonth, cat, huySort])
 
   /* ---- ma trận ngày đặt × ngày huỷ ----
      Trả lời trực tiếp câu hỏi: đơn đặt ngày DDAY thì chết vào loại ngày nào.
@@ -4411,11 +4528,11 @@ export default function Dashboard({
      theo ngày; nút 7 ngày / 30 ngày không áp dụng được. */
 
   const vidRows = useMemo(
-    () => videoThang
+    () => videoThang.rows
       .filter((r) => goodMonths.includes(r.thang))
       .filter((r) => cat === 'all' || r.category === cat)
       .filter((r) => vidThangCut || chiCoThangNay || r.thang !== THANG_NAY),
-    [videoThang, goodMonths, cat, vidThangCut, chiCoThangNay],
+    [videoThang.rows, goodMonths, cat, vidThangCut, chiCoThangNay],
   )
 
   const vidLoc = useMemo(
@@ -4562,12 +4679,12 @@ export default function Dashboard({
   const TR_PHU_KIEN = ['accessory', 'gift']
 
   const trRows = useMemo(
-    () => productKenh
+    () => productKenh.rows
       .filter((r) => goodMonths.includes(r.thang))
       .filter((r) => cat === 'all' || r.category === cat)
       .filter((r) => !trChiMay || !TR_PHU_KIEN.includes(r.category))
       .filter((r) => trThangCut || chiCoThangNay || r.thang !== THANG_NAY),
-    [productKenh, goodMonths, cat, trChiMay, trThangCut, chiCoThangNay],
+    [productKenh.rows, goodMonths, cat, trChiMay, trThangCut, chiCoThangNay],
   )
 
   const trCong = (rows: ProductKenh[]) => {
@@ -8169,7 +8286,9 @@ export default function Dashboard({
 
         {/* =================== CANCELLATIONS =================== */}
         {sec === 'Cancellations' && (
-          <>
+          (choCanc || loiCanc)
+            ? <ChoTai loi={loiCanc} thu={thuCanc} />
+            : <>
             <section id="s5-1">
               <h2><span className="hno">5.1</span>{periodNote} — key numbers</h2>
               <p className="sub">
@@ -9187,7 +9306,9 @@ export default function Dashboard({
 
         {/* ======================== VIDEOS ======================== */}
         {sec === 'Videos' && (
-          <>
+          (videoThang.dangTai || videoThang.loi)
+            ? <ChoTai loi={videoThang.loi} thu={videoThang.thu} />
+            : <>
             <section id="s7-1">
               <h2><span className="hno">7.1</span>Video performance — {monthNote}</h2>
               <p className="sub">
@@ -9486,7 +9607,9 @@ export default function Dashboard({
 
         {/* ==================== PRODUCT TRAFFIC ==================== */}
         {sec === 'Traffic' && (
-          <>
+          (productKenh.dangTai || productKenh.loi)
+            ? <ChoTai loi={productKenh.loi} thu={productKenh.thu} />
+            : <>
             <section id="s4-1">
               <h2><span className="hno">4.1</span>The funnel — {monthNote}</h2>
               <p className="sub">
