@@ -281,39 +281,17 @@ export type LiveSession = {
   product_impressions: number; product_clicks: number; avg_viewing_duration: number
 }
 
-/** v_sp_phan_loai — mỗi sản phẩm được xếp vào category nào, band nào, và
- *  việc xếp đó đến TỪ ĐÂU. Sheet tra cứu để bắt lỗi sớm.
+/** v_model_band — bảng tra cứu gọn: mỗi model ở band nào, category nào.
  *
- *  HAI BÊN PHÂN LOẠI KHÁC NHAU, đây là lý do sheet này tồn tại:
- *    cat_don    = coalesce(catalog, regex, 'unknown')  ← sheet theo đơn
- *    cat_funnel = coalesce(catalog, 'khac')            ← Product funnel
- *  Chưa gắn catalog thì funnel xếp 'khac' và bộ lọc Robot/Handheld loại
- *  mất, dù sheet theo đơn vẫn phân đúng nhờ regex.
- *
- *  cac_band là DANH SÁCH, không phải một band: v_fact_items chia band theo
- *  GIÁ CUỐI PHÍA SELLER (original_price − seller_discount) của từng dòng
- *  đơn, nên cùng một product_id bán ở hai mức giá sẽ nằm ở hai band.
- *
- *  sp_ma có tiền tố '·' để product_id 19 chữ số không bị num() ép qua
- *  Number rồi mất chính xác. */
-export type SpPhanLoai = {
-  sp_ma: string; ten: string; nguon_ten: string; trong_catalog: boolean
-  cat_don: string; cat_funnel: string; cat_catalog: string | null
-  cat_regex: string | null; so_cat_regex: number
-  model_dung: string | null; ten_model_regex: string | null; so_ten_model: number
-  cac_band: string | null; so_band: number
-  gia_min: number | null; gia_max: number | null
-  dong_don: number; nmv: number
-  lan_dau: string | null; lan_cuoi: string | null
-  co_analytics: boolean; gmv_funnel: number; thang_dau_analytics: string | null
-  canh_bao_chua_gan: boolean; canh_bao_nhieu_ten: boolean
-  canh_bao_catalog_ghi_de: boolean; canh_bao_nhieu_band: boolean
-  uu_tien: number
-  /** Có đơn trong 30 ngày, HOẶC còn lượt hiển thị / GMV ở tháng này hay
-   *  tháng trước. Là "còn hoạt động" chứ không phải "còn bán": Saros 10
-   *  đã 0 đơn suốt 6 tháng mà vẫn hiện 4.276 lượt trong tháng 10 — listing
-   *  còn sống nên vẫn chiếm chỗ trong 'khac' của sheet funnel. */
-  con_ban: boolean
+ *  band là band CHÍNH (chiếm nhiều net pcs nhất), cac_band là danh sách đủ.
+ *  29/93 model nằm ở nhiều band vì band tính theo giá cuối từng dòng đơn và
+ *  mức giảm thay đổi theo đợt — gán một band duy nhất là nói sai, nên so_band
+ *  > 1 được đánh dấu ngay trong bảng. */
+export type ModelBand = {
+  model: string; category: string; band: string; band_order: number
+  cac_band: string; so_band: number
+  net_pcs: number; nmv: number; gia_cuoi_tb: number | null
+  thieu_catalog: boolean
 }
 
 type Props = {
@@ -329,7 +307,7 @@ type Props = {
   liveOverview: LiveOverview[]
   adsObjective: AdsObjective[]; adsObjectiveDay: AdsObjectiveDay[]
   huyAffiliate: HuyAffiliate[]
-  spPhanLoai: SpPhanLoai[]
+  modelBand: ModelBand[]
   /* huyChiTiet, huyModel, videoThang, productKenh KHONG o day: bon nguon
      nay nang 15,9 MB trong tong 21,6 MB cua trang, va moi cai chi duoc doc
      trong dung mot sheet. Chung duoc tai qua /api/data/<khoa> khi sheet do
@@ -363,9 +341,6 @@ const p1 = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0)
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const mmyy = (s: string) => `${MONTH_NAMES[Number(s.slice(5, 7)) - 1]} ${s.slice(2, 4)}`
 const ddmm = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`
-/** Ngày KÈM NĂM. Danh mục trải hơn một năm, nên '02/09' cạnh '01/04'
- *  mà thiếu năm thì đọc ngược thứ tự. */
-const ngayNam = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(2, 4)}`
 
 const CATS = [
   { key: 'all', label: 'All products' },
@@ -2245,7 +2220,7 @@ export default function Dashboard({
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
   campTong, campMatrix, hanhTrinh, transitModel, liveOverview, adsObjective, adsObjectiveDay,
-  huyAffiliate, spPhanLoai,
+  huyAffiliate, modelBand,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -2287,50 +2262,28 @@ export default function Dashboard({
   const thuCanc = () => { huyChiTiet.thu(); huyModel.thu() }
 
   /* ---------------- sheet Category & band ----------------
-     Sheet tra cứu, KHÔNG theo bộ lọc tháng / ngành hàng phía trên: mục
-     đích là soát toàn bộ danh mục, lọc đi thì đúng cái đang thiếu lại bị
-     ẩn mất. */
-  const [splTim, setSplTim] = useState('')
-  // Mặc định chỉ hiện cái cần làm — đó là mục đích của bảng.
-  const [splChiLoi, setSplChiLoi] = useState(true)
+     Bảng tra cứu, KHÔNG theo bộ lọc tháng / ngành hàng phía trên: mục đích
+     là soát cả danh mục, lọc đi thì đúng cái đang thiếu lại bị ẩn mất. */
+  const [mbTim, setMbTim] = useState('')
 
-  const splLoc = useMemo(() => {
-    const q = splTim.trim().toLowerCase()
-    return spPhanLoai
-      .filter((r) => !splChiLoi || r.uu_tien < 9)
+  const mbLoc = useMemo(() => {
+    const q = mbTim.trim().toLowerCase()
+    return modelBand
       .filter((r) => !q
-        || r.ten.toLowerCase().includes(q)
-        || (r.model_dung ?? '').toLowerCase().includes(q)
-        || r.cat_don.toLowerCase().includes(q)
-        || r.sp_ma.includes(q))
+        || r.model.toLowerCase().includes(q)
+        || r.category.toLowerCase().includes(q)
+        || r.band.toLowerCase().includes(q))
       .slice()
-      .sort((a, b) => a.uu_tien - b.uu_tien
-        || Number(b.nmv || 0) - Number(a.nmv || 0)
-        || a.ten.localeCompare(b.ten))
-  }, [spPhanLoai, splTim, splChiLoi])
+      .sort((a, b) => a.category.localeCompare(b.category)
+        || a.band_order - b.band_order
+        || Number(b.net_pcs || 0) - Number(a.net_pcs || 0))
+  }, [modelBand, mbTim])
 
-  /** Tổng cho dải tile. Tiền cộng được, nên cộng; không lấy trung bình của
-   *  tỷ lệ ở đâu cả. */
-  const splTong = useMemo(() => {
-    const t = {
-      sp: spPhanLoai.length,
-      chuaGan: 0, chuaGanHD: 0, chuaGanNgung: 0, nmvChuaGan: 0, gmvKhac: 0,
-      nhieuBand: 0, ghiDe: 0, nhieuTen: 0, chiAnalytics: 0,
-    }
-    for (const r of spPhanLoai) {
-      if (r.canh_bao_chua_gan) {
-        t.chuaGan++
-        t.nmvChuaGan += Number(r.nmv || 0)
-        if (r.con_ban) t.chuaGanHD++; else t.chuaGanNgung++
-      }
-      if (r.cat_funnel === 'khac') t.gmvKhac += Number(r.gmv_funnel || 0)
-      if (r.canh_bao_nhieu_band) t.nhieuBand++
-      if (r.canh_bao_catalog_ghi_de) t.ghiDe++
-      if (r.canh_bao_nhieu_ten) t.nhieuTen++
-      if (Number(r.dong_don || 0) === 0 && r.co_analytics) t.chiAnalytics++
-    }
-    return t
-  }, [spPhanLoai])
+  const mbThieu = useMemo(
+    () => modelBand.filter((r) => r.thieu_catalog).length,
+    [modelBand],
+  )
+
 
   const [cat, setCat] = useState<CatKey>('all')
   const [range, setRange] = useState<RangeKey>('mom')
@@ -10250,236 +10203,65 @@ export default function Dashboard({
         {sec === 'Phanloai' && (
           <>
             <section>
-              <h2>Mỗi sản phẩm đang được xếp vào đâu, và do cái gì xếp</h2>
+              <h2>Model &rarr; price band &rarr; category</h2>
               <p className="sub">
-                Sheet tra cứu để bắt lỗi phân loại trước khi nó đi vào báo cáo. Bộ lọc tháng và
-                ngành hàng phía trên <b>không áp dụng</b> ở đây — lọc đi thì đúng cái đang thiếu
-                lại bị ẩn mất.
+                Tra cứu nhanh mỗi model đang được xếp vào đâu. Bộ lọc phía trên không áp dụng ở
+                đây. Band theo giá cuối phía seller; <b>*</b> là model nằm ở nhiều band,
+                <b> —</b> ở cột Catalog là chưa có trong <code>product_catalog</code>
+                {mbThieu > 0 && <> ({mbThieu} model)</>}.
               </p>
-            </section>
-
-            <section>
-              <h2>Hai sheet đang phân loại khác nhau</h2>
-              <p className="sub">
-                Đây là chỗ dễ sai nhất, và nó không báo lỗi. Các sheet dựa trên đơn hàng có regex
-                đỡ khi thiếu catalog; sheet Product funnel thì không.
-              </p>
-              <div className="tablewrap">
-                <table>
-                  <thead><tr>
-                    <th>Sheet</th><th>Category lấy từ</th><th>Thiếu catalog thì sao</th>
-                  </tr></thead>
-                  <tbody>
-                    <tr>
-                      <td>Summary, Sales, Product performance, Cancellations, Discounts, P&amp;L</td>
-                      <td><code>catalog → regex tên → &lsquo;unknown&rsquo;</code></td>
-                      <td>Regex đọc tên và vẫn xếp đúng trong hầu hết trường hợp</td>
-                    </tr>
-                    <tr>
-                      <td>Product funnel</td>
-                      <td><code>catalog → &lsquo;khac&rsquo;</code></td>
-                      <td>
-                        <b style={{ color: 'var(--bad)' }}>Rơi vào &lsquo;khac&rsquo;</b> và bị bộ
-                        lọc Robot/Handheld loại khỏi phễu
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <p className="foot">
-                Vì vậy một sản phẩm có thể hiện đúng ở sheet Sales mà biến mất khỏi Product funnel.
-                Cách chữa luôn là thêm nó vào <code>product_catalog</code>, không phải sửa regex.
-              </p>
-            </section>
-
-            <section>
-              <h2>Tình trạng danh mục</h2>
-              <div className="tiles" style={{ marginTop: 20 }}>
-                <Tile label="Sản phẩm trong danh mục" value={n0(splTong.sp)}
-                  sub="gộp cả đơn hàng và TikTok analytics" />
-                <Tile label="Chưa gắn, đang hoạt động" value={n0(splTong.chuaGanHD)}
-                  tone={splTong.chuaGanHD > 0 ? 'bad' : 'ok'}
-                  sub="Product funnel xếp \u2018khac\u2019 ngay lúc này" />
-                <Tile label="Chưa gắn, đã ngừng" value={n0(splTong.chuaGanNgung)}
-                  sub="chỉ ảnh hưởng phân tích lịch sử" />
-                <Tile label="NMV đang dựa vào regex" value={bn(splTong.nmvChuaGan)} unit="bn"
-                  sub="phân loại đúng nhưng không có catalog đỡ" />
-                <Tile label="GMV nằm trong \u2018khac\u2019" value={bn(splTong.gmvKhac)} unit="bn"
-                  sub="phần phễu đang bỏ sót" />
-                <Tile label="Nằm nhiều price band" value={n0(splTong.nhieuBand)}
-                  sub="cùng product_id, hai mức giá" />
-                <Tile label="Chỉ có ở analytics" value={n0(splTong.chiAnalytics)}
-                  sub="chưa có đơn nào — sản phẩm mới" />
-              </div>
-              <p className="foot">
-                &ldquo;NMV đang dựa vào regex&rdquo; không phải tiền bị mất: các sheet theo đơn vẫn
-                tính đúng. Nó là phần đang phụ thuộc vào việc regex đọc tên trúng, nên một listing
-                đổi tên là đủ để nó lệch mà không ai hay.
-              </p>
-            </section>
-
-            <section>
-              <h2>Cần xử lý</h2>
-              <p className="sub">
-                Xếp theo mức cần làm trước, rồi theo NMV. Rỗng nghĩa là danh mục đang sạch.
-              </p>
-              <div className="sp-bar" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', margin: '12px 0' }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', margin: '12px 0' }}>
                 <input
-                  value={splTim}
-                  onChange={(e) => setSplTim(e.target.value)}
-                  placeholder="Tìm theo tên, model, category hoặc product_id"
-                  style={{ padding: '6px 10px', minWidth: 300, flex: '1 1 300px' }}
+                  value={mbTim}
+                  onChange={(e) => setMbTim(e.target.value)}
+                  placeholder="Tìm model, band hoặc category"
+                  style={{ padding: '6px 10px', minWidth: 260, flex: '1 1 260px' }}
                 />
-                <button className={`chip ${splChiLoi ? 'on' : ''}`} onClick={() => setSplChiLoi((v) => !v)}>
-                  {splChiLoi ? 'Chỉ hiện cần xử lý' : 'Hiện toàn bộ'}
-                </button>
-                <span className="muted" style={{ fontSize: 12.5 }}>
-                  {n0(splLoc.length)} / {n0(splTong.sp)} sản phẩm
-                </span>
+                <span className="muted" style={{ fontSize: 12.5 }}>{n0(mbLoc.length)} model</span>
               </div>
               <div className="tablewrap">
                 <table>
                   <thead><tr>
-                    <th>Sản phẩm</th>
-                    <th>Tên lấy từ</th>
-                    <th>Vấn đề</th>
-                    <th>Cat (sheet đơn)</th>
-                    <th>Cat (funnel)</th>
-                    <th>Price band</th>
-                    <th className="n">Giá</th>
-                    <th className="n">NMV<div className="uhint">bn</div></th>
-                    <th className="n">GMV funnel<div className="uhint">bn</div></th>
-                    <th>Bán từ</th>
-                    <th>Lần cuối</th>
+                    <th>Model</th>
+                    <th>Band</th>
+                    <th>Category</th>
+                    <th>Catalog</th>
+                    <th className="n">Giá cuối<div className="uhint">mn</div></th>
+                    <th className="n">Net pcs</th>
                   </tr></thead>
                   <tbody>
-                    {splLoc.map((r) => (
-                      <tr key={r.sp_ma}>
-                        <td style={{ maxWidth: 300 }}>
-                          {r.ten}
-                          {r.model_dung && r.model_dung !== r.ten && (
-                            <div className="muted" style={{ fontSize: 12 }}>model: {r.model_dung}</div>
+                    {mbLoc.map((r) => (
+                      <tr key={r.model}>
+                        <td style={{ maxWidth: 280 }}>{r.model}</td>
+                        <td>
+                          {r.band}
+                          {r.so_band > 1 && (
+                            <b title={`Nằm ở ${r.so_band} band: ${r.cac_band}`}
+                              style={{ cursor: 'help' }}> *</b>
                           )}
-                          <div className="muted" style={{ fontSize: 11.5 }}>{r.sp_ma}</div>
                         </td>
-                        <td>{r.nguon_ten}</td>
-                        <td style={{ maxWidth: 240 }}>
-                          {r.uu_tien === 9
-                            ? <span className="muted">—</span>
-                            : (
-                              <span style={{ color: r.uu_tien === 1 ? 'var(--bad)' : undefined }}>
-                                {/* Một sản phẩm có thể vướng nhiều lỗi cùng lúc, nên phải
-                                    nối bằng dấu — để nguyên cạnh nhau là chữ dính liền. */}
-                                {[
-                                  r.canh_bao_chua_gan && (r.con_ban
-                                    ? 'Chưa gắn catalog, đang hoạt động — funnel xếp ‘khac’ ngay lúc này'
-                                    : 'Chưa gắn catalog, đã ngừng — chỉ sai ở phân tích lịch sử'),
-                                  r.canh_bao_nhieu_ten && 'Một product_id ra nhiều tên model',
-                                  r.canh_bao_catalog_ghi_de && 'Catalog ghi đè regex — đừng xoá dòng catalog',
-                                  r.canh_bao_nhieu_band && 'Nằm ở nhiều price band',
-                                ].filter(Boolean).join('; ')}
-                              </span>
-                            )}
+                        <td>{r.category}</td>
+                        <td style={{ color: r.thieu_catalog ? 'var(--bad)' : undefined }}>
+                          {r.thieu_catalog ? '—' : '✓'}
                         </td>
-                        <td>{r.cat_don}</td>
-                        <td style={{ color: r.cat_funnel === 'khac' ? 'var(--bad)' : undefined }}>
-                          {r.cat_funnel}
-                        </td>
-                        <td>{r.cac_band || <span className="muted">chưa có đơn</span>}</td>
                         <td className="n">
-                          {r.gia_min == null
+                          {r.gia_cuoi_tb == null
                             ? <span className="muted">—</span>
-                            : Number(r.gia_min) === Number(r.gia_max)
-                              ? mn1(Number(r.gia_min))
-                              : `${mn1(Number(r.gia_min))}–${mn1(Number(r.gia_max))}`}
+                            : mn1(Number(r.gia_cuoi_tb))}
                         </td>
-                        <td className="n">{Number(r.nmv) > 0 ? bn(Number(r.nmv)) : <span className="muted">—</span>}</td>
-                        <td className="n">{Number(r.gmv_funnel) > 0 ? bn(Number(r.gmv_funnel)) : <span className="muted">—</span>}</td>
-                        <td>{r.lan_dau ? ngayNam(r.lan_dau) : <span className="muted">—</span>}</td>
-                        <td>{r.lan_cuoi ? ngayNam(r.lan_cuoi) : <span className="muted">—</span>}</td>
+                        <td className="n">{n0(Number(r.net_pcs))}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <p className="foot">
-                Ngày có kèm năm vì danh mục trải hơn một năm — &ldquo;02/09&rdquo; và
-                &ldquo;01/04&rdquo; cạnh nhau mà thiếu năm thì đọc ngược. Giá là
-                <b>giá cuối phía seller</b> &mdash; <code>original_price &minus; seller_discount</code>,
-                không trừ voucher sàn &mdash; đơn vị triệu; hiện khoảng khi sản phẩm bán ở nhiều
-                mức giá. Cột NMV và GMV funnel đến từ hai nguồn khác nhau nên không khớp nhau theo
-                từng dòng: NMV tính từ đơn trong sổ, GMV funnel là số TikTok tự quy kết.
+                Band = giá niêm yết trừ seller discount, không trừ voucher sàn. Ngưỡng: &lt;5M /
+                5&ndash;10M / 10&ndash;15M / 15&ndash;20M / 20&ndash;30M / 30M+. Category lấy từ
+                <code> product_catalog</code> trước, không có thì đọc tên sản phẩm. Model thiếu
+                catalog vẫn phân loại đúng ở các sheet theo đơn, nhưng sheet Product funnel xếp nó
+                vào <code>khac</code>.
               </p>
-            </section>
-
-            <section>
-              <h2>Quy tắc đang áp dụng</h2>
-              <p className="sub">
-                Để khi một sản phẩm bị xếp sai, bạn biết sửa ở đâu thay vì đoán.
-              </p>
-              <div className="tablewrap">
-                <table className="gloss">
-                  <thead><tr><th>Thứ</th><th>Quy tắc</th></tr></thead>
-                  <tbody>
-                    <tr>
-                      <td>Category</td>
-                      <td>
-                        <code>product_catalog.category</code> thắng trước. Không có thì đọc tên
-                        theo thứ tự: chứa &ldquo;QUÀ TẶNG&rdquo; → <code>gift</code>; mở đầu bằng
-                        Phụ kiện / Lõi lọc / Chổi lăn / Túi rác / Nước lau sàn / Dù che →
-                        <code> accessory</code>; chứa Saros / Qrevo / Q7 / Q10 / Q5 / QR&nbsp;số /
-                        S8 → <code>robot</code>; chứa F25 / H60 / H5 / Flexi / Dyad →
-                        <code> handheld</code>; còn lại <code>unknown</code>.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Thứ tự quan trọng</td>
-                      <td>
-                        Luật đọc từ trên xuống, nên &ldquo;QUÀ TẶNG&rdquo; chặn trước tất cả. Một
-                        listing tên <i>[QUÀ TẶNG GIỚI HẠN] Roborock Qrevo 5AE robot…</i> sẽ bị gán
-                        <code> gift</code> dù là hàng bán thật — đó chính là việc dòng catalog đang
-                        làm: ghi đè lại thành <code>robot</code>.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Tên model</td>
-                      <td>
-                        <code>product_catalog.model_short</code> thắng trước. Không có thì lấy phần
-                        trước dấu <code>|</code> đầu tiên, bỏ <code>[...]</code> ở đầu, bỏ chữ
-                        Roborock, bỏ từ &ldquo;robot hút bụi&rdquo; / &ldquo;máy hút bụi&rdquo; trở
-                        về sau. Vì phụ thuộc tên listing, cùng một product_id mà hai tên listing
-                        khác nhau có thể cho hai tên model — chỗ đó cần một dòng catalog.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Price band</td>
-                      <td>
-                        Cắt theo <b>giá cuối phía seller</b> &mdash;
-                        <code>original_price &minus; seller_discount</code>, không trừ voucher sàn
-                        &mdash; của <b>từng dòng đơn</b>, không phải theo sản phẩm: dưới 5M →
-                        <code>&lt;5M</code>; 5–10M; 10–15M; 15–20M; 20–30M; từ 30M →
-                        <code>30M+</code>. Vì vậy một sản phẩm bán ở hai mức giá sẽ nằm ở hai band,
-                        và cột Price band ở trên là danh sách chứ không phải một giá trị.
-                        <br /><br />
-                        Ngưỡng vẫn là ngưỡng đặt từ thời tính theo giá niêm yết, nên sau khi đổi
-                        thì <code>30M+</code> gần như chỉ còn Saros Z70: cả dòng Saros niêm yết
-                        33–36M nhưng giảm 17–28% nên rơi xuống <code>20-30M</code>.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Sửa ở đâu</td>
-                      <td>
-                        Thêm hoặc sửa một dòng trong <code>product_catalog</code>
-                        (<code>product_id</code>, <code>product_name</code>,
-                        <code> model_short</code>, <code>category</code>). Catalog luôn thắng, nên
-                        không cần sửa regex. Và đừng xoá dòng catalog của các listing
-                        &ldquo;QUÀ TẶNG&rdquo; bán thật — xoá là chúng nhảy sang
-                        <code> gift</code> ngay.
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
             </section>
           </>
         )}
