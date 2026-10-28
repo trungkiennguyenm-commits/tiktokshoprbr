@@ -291,8 +291,8 @@ export type LiveSession = {
  *  mất, dù sheet theo đơn vẫn phân đúng nhờ regex.
  *
  *  cac_band là DANH SÁCH, không phải một band: v_fact_items chia band theo
- *  original_price của từng dòng đơn, nên cùng một product_id bán ở hai mức
- *  giá sẽ nằm ở hai band.
+ *  GIÁ CUỐI PHÍA SELLER (original_price − seller_discount) của từng dòng
+ *  đơn, nên cùng một product_id bán ở hai mức giá sẽ nằm ở hai band.
  *
  *  sp_ma có tiền tố '·' để product_id 19 chữ số không bị num() ép qua
  *  Number rồi mất chính xác. */
@@ -595,7 +595,7 @@ const GLOSSARY: Nhom[] = [
       },
       {
         ten: 'List price',
-        dinh_nghia: 'Price before any discount. Also the base for every discount percentage here, and the basis for price bands.',
+        dinh_nghia: 'Price before any discount. The base for every discount percentage here. NOT the basis for price bands — those use the final seller price.',
         ct: 'original_price from the order item',
       },
       {
@@ -726,9 +726,9 @@ ct: 'DDAY = double date (4/4, 5/5 … 9/9) · D-3…D-1 before it · D+1…D+3 a
     terms: [
       {
         ten: 'Price band',
-        dinh_nghia: 'Price tier a model sits in: 5–10M, 10–15M, 15–20M, 20–30M, 30M+.',
-        ct: 'from list price',
-        ghi_chu: 'Deliberately based on list price, not the discounted price, so a model stays in one band across months and the MoM tables stay readable.',
+        dinh_nghia: 'Price tier a line sits in: <5M, 5–10M, 10–15M, 15–20M, 20–30M, 30M+.',
+        ct: 'list price − seller discount, per line item',
+        ghi_chu: 'The final price on the seller side. Platform vouchers are NOT deducted — that is money the platform puts in, not a price the shop sold at. Changed from list price on 28 Oct 2026: 16.3% of lines moved band, and 30M+ went from 1,931 lines to 190 because the Saros line lists at 33–36M but discounts 17–28%, leaving only Saros Z70 above 30M. The thresholds still date from the list-price era, so the top band no longer separates the premium tier.',
       },
       {
         ten: 'Model',
@@ -869,12 +869,21 @@ ct: 'DDAY = double date (4/4, 5/5 … 9/9) · D-3…D-1 before it · D+1…D+3 a
   },
 ]
 
-/** Price bands come from LIST price, so a model stays in one band across
- *  months and the MoM tables stay readable. */
+/** Price band tính theo GIÁ CUỐI PHÍA SELLER: giá niêm yết trừ seller
+ *  discount, không trừ voucher sàn — voucher sàn là tiền sàn bù, không
+ *  phải mức giá seller bán.
+ *
+ *  PHẢI KHỚP VỚI v_fact_items.price_band. Cùng một ngưỡng nằm ở hai nơi
+ *  (SQL và đây), nên sửa một bên mà quên bên kia là sheet Discounts và
+ *  lưới SKU lệch nhau mà không báo gì.
+ *
+ *  Ngưỡng vẫn là ngưỡng cũ, vốn đặt theo giá niêm yết. Sau khi đổi sang
+ *  giá cuối thì band 30M+ gần như chỉ còn Saros Z70: cả dòng Saros niêm
+ *  yết 33–36M nhưng giảm 17–28% nên rơi xuống 20-30M. */
 const BANDS = ['<5M', '5-10M', '10-15M', '15-20M', '20-30M', '30M+'] as const
-const bandOf = (listPrice: number) =>
-  listPrice < 5e6 ? '<5M' : listPrice < 10e6 ? '5-10M' : listPrice < 15e6 ? '10-15M'
-    : listPrice < 20e6 ? '15-20M' : listPrice < 30e6 ? '20-30M' : '30M+'
+const bandOf = (giaCuoi: number) =>
+  giaCuoi < 5e6 ? '<5M' : giaCuoi < 10e6 ? '5-10M' : giaCuoi < 15e6 ? '10-15M'
+    : giaCuoi < 20e6 ? '15-20M' : giaCuoi < 30e6 ? '20-30M' : '30M+'
 
 const PALETTE = [
   '#2563A8', '#C2620B', '#1F7A4D', '#8E44AD', '#B31B4A',
@@ -1130,8 +1139,11 @@ function aggSku(rows: SkuPeriod[]): SkuAgg[] {
   return Array.from(map.values()).map((a) => {
     const q = Math.max(1, a.so_luong)
     const giaGoc = a.gia_goc_tong / q
+    // Band theo giá cuối phía seller, không phải giá niêm yết — khớp với
+    // v_fact_items.price_band.
+    const giaCuoi = (a.gia_goc_tong - a.seller_disc_tong) / q
     return {
-      model: a.model, category: a.category, band: bandOf(giaGoc),
+      model: a.model, category: a.category, band: bandOf(giaCuoi),
       so_luong: a.so_luong, sl_chua_huy: a.sl_chua_huy, sl_huy: a.sl_huy,
       cancel_rate: p1(a.sl_huy, a.so_luong),
       gmv: a.gmv, nmv: a.nmv,
@@ -3321,17 +3333,21 @@ export default function Dashboard({
     const cell = new Map<string, SkuPeriod[]>()
     const totals = new Map<string, number>()
     const bandByModel = new Map<string, string>()
-    const qtyByModel = new Map<string, { q: number; price: number }>()
+    const qtyByModel = new Map<string, { q: number; price: number; disc: number }>()
     for (const r of momSkus) {
       const k = `${r.model}|${r.ky}`
       cell.set(k, [...(cell.get(k) ?? []), r])
       totals.set(r.model, (totals.get(r.model) ?? 0) + Number(r.sl_chua_huy || 0))
-      const acc = qtyByModel.get(r.model) ?? { q: 0, price: 0 }
+      const acc = qtyByModel.get(r.model) ?? { q: 0, price: 0, disc: 0 }
       acc.q += Number(r.so_luong || 0)
       acc.price += Number(r.gia_goc_tong || 0)
+      acc.disc += Number(r.seller_disc_tong || 0)
       qtyByModel.set(r.model, acc)
     }
-    for (const [m, a] of qtyByModel) bandByModel.set(m, bandOf(a.price / Math.max(1, a.q)))
+    // Giá cuối phía seller, khớp với v_fact_items.price_band.
+    for (const [m, a] of qtyByModel) {
+      bandByModel.set(m, bandOf((a.price - a.disc) / Math.max(1, a.q)))
+    }
     const models = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]).map((e) => e[0])
     return { cell, models, bandByModel }
   }, [momSkus])
@@ -4983,7 +4999,8 @@ export default function Dashboard({
           <h1>Business performance</h1>
           <p className="lede">
             Robots and handhelds only — gifts and accessories excluded. Periods are keyed on order
-            creation date in Vietnam time. Price bands come from list price.
+            creation date in Vietnam time. Price bands come from the final seller price &mdash;
+            list price minus seller discount, platform vouchers not deducted.
           </p>
           <div className="defs">
             <div className="def">
@@ -10388,7 +10405,8 @@ export default function Dashboard({
               <p className="foot">
                 Ngày có kèm năm vì danh mục trải hơn một năm — &ldquo;02/09&rdquo; và
                 &ldquo;01/04&rdquo; cạnh nhau mà thiếu năm thì đọc ngược. Giá là
-                <code> original_price</code>, đơn vị triệu; hiện khoảng khi sản phẩm bán ở nhiều
+                <b>giá cuối phía seller</b> &mdash; <code>original_price &minus; seller_discount</code>,
+                không trừ voucher sàn &mdash; đơn vị triệu; hiện khoảng khi sản phẩm bán ở nhiều
                 mức giá. Cột NMV và GMV funnel đến từ hai nguồn khác nhau nên không khớp nhau theo
                 từng dòng: NMV tính từ đơn trong sổ, GMV funnel là số TikTok tự quy kết.
               </p>
@@ -10436,11 +10454,16 @@ export default function Dashboard({
                     <tr>
                       <td>Price band</td>
                       <td>
-                        Cắt theo <code>original_price</code> của <b>từng dòng đơn</b>, không phải
-                        theo sản phẩm: dưới 5M → <code>&lt;5M</code>; 5–10M; 10–15M; 15–20M;
-                        20–30M; từ 30M → <code>30M+</code>. Vì vậy một sản phẩm bán ở hai mức giá
-                        sẽ nằm ở hai band, và cột Price band ở trên là danh sách chứ không phải
-                        một giá trị.
+                        Cắt theo <b>giá cuối phía seller</b> &mdash;
+                        <code>original_price &minus; seller_discount</code>, không trừ voucher sàn
+                        &mdash; của <b>từng dòng đơn</b>, không phải theo sản phẩm: dưới 5M →
+                        <code>&lt;5M</code>; 5–10M; 10–15M; 15–20M; 20–30M; từ 30M →
+                        <code>30M+</code>. Vì vậy một sản phẩm bán ở hai mức giá sẽ nằm ở hai band,
+                        và cột Price band ở trên là danh sách chứ không phải một giá trị.
+                        <br /><br />
+                        Ngưỡng vẫn là ngưỡng đặt từ thời tính theo giá niêm yết, nên sau khi đổi
+                        thì <code>30M+</code> gần như chỉ còn Saros Z70: cả dòng Saros niêm yết
+                        33–36M nhưng giảm 17–28% nên rơi xuống <code>20-30M</code>.
                       </td>
                     </tr>
                     <tr>
