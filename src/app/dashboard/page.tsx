@@ -5,7 +5,7 @@ import Dashboard, {
   type Segment, type Ship,
   type CampTong, type CampMatrix,
   type HanhTrinh, type TransitModel, type LiveOverview, type AdsObjective, type AdsObjectiveDay,
-  type HuyAffiliate,
+  type HuyAffiliate, type SpPhanLoai,
   type AdsVs, type AdsMonth, type AdsCampaign,
   type LiveDaily, type LiveMonth, type LiveRoomMonth, type LiveSession, type LiveLgm,
   type KenhMonth, type KenhDay, type KenhSku,
@@ -17,7 +17,7 @@ export default async function Page() {
   const db = supabaseAdmin()
 
   try {
-    const [m, d, s, sm, sd, seg, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd, ks, ct, cmx, ht, tm, lo, ao, aod, haf] = await Promise.all([
+    const [m, d, s, sm, sd, seg, ship, av, am, ac, ld, lm, lr, ls, lg, kn, kd, ks, ct, cmx, ht, tm, lo, ao, aod, haf, spl] = await Promise.all([
       fetchAll<Monthly>(db, 'v_perf_monthly'),
       fetchAll<Daily>(db, 'v_perf_daily'),
       fetchAll<Sku>(db, 'v_sku_perf'),
@@ -44,6 +44,8 @@ export default async function Page() {
       fetchAll<AdsObjective>(db, 'v_ads_objective_monthly'),
       fetchAll<AdsObjectiveDay>(db, 'v_ads_objective_daily'),
       fetchAll<HuyAffiliate>(db, 'v_huy_affiliate'),
+      // 181 dong, nho — de eager, khong can lazy nhu bon nguon nang.
+      fetchAll<SpPhanLoai>(db, 'v_sp_phan_loai'),
     ])
 
     return (
@@ -57,7 +59,7 @@ export default async function Page() {
         kenhMonthly={num(kn)} kenhDaily={num(kd)} kenhSku={num(ks)}
         campTong={num(ct)} campMatrix={num(cmx)}
         hanhTrinh={num(ht)} transitModel={num(tm)} liveOverview={num(lo)} adsObjective={num(ao)} adsObjectiveDay={num(aod)}
-        huyAffiliate={num(haf)}
+        huyAffiliate={num(haf)} spPhanLoai={num(spl)}
       />
     )
   } catch (e) {
