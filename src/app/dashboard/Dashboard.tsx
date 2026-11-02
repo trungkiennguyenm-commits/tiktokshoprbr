@@ -281,6 +281,23 @@ export type LiveSession = {
   product_impressions: number; product_clicks: number; avg_viewing_duration: number
 }
 
+/** v_huy_phong_live — tỷ lệ huỷ theo TỪNG phòng live, lấy từ sổ đơn.
+ *
+ *  Lý do tồn tại: v_fact_items gom mọi phòng không phải 'own' vào một rổ
+ *  tên 'Creator live', nên không phòng KOC nào có dòng riêng ở bất kỳ
+ *  sheet nào. Và mục 5.15 chỉ thấy đơn được TikTok quy kết affiliate —
+ *  huylomo.review chạy 195 phiên / 1,01 tỷ GMV nhưng chỉ 12 đơn
+ *  affiliate, nhìn ở 5.15 thì tưởng như nó không bán gì.
+ *
+ *  room_id chỉ phủ ~65–70% line item và chỉ có từ 19/05/2026, nên đây
+ *  KHÔNG phải toàn bộ doanh thu của phòng — chỉ phần TikTok gắn được vào
+ *  phiên. Đừng cộng nó với các kênh khác rồi coi là tổng. */
+export type HuyPhong = {
+  ngay: string; username: string; ten: string; nhom: string; category: string
+  gross_pcs: number; huy: number; huy_sau_lay: number
+  nmv_dat: number; nmv_con: number
+}
+
 /** v_model_band — bảng tra cứu gọn: mỗi model ở band nào, category nào.
  *
  *  band là band CHÍNH (chiếm nhiều net pcs nhất), cac_band là danh sách đủ.
@@ -308,6 +325,7 @@ type Props = {
   adsObjective: AdsObjective[]; adsObjectiveDay: AdsObjectiveDay[]
   huyAffiliate: HuyAffiliate[]
   modelBand: ModelBand[]
+  huyPhong: HuyPhong[]
   /* huyChiTiet, huyModel, videoThang, productKenh KHONG o day: bon nguon
      nay nang 15,9 MB trong tong 21,6 MB cua trang, va moi cai chi duoc doc
      trong dung mot sheet. Chung duoc tai qua /api/data/<khoa> khi sheet do
@@ -422,6 +440,8 @@ const SECTIONS = [
         subs: ['By model', 'Worst models', 'Before vs after pickup', 'Detail table'] },
       { ten: 'Affiliate creators', ghi: 'creator ngoài, ~3% đơn',
         subs: ['By content type', 'Product to creator to video', 'Video orders in detail'] },
+      { ten: 'Live rooms', ghi: 'từng phòng, không gộp Creator live',
+        subs: ['Cancel rate by room'] },
     ],
   },
   {
@@ -2220,7 +2240,7 @@ export default function Dashboard({
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
   campTong, campMatrix, hanhTrinh, transitModel, liveOverview, adsObjective, adsObjectiveDay,
-  huyAffiliate, modelBand,
+  huyAffiliate, modelBand, huyPhong,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -4399,6 +4419,56 @@ export default function Dashboard({
    *  ràng của người dùng, nhưng tô đỏ một creator có 1 đơn huỷ 1 đơn thì
    *  mắt bị kéo về đúng chỗ ít đáng tin nhất — nên màu vẫn giữ ngưỡng. */
   const NGUONG_TIN = 5
+
+  /* ---------------- 5.17 tỷ lệ huỷ theo phòng live ----------------
+     Mỗi phòng một dòng. Tỷ lệ tính lại từ tử số và mẫu số sau khi cộng,
+     không lấy trung bình của tỷ lệ — hai cách cho kết quả khác nhau và
+     cách kia sai. */
+  const phongHuy = useMemo(() => {
+    const m = new Map<string, {
+      username: string; ten: string; nhom: string
+      gross: number; huy: number; sau: number; dat: number; con: number
+    }>()
+    for (const r of huyPhong) {
+      if (!(byMonth ? keys.has(`${r.ngay.slice(0, 7)}-01`) : keys.has(r.ngay))) continue
+      if (cat !== 'all' && r.category !== cat) continue
+      const a = m.get(r.username) ?? {
+        username: r.username, ten: r.ten, nhom: r.nhom,
+        gross: 0, huy: 0, sau: 0, dat: 0, con: 0,
+      }
+      a.gross += Number(r.gross_pcs || 0)
+      a.huy += Number(r.huy || 0)
+      a.sau += Number(r.huy_sau_lay || 0)
+      a.dat += Number(r.nmv_dat || 0)
+      a.con += Number(r.nmv_con || 0)
+      m.set(r.username, a)
+    }
+    const ds = Array.from(m.values()).map((a) => ({
+      ...a,
+      rate: p1(a.huy, a.gross),
+      pctSau: p1(a.sau, a.huy),
+      giuLai: a.dat ? (a.con / a.dat) * 100 : 0,
+    }))
+    const koc = ds.filter((x) => x.nhom === 'koc').sort((a, b) => b.gross - a.gross)
+    const own = ds.filter((x) => x.nhom === 'own').sort((a, b) => b.gross - a.gross)
+    // Một dòng tổng cho phòng nhà, làm mốc so sánh — không có mốc thì
+    // 38,8% của một phòng KOC không nói lên điều gì.
+    const tongOwn = own.reduce((a, x) => ({
+      gross: a.gross + x.gross, huy: a.huy + x.huy, sau: a.sau + x.sau,
+      dat: a.dat + x.dat, con: a.con + x.con,
+    }), { gross: 0, huy: 0, sau: 0, dat: 0, con: 0 })
+    return {
+      koc,
+      own,
+      mocOwn: {
+        ...tongOwn,
+        rate: p1(tongOwn.huy, tongOwn.gross),
+        pctSau: p1(tongOwn.sau, tongOwn.huy),
+        giuLai: tongOwn.dat ? (tongOwn.con / tongOwn.dat) * 100 : 0,
+      },
+    }
+  }, [huyPhong, keys, byMonth, cat])
+
 
   type AffNut = {
     ten: string; url: string | null; nhan?: string
@@ -9247,6 +9317,75 @@ export default function Dashboard({
               </div>
             </section>
 
+            <section id="s5-17">
+              <h2><span className="hno">5.17</span>Cancel rate by live room &mdash; {periodNote}</h2>
+              <p className="sub">
+                Mỗi phòng một dòng. Ở mọi sheet khác, 16 phòng KOC bị gộp chung thành một dòng
+                &ldquo;Creator live&rdquo;, nên không phòng nào nhìn thấy được. Mục 5.15 phía trên
+                chỉ thấy đơn được TikTok quy kết affiliate &mdash; phần lớn doanh số phòng KOC
+                không đi đường đó, nên hai bảng không khớp nhau và không nên so.
+              </p>
+              <div className="tablewrap">
+                <table>
+                  <thead><tr>
+                    <th>Phòng</th>
+                    <th className="n">Gross pcs</th>
+                    <th className="n">Huỷ</th>
+                    <th className="n">Tỷ lệ huỷ</th>
+                    <th className="n">Huỷ sau lấy hàng</th>
+                    <th className="n">NMV đặt<div className="uhint">bn</div></th>
+                    <th className="n">NMV còn<div className="uhint">bn</div></th>
+                    <th className="n">Giữ lại</th>
+                  </tr></thead>
+                  <tbody>
+                    {phongHuy.koc.map((r) => (
+                      <tr key={r.username}>
+                        <td>{r.ten}</td>
+                        <td className="n">{n0(r.gross)}</td>
+                        <td className="n">{n0(r.huy)}</td>
+                        <td className="n" style={{
+                          color: r.gross >= NGUONG_TIN && r.rate != null && r.rate > 60
+                            ? 'var(--bad)' : undefined,
+                          fontWeight: r.gross >= NGUONG_TIN ? 600 : 400,
+                        }}>
+                          {pct(r.rate)}
+                          {r.gross < NGUONG_TIN && <span className="muted"> *</span>}
+                        </td>
+                        <td className="n">{r.huy > 0 ? pct(r.pctSau) : <span className="muted">&mdash;</span>}</td>
+                        <td className="n">{bn(r.dat)}</td>
+                        <td className="n">{bn(r.con)}</td>
+                        <td className="n">{pct(r.giuLai)}</td>
+                      </tr>
+                    ))}
+                    {phongHuy.koc.length === 0 && (
+                      <tr><td colSpan={8} className="muted">Không có đơn phòng KOC nào trong kỳ đã chọn.</td></tr>
+                    )}
+                    {phongHuy.mocOwn.gross > 0 && (
+                      <tr style={{ borderTop: '2px solid var(--line)' }}>
+                        <td><b>Phòng nhà ({n0(phongHuy.own.length)})</b> <span className="muted">&mdash; mốc so sánh</span></td>
+                        <td className="n"><b>{n0(phongHuy.mocOwn.gross)}</b></td>
+                        <td className="n"><b>{n0(phongHuy.mocOwn.huy)}</b></td>
+                        <td className="n"><b>{pct(phongHuy.mocOwn.rate)}</b></td>
+                        <td className="n">{phongHuy.mocOwn.huy > 0 ? pct(phongHuy.mocOwn.pctSau) : <span className="muted">&mdash;</span>}</td>
+                        <td className="n"><b>{bn(phongHuy.mocOwn.dat)}</b></td>
+                        <td className="n"><b>{bn(phongHuy.mocOwn.con)}</b></td>
+                        <td className="n"><b>{pct(phongHuy.mocOwn.giuLai)}</b></td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <p className="foot">
+                Lấy từ sổ đơn qua <code>room_id</code> của từng line item, không phải từ số quy kết
+                của TikTok. Hai giới hạn phải nhớ: <code>room_id</code> chỉ bắt đầu có từ
+                <b> 19/05/2026</b> và chỉ phủ khoảng 65&ndash;70% line item, nên đây không phải
+                toàn bộ doanh số của phòng &mdash; đừng cộng nó với các kênh khác rồi coi là tổng.
+                Dòng đánh <b>*</b> có dưới {NGUONG_TIN} đơn: tỷ lệ chỉ là số học, chưa đủ để kết
+                luận, nên không tô màu. &ldquo;Giữ lại&rdquo; là NMV còn sống trên NMV đã đặt &mdash;
+                con số đáng nhìn hơn tỷ lệ huỷ, vì một phòng huỷ nhiều đơn rẻ vẫn có thể giữ được
+                nhiều tiền hơn một phòng huỷ ít đơn đắt.
+              </p>
+            </section>
 
           </>
         )}
