@@ -2309,6 +2309,11 @@ export default function Dashboard({
   const [range, setRange] = useState<RangeKey>('mom')
   /** Chọn nhiều tháng để so sánh. Rỗng nghĩa là lấy hết. */
   const [selMonths, setSelMonths] = useState<Set<string>>(new Set())
+  /** Ngày lẻ được tick, chỉ dùng ở chế độ 'mdays'.
+   *
+   *  Rỗng = lấy hết ngày của các tháng đã chọn, tức đúng hành vi cũ — nên
+   *  thêm cái này không đổi gì với người không dùng tới. */
+  const [selDays, setSelDays] = useState<Set<string>>(new Set())
   const toggleMonth = (m: string) =>
     setSelMonths((p) => {
       const n = new Set(p)
@@ -2412,6 +2417,56 @@ export default function Dashboard({
   )
 
 
+  /** Tiền tố 'YYYY-MM' của các tháng mà chế độ theo ngày đang xét. Chưa
+   *  chọn tháng nào thì lấy tháng mới nhất, vì đổ cả lịch sử theo ngày ra
+   *  một trục là không đọc được.
+   *
+   *  MỘT CHỖ DUY NHẤT: cả hàng chip ngày lẫn `keys` đều dùng cái này. Trước
+   *  đó tôi viết lặp ở hai nơi, và sửa một bên quên bên kia là chip hiện
+   *  một tập ngày còn biểu đồ lọc theo tập khác, không có gì báo. */
+  const thangChoNgay = useMemo(
+    () => new Set((selMonths.size ? goodMonths : allMonths.slice(-1)).map((m) => m.slice(0, 7))),
+    [selMonths, goodMonths, allMonths],
+  )
+
+  /** Các ngày có dữ liệu trong những tháng đó — nguồn cho hàng chip ngày.
+   *  Chỉ tính ở chế độ 'mdays', các chế độ khác không có hàng này. */
+  const dayOptions = useMemo(() => {
+    if (range !== 'mdays') return [] as string[]
+    return rollup(daily, 'all')
+      .map((r) => r.ky)
+      .filter((k) => thangChoNgay.has(k.slice(0, 7)))
+  }, [range, daily, thangChoNgay])
+
+  /** Giao của ngày đã tick với ngày đang có.
+   *
+   *  PHẢI giao, đừng dùng thẳng selDays: tick vài ngày tháng 9 rồi đổi sang
+   *  tháng 10 thì selDays không còn ngày nào khớp, và nếu lọc thẳng thì cả
+   *  sheet trắng trơn mà không có dòng nào giải thích — đúng loại lỗi đã
+   *  xảy ra với chốt "loại tháng đang chạy". Rỗng thì coi như lấy hết. */
+  const daysPicked = useMemo(
+    () => dayOptions.filter((d) => selDays.has(d)),
+    [dayOptions, selDays],
+  )
+
+  /** Nhãn chip ngày. Dữ liệu có cả Sep 25 lẫn Sep 26, nên chọn hai tháng
+   *  cùng tên là ra hai chip đều ghi '01/09'. Chỉ thêm năm khi thật sự
+   *  trải nhiều năm, để trường hợp thường gặp vẫn gọn. */
+  const nhieuNam = useMemo(
+    () => new Set(dayOptions.map((d) => d.slice(0, 4))).size > 1,
+    [dayOptions],
+  )
+  const nhanNgay = (d: string) => (nhieuNam ? `${ddmm(d)}/${d.slice(2, 4)}` : ddmm(d))
+
+  /** Dọn những ngày đã tick mà không còn thuộc tháng nào đang chọn, để chip
+   *  không giữ trạng thái vô hình. */
+  useEffect(() => {
+    if (range !== 'mdays' || selDays.size === 0) return
+    const co = new Set(dayOptions)
+    const giu = Array.from(selDays).filter((d) => co.has(d))
+    if (giu.length !== selDays.size) setSelDays(new Set(giu))
+  }, [range, dayOptions, selDays])
+
   const keys = useMemo(() => {
     const all = rollup(src, 'all')
     let picked: Rolled[]
@@ -2419,13 +2474,16 @@ export default function Dashboard({
     else if (range === 'd30') picked = all.slice(-30)
     else if (range === 'd7') picked = all.slice(-7)
     else {
-      // Ngày nằm trong các tháng đã chọn. Chưa chọn gì thì lấy tháng mới nhất,
-      // vì đổ toàn bộ lịch sử theo ngày ra một trục là không đọc được.
-      const pre = new Set((selMonths.size ? goodMonths : allMonths.slice(-1)).map((m) => m.slice(0, 7)))
-      picked = all.filter((r) => pre.has(r.ky.slice(0, 7)))
+      // Ngày nằm trong các tháng đã chọn — cùng tập với hàng chip ngày.
+      picked = all.filter((r) => thangChoNgay.has(r.ky.slice(0, 7)))
+      // Tick ngày lẻ thì siết tiếp. Không tick gì -> giữ nguyên cả tháng.
+      if (daysPicked.length) {
+        const ngay = new Set(daysPicked)
+        picked = picked.filter((r) => ngay.has(r.ky))
+      }
     }
     return new Set(picked.map((r) => r.ky))
-  }, [src, range, goodMonths, allMonths, selMonths])
+  }, [src, range, goodMonths, thangChoNgay, daysPicked])
 
   const srcShown = useMemo(() => src.filter((r) => keys.has(keyOf(r))), [src, keys])
   const shown = useMemo(() => rollup(srcShown, cat), [srcShown, cat])
@@ -2572,9 +2630,16 @@ export default function Dashboard({
     const all = rollup(daily, 'all')
     if (range === 'd30') return new Set(all.slice(-30).map((r) => r.ky))
     if (range === 'd7') return new Set(all.slice(-7).map((r) => r.ky))
-    const pre = new Set((selMonths.size ? goodMonths : allMonths.slice(-1)).map((m) => m.slice(0, 7)))
-    return new Set(all.filter((r) => pre.has(r.ky.slice(0, 7))).map((r) => r.ky))
-  }, [daily, range, goodMonths, allMonths, selMonths])
+    // Dùng chung thangChoNgay và daysPicked với keys — tab này luôn ở mức
+    // ngày, nên bỏ qua ngày đã tick là nó hiện cả tháng trong khi các tab
+    // khác chỉ hiện mấy ngày đã chọn, mà không có gì báo lệch.
+    let ds = all.filter((r) => thangChoNgay.has(r.ky.slice(0, 7)))
+    if (daysPicked.length) {
+      const ngay = new Set(daysPicked)
+      ds = ds.filter((r) => ngay.has(r.ky))
+    }
+    return new Set(ds.map((r) => r.ky))
+  }, [daily, range, thangChoNgay, daysPicked])
 
   const dayShown = useMemo(
     () => rollup(daily.filter((r) => dayKeys.has(r.ngay)), cat),
@@ -3394,13 +3459,22 @@ export default function Dashboard({
     ? goodMonths.map(mmyy).join(', ')
     : 'all months'
   /** Tab Discounts luôn theo ngày nên có ghi chú kỳ riêng. */
+  /** Ngày trong các tháng đã chọn, hoặc chính những ngày đã tick.
+   *
+   *  Liệt kê tên ngày tới 8 cái; nhiều hơn thì đếm, vì một dòng 40 ngày
+   *  không ai đọc. */
+  const mdaysNote = daysPicked.length
+    ? (daysPicked.length <= 8
+      ? daysPicked.map(nhanNgay).join(', ')
+      : `${daysPicked.length} ngày đã chọn (${nhanNgay(daysPicked[0])} → ${nhanNgay(daysPicked[daysPicked.length - 1])})`)
+    : `days in ${selMonths.size ? monthNote : mmyy(allMonths[allMonths.length - 1] ?? '')}`
   const dayNote = range === 'd30' ? 'last 30 days'
     : range === 'd7' ? 'last 7 days'
-      : `days in ${selMonths.size ? monthNote : mmyy(allMonths[allMonths.length - 1] ?? '')}`
+      : mdaysNote
   const periodNote = range === 'mom' ? monthNote
     : range === 'd30' ? 'last 30 days'
       : range === 'd7' ? 'last 7 days'
-        : `days in ${selMonths.size ? monthNote : mmyy(allMonths[allMonths.length - 1] ?? '')}`
+        : mdaysNote
 
   const pt = (pick: (r: Rolled) => number): Pt[] => shown.map((r) => ({ ky: r.ky, v: pick(r) }))
   const cancelLine = (rows: { ky: string; cancel_rate: number }[]) => ({
@@ -5084,6 +5158,36 @@ export default function Dashboard({
             ? <button className="lnk" onClick={() => setSelMonths(new Set())}>Clear — show all months</button>
             : <span className="muted" style={{ fontSize: 12.5 }}>none picked = all months</span>}
         </div>
+
+        {/* Hàng ngày chỉ hiện ở chế độ 'Days in picked months'. Các chế độ
+            khác không có khái niệm ngày lẻ: 'By month' chạy theo tháng, còn
+            7/30 ngày đã tự cố định khoảng. */}
+        {range === 'mdays' && dayOptions.length > 0 && (
+          <div className="chips chips-wrap">
+            <span className="chips-l">Days</span>
+            {dayOptions.map((d) => (
+              <button key={d} className={`chip ${selDays.has(d) ? 'on' : ''}`}
+                onClick={() => setSelDays((p) => {
+                  const n = new Set(p)
+                  if (n.has(d)) n.delete(d); else n.add(d)
+                  return n
+                })}>
+                {nhanNgay(d)}
+              </button>
+            ))}
+            {daysPicked.length > 0
+              ? (
+                <button className="lnk" onClick={() => setSelDays(new Set())}>
+                  Clear — show all {dayOptions.length} days
+                </button>
+              )
+              : (
+                <span className="muted" style={{ fontSize: 12.5 }}>
+                  none picked = all {dayOptions.length} days
+                </span>
+              )}
+          </div>
+        )}
 
         <p className="foot">
           {sec === 'Summary' || sec === 'Videos' || sec === 'Traffic'
@@ -10595,6 +10699,11 @@ const CSS = `
 .chips{display:flex;gap:6px;flex-wrap:nowrap;align-items:center;margin-top:10px;
   overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
 .chips::-webkit-scrollbar{display:none}
+/* Hàng ngày có thể lên hơn trăm chip khi chọn nhiều tháng. Cuộn ngang với
+   thanh cuộn ẩn thì phải mò từng cái, nên hàng này cho xuống dòng và chặn
+   chiều cao — thanh lọc đo chiều cao thật bằng ResizeObserver nên cao thêm
+   không làm vỡ bố cục. */
+.chips-wrap{flex-wrap:wrap;overflow-x:visible;max-height:108px;overflow-y:auto}
 .chip{flex:none}
 .chips-l{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
   margin-right:4px}
