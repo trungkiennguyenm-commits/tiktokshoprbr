@@ -364,8 +364,35 @@ const CATS = [
   { key: 'all', label: 'All products' },
   { key: 'robot', label: 'Robot' },
   { key: 'handheld', label: 'Handheld' },
+  { key: 'wm', label: 'Washer-dryer' },
 ] as const
 type CatKey = (typeof CATS)[number]['key']
+
+/** Các ngành hàng tính là MÁY, tức vào số tổng của dashboard. Phụ kiện và
+ *  quà tặng nằm ngoài.
+ *
+ *  MỘT NGUỒN SỰ THẬT cho phía giao diện. Thêm ngành hàng mới phải sửa ba
+ *  nơi: mảng này, CHECK constraint product_catalog_category_check, và bộ
+ *  lọc trong 16 view SQL. Sót chỗ nào thì sản phẩm biến mất lặng lẽ ở đó
+ *  chứ không báo lỗi — đúng chuyện vừa xảy ra với Zeo Mini. */
+const CAT_MAY = ['robot', 'handheld', 'wm'] as const
+
+/** Tên và màu theo ngành hàng.
+ *
+ *  Trước đây rải rác 11 chỗ viết `c === 'robot' ? 'Robot' : 'Handheld'`.
+ *  Dạng đó không sai khi chỉ có hai ngành, nhưng ngành thứ ba chạy qua là
+ *  bị dán nhãn "Handheld" — sai mà không có gì báo. Tra bảng thì ngành lạ
+ *  ra đúng tên của nó, hoặc màu xám nếu chưa khai. */
+const CAT_TEN: Record<string, string> = {
+  robot: 'Robot', handheld: 'Handheld', wm: 'Washer-dryer',
+  accessory: 'Accessory', gift: 'Gift', unknown: 'Unknown',
+}
+const CAT_TEN_DAI: Record<string, string> = {
+  robot: 'Robot vacuums', handheld: 'Handheld vacuums', wm: 'Washer-dryers',
+}
+const CAT_MAU: Record<string, string> = {
+  robot: 'var(--c1)', handheld: 'var(--c2)', wm: 'var(--c3)',
+}
 
 const RANGES = [
   { key: 'mom', label: 'By month' },
@@ -603,7 +630,7 @@ const GLOSSARY: Nhom[] = [
   },
   {
     nhom: 'Volume',
-    mo_ta: 'Counted in units, not orders: one order carrying two machines counts as two. Gifts and accessories are excluded everywhere — only robots and handhelds.',
+    mo_ta: 'Counted in units, not orders: one order carrying two machines counts as two. Gifts and accessories are excluded everywhere — only robots, handhelds and washer-dryers.',
     terms: [
       {
         ten: 'Gross pcs',
@@ -731,7 +758,7 @@ ct: 'DDAY = double date (4/4, 5/5 … 9/9) · D-3…D-1 before it · D+1…D+3 a
       },
       {
         ten: 'Category',
-        dinh_nghia: 'Robot vacuums or handheld vacuums. Accessories and gifts are excluded from the whole dashboard.',
+        dinh_nghia: 'Robot vacuums, handheld vacuums or washer-dryers. Accessories and gifts are excluded from the whole dashboard. Washer-dryers (WM) joined on 9 Nov 2026 with the Zeo Mini launch; before that date the category is simply empty, it is not missing data.',
       },
     ],
   },
@@ -1062,17 +1089,31 @@ function rollup(rows: (Monthly | Daily)[], cat: CatKey): Rolled[] {
     .sort((a, b) => a.ky.localeCompare(b.ky))
 }
 
-function splitByCat(rows: (Monthly | Daily)[], pick: (r: Monthly | Daily) => number) {
-  const map = new Map<string, { ky: string; a: number; b: number }>()
+/** Tách theo ngành hàng, mỗi ngành một phần của cột xếp chồng.
+ *
+ *  Bản cũ chỉ có hai rổ: robot vào `a`, CÒN LẠI vào `b`. Nên ngành thứ ba
+ *  bị cộng thẳng vào số của Handheld — sai số chứ không chỉ sai nhãn. Giờ
+ *  mỗi ngành trong CAT_MAY có phần riêng, thứ tự khớp CAT_MAY. */
+function splitByCat(rows: (Monthly | Daily)[], pick: (r: Monthly | Daily) => number): PtN[] {
+  const map = new Map<string, number[]>()
   for (const r of rows) {
     const k = keyOf(r)
-    const cur = map.get(k) ?? { ky: k, a: 0, b: 0 }
-    if (r.category === 'robot') cur.a += Number(pick(r) || 0)
-    else cur.b += Number(pick(r) || 0)
+    const cur = map.get(k) ?? CAT_MAY.map(() => 0)
+    const i = CAT_MAY.indexOf(r.category as (typeof CAT_MAY)[number])
+    if (i >= 0) cur[i] += Number(pick(r) || 0)
     map.set(k, cur)
   }
-  return Array.from(map.values()).sort((a, b) => a.ky.localeCompare(b.ky))
+  return Array.from(map.entries())
+    .map(([ky, parts]) => ({ ky, parts }))
+    .sort((a, b) => a.ky.localeCompare(b.ky))
 }
+
+/** Chuỗi cho MultiStack, bỏ ngành không có số nào trong kỳ — để một ngành
+ *  mới chưa phát sinh đơn không chiếm chỗ trong chú giải. */
+const chuoiCat = (data: PtN[]) =>
+  CAT_MAY.map((c, i) => ({ c, i }))
+    .filter(({ i }) => data.some((d) => (d.parts[i] ?? 0) > 0))
+    .map(({ c, i }) => ({ ten: CAT_TEN[c], color: CAT_MAU[c], i }))
 
 /** Per-model aggregate for whatever periods are selected. Averages are
  *  recomputed from sums so they stay weighted correctly. The median only
@@ -5095,7 +5136,7 @@ export default function Dashboard({
           <p className="eyebrow">Roborock Official VN · TikTok Shop</p>
           <h1>Business performance</h1>
           <p className="lede">
-            Robots and handhelds only — gifts and accessories excluded. Periods are keyed on order
+            Machines only — gifts and accessories excluded. Periods are keyed on order
             creation date in Vietnam time. Price bands come from the final seller price &mdash;
             list price minus seller discount, platform vouchers not deducted.
           </p>
@@ -5883,22 +5924,33 @@ export default function Dashboard({
             <section id="s2-8">
               <h2><span className="hno">2.8</span>Robot vs handheld mix</h2>
               <p className="sub">Stacked net quantity.</p>
-              <StackChart
+              <MultiStack
                 data={splitByCat(srcShown, (r) => r.sl_chua_huy)}
-                fmt={n0} label={lbl} names={['Robot', 'Handheld']}
-                colors={['var(--c1)', 'var(--c2)']} unit="net pcs"
-                tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />Robot {n0(d.a)} · Handheld {n0(d.b)}
-                    <br />Total {n0(d.a + d.b)} pcs · Robot share {p1(d.a, d.a + d.b)}%</>
-                )}
+                series={chuoiCat(splitByCat(srcShown, (r) => r.sl_chua_huy))}
+                fmt={n0} label={lbl} unit="net pcs"
+                tip={(d) => {
+                  const tong = d.parts.reduce((a, v) => a + (v || 0), 0)
+                  return (
+                    <><b>{lbl(d.ky)}</b>
+                      {CAT_MAY.map((c, i) => ((d.parts[i] ?? 0) > 0
+                        ? <Fragment key={c}><br />{CAT_TEN[c]} {n0(d.parts[i])}</Fragment>
+                        : null))}
+                      <br />Total {n0(tong)} pcs · Robot share {p1(d.parts[0] ?? 0, tong)}%</>
+                  )
+                }}
               />
               <BangDuoi
                 rows={splitByCat(srcShown, (r) => r.sl_chua_huy)} lbl={lbl}
                 cot={[
-                  { ten: 'Robot', lay: (r) => r.a, in: n0, dod: true },
-                  { ten: 'Handheld', lay: (r) => r.b, in: n0, dod: true },
-                  { ten: 'Total', lay: (r) => r.a + r.b, in: n0 },
-                  { ten: 'Robot share', lay: (r) => p1(r.a, r.a + r.b), in: (v) => pct(v) },
+                  ...CAT_MAY.map((c, i) => ({
+                    ten: CAT_TEN[c], lay: (r: PtN) => r.parts[i] ?? 0, in: n0, dod: true,
+                  })),
+                  { ten: 'Total', lay: (r: PtN) => r.parts.reduce((a, v) => a + (v || 0), 0), in: n0 },
+                  {
+                    ten: 'Robot share',
+                    lay: (r: PtN) => p1(r.parts[0] ?? 0, r.parts.reduce((a, v) => a + (v || 0), 0)),
+                    in: (v: number) => pct(v),
+                  },
                 ]}
               />
             </section>
@@ -5982,7 +6034,7 @@ export default function Dashboard({
             <section id="s3-1">
               <h2><span className="hno">3.1</span>Robot and handheld side by side — {periodNote}</h2>
               <div className="cards">
-              {(['robot', 'handheld'] as const).map((c, i) => {
+              {CAT_MAY.map((c) => {
                 const rows = srcShown.filter((r) => r.category === c)
                 const s = (f: (r: Monthly | Daily) => number) =>
                   rows.reduce((a, r) => a + Number(f(r) || 0), 0)
@@ -5992,8 +6044,8 @@ export default function Dashboard({
                 return (
                   <div className="card" key={c}>
                     <div className="card-h">
-                      <i className="sw" style={{ background: i === 0 ? 'var(--c1)' : 'var(--c2)' }} />
-                      <b>{c === 'robot' ? 'Robot vacuums' : 'Handheld vacuums'}</b>
+                      <i className="sw" style={{ background: CAT_MAU[c] }} />
+                      <b>{CAT_TEN_DAI[c] ?? CAT_TEN[c]}</b>
                     </div>
                     <div className="kv"><span>Seller NMV</span><b>{bn(s((r) => r.nmv))} bn</b></div>
                     <div className="kv"><span>Seller GMV</span><b>{bn(gmv)} bn</b></div>
@@ -6013,14 +6065,20 @@ export default function Dashboard({
 
             <section id="s3-2">
               <h2><span className="hno">3.2</span>Seller NMV by category per {periodWord}</h2>
-              <StackChart
+              <MultiStack
                 data={splitByCat(srcShown, (r) => r.nmv)}
-                fmt={bn} label={lbl} names={['Robot', 'Handheld']}
-                colors={['var(--c1)', 'var(--c2)']} unit="VND bn"
-                tip={(d) => (
-                  <><b>{lbl(d.ky)}</b><br />Robot {bn(d.a)} bn · Handheld {bn(d.b)} bn
-                    <br />Robot share {p1(d.a, d.a + d.b)}%</>
-                )}
+                series={chuoiCat(splitByCat(srcShown, (r) => r.nmv))}
+                fmt={bn} label={lbl} unit="VND bn"
+                tip={(d) => {
+                  const tong = d.parts.reduce((a, v) => a + (v || 0), 0)
+                  return (
+                    <><b>{lbl(d.ky)}</b>
+                      {CAT_MAY.map((c, i) => ((d.parts[i] ?? 0) > 0
+                        ? <Fragment key={c}><br />{CAT_TEN[c]} {bn(d.parts[i])} bn</Fragment>
+                        : null))}
+                      <br />Robot share {p1(d.parts[0] ?? 0, tong)}%</>
+                  )
+                }}
               />
             </section>
 
@@ -6030,15 +6088,16 @@ export default function Dashboard({
                 Handhelds usually cancel harder than robots. Same delivery problem, lower order
                 value, so buyers refuse more easily.
               </p>
-              <div className="two">
-                {(['robot', 'handheld'] as const).map((c) => {
+              <div className="nhieu">
+                {CAT_MAY.map((c) => {
                   const rr = rollup(srcShown, c)
+                  if (!rr.length) return null
                   return (
                     <div key={c}>
-                      <h3>{c === 'robot' ? 'Robot' : 'Handheld'}</h3>
+                      <h3>{CAT_TEN[c]}</h3>
                       <DeltaChart
                         data={rr.map((r) => ({ ky: r.ky, v: r.cancel_rate }))}
-                        color={c === 'robot' ? 'var(--c1)' : 'var(--c2)'}
+                        color={CAT_MAU[c]}
                         fmt={(v) => `${v}`} label={lbl} unit="% cancelled"
                         tip={(d) => <><b>{lbl(d.ky)}</b><br />Cancelled {d.v}%</>}
                       />
@@ -6060,7 +6119,7 @@ export default function Dashboard({
                   </tr></thead>
                   <tbody>
                     {srcShown
-                      .filter((r) => r.category === 'robot' || r.category === 'handheld')
+                      .filter((r) => (CAT_MAY as readonly string[]).includes(r.category))
                       .slice()
                       .sort((a, b) => keyOf(b).localeCompare(keyOf(a)) || a.category.localeCompare(b.category))
                       .slice(0, 80)
@@ -6068,8 +6127,8 @@ export default function Dashboard({
                         <tr key={`${keyOf(r)}-${r.category}`}>
                           <td className="k">{lbl(keyOf(r))}</td>
                           <td>
-                            <span className="sw sm" style={{ background: r.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
-                            {r.category === 'robot' ? 'Robot' : 'Handheld'}
+                            <span className="sw sm" style={{ background: CAT_MAU[r.category] ?? GREY }} />
+                            {CAT_TEN[r.category] ?? r.category}
                           </td>
                           <td className="n">{n0(r.so_luong)}</td>
                           <td className="n"><b>{n0(r.sl_chua_huy)}</b></td>
@@ -6234,7 +6293,7 @@ export default function Dashboard({
               <RowBars
                 rows={skuF.slice().sort((a, b) => b.nmv - a.nmv).slice(0, 15).map((s) => ({
                   nhan: s.model,
-                  segs: [{ v: s.nmv, color: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)', ten: 'Seller NMV' }],
+                  segs: [{ v: s.nmv, color: CAT_MAU[s.category] ?? GREY, ten: 'Seller NMV' }],
                   phu: `${mn(s.nmv)}m · ${n0(s.sl_chua_huy)} net pcs`,
                 }))}
               />
@@ -6266,7 +6325,7 @@ export default function Dashboard({
                     <th className="n">Lapse (median)</th>
                   </tr></thead>
                   <tbody>
-                    {(['robot', 'handheld'] as const)
+                    {CAT_MAY
                       .filter((c) => cat === 'all' || cat === c)
                       .map((c) => {
                         const rows = skuF.filter((s) => s.category === c)
@@ -6280,8 +6339,8 @@ export default function Dashboard({
                             <tr className="grp" onClick={() => toggleClosed(c)}>
                               <td colSpan={2}>
                                 <span className="car">{open ? '▾' : '▸'}</span>{' '}
-                                <span className="sw sm" style={{ background: c === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
-                                <b>{c === 'robot' ? 'Robot vacuums' : 'Handheld vacuums'}</b>
+                                <span className="sw sm" style={{ background: CAT_MAU[c] }} />
+                                <b>{CAT_TEN_DAI[c] ?? CAT_TEN[c]}</b>
                                 <span className="muted"> · {rows.length} models</span>
                               </td>
                               <td className="n"><b>{n0(gross)}</b></td>
@@ -8248,7 +8307,7 @@ export default function Dashboard({
                     {daySkuF.slice().sort((a, b) => b.so_luong - a.so_luong).map((s) => (
                       <tr key={s.model}>
                         <td>
-                          <span className="sw sm" style={{ background: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
+                          <span className="sw sm" style={{ background: CAT_MAU[s.category] ?? GREY }} />
                           {s.model}
                         </td>
                         <td className="muted">{s.band}</td>
@@ -9128,7 +9187,7 @@ export default function Dashboard({
                     {modelHuy.rows.map((r) => (
                       <tr key={r.model} style={r.mong ? { opacity: 0.55 } : undefined}>
                         <td>
-                          <span className="sw sm" style={{ background: r.cat === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
+                          <span className="sw sm" style={{ background: CAT_MAU[r.cat] ?? GREY }} />
                           {r.model}
                           {r.mong && <span className="muted" style={{ fontSize: 11 }}> · thin</span>}
                         </td>
@@ -9187,7 +9246,7 @@ export default function Dashboard({
                     {skuF.slice().sort((a, b) => b.sl_huy - a.sl_huy).map((s) => (
                       <tr key={s.model}>
                         <td>
-                          <span className="sw sm" style={{ background: s.category === 'robot' ? 'var(--c1)' : 'var(--c2)' }} />
+                          <span className="sw sm" style={{ background: CAT_MAU[s.category] ?? GREY }} />
                           {s.model}
                         </td>
                         <td className="muted">{s.band}</td>
@@ -9602,7 +9661,7 @@ export default function Dashboard({
                   </tbody>
                 </table>
               </div>
-              <p className="foot">Money in VND bn. Shipping figures cover all orders, not just robots and handhelds.</p>
+              <p className="foot">Money in VND bn. Shipping figures cover all orders, not just machines.</p>
             </section>
           </>
         )}
@@ -10824,6 +10883,9 @@ const CSS = `
 .sw.sm{width:7px;height:7px;margin-right:7px}
 
 .two{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:18px}
+/* Lưới theo ngành hàng: tự co giãn nên thêm ngành thứ ba không vỡ, khác
+   .two vốn cố định đúng hai cột. */
+.nhieu{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:26px;margin-top:18px}
 @media (max-width:760px){.two{grid-template-columns:1fr}}
 
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-top:30px}
