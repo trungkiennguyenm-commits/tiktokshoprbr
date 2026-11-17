@@ -12,8 +12,16 @@ import { ymdVN } from '@/lib/tts/ngay'
  *    có số theo tháng thì phải hỏi riêng từng tháng — không thể hỏi một
  *    phát cả năm rồi chia ra.
  *
- * 2. Mỗi lần hỏi tối đa 60 ngày. Tháng luôn dưới ngưỡng đó nên hỏi theo
- *    tháng là an toàn.
+ * 2. MỖI LẦN HỎI TỐI ĐA 30 NGÀY, không phải 60 như tôi tưởng lúc đầu.
+ *    Tháng 31 ngày vượt trần, và lỗi trả về là 28001022 "date range cannot
+ *    exceed 30 days". Bẫy ở chỗ nó chỉ nổ vào những tháng mà tháng LIỀN
+ *    TRƯỚC có 31 ngày, nên đồng bộ chạy êm hàng tháng rồi đột nhiên hỏng —
+ *    đúng chuyện đã xảy ra từ 07/11/2026, tháng 10 có 31 ngày.
+ *
+ *    Vì vậy một tháng phải chia thành nhiều cửa sổ ≤30 ngày. NHƯNG API trả
+ *    số ĐÃ GỘP theo cửa sổ, mà bảng khoá theo (video_id, thang) — upsert
+ *    từng cửa sổ thì cửa sổ sau ĐÈ cửa sổ trước và tháng đó chỉ còn số của
+ *    mấy ngày cuối. Nên phải cộng dồn hết các cửa sổ rồi mới ghi một lần.
  *
  * 3. Shop này có hơn 1.200 video mỗi tháng, trang tối đa 100 → khoảng 13
  *    lượt gọi cho một tháng. Kéo 12 tháng là trên 150 lượt, quá 300 giây
@@ -36,6 +44,8 @@ const TRANG_TOI_DA = 40
 /** Cửa sổ lookback của endpoint, tính bằng ngày. Để 175 thay vì 180 cho
  *  có biên — TikTok tính theo múi giờ shop, không theo UTC. */
 const LOOKBACK_NGAY = 175
+/** Trần độ dài một lần hỏi, tính bằng ngày. */
+const NGAY_TOI_DA = 30
 
 type Tien = { amount?: string; currency?: string }
 type Video = {
@@ -82,6 +92,20 @@ const soChuoi = (s?: string) => {
  *  thiếu mất ngày gần nhất — xem lib/tts/ngay.ts. */
 const ngayISO = (d: Date) => d.toISOString().slice(0, 10)
 
+/** Chia [dau, cuoi) thành các cửa sổ ≤ NGAY_TOI_DA ngày.
+ *  Mốc cuối là loại trừ (end_date_lt), nên cửa sổ nối đuôi nhau không
+ *  chồng lấn và không hở ngày nào. */
+function cacCuaSo(dau: Date, cuoi: Date) {
+  const ra: { tu: Date; den: Date }[] = []
+  let tu = dau
+  while (tu.getTime() < cuoi.getTime()) {
+    const den = new Date(Math.min(tu.getTime() + NGAY_TOI_DA * 86_400_000, cuoi.getTime()))
+    ra.push({ tu, den })
+    tu = den
+  }
+  return ra
+}
+
 /** Danh sách tháng cần kéo, mới nhất trước. */
 function cacThang(soThang: number, lui: number) {
   const ra: { dau: Date; cuoi: Date }[] = []
@@ -116,98 +140,147 @@ export async function syncShopVideos(soThang = 1, lui = 0) {
     }
 
     // Tháng đang chạy dở thì chốt ở hôm nay, đừng hỏi ngày tương lai.
-    const hetNgay = cuoi.getTime() > Date.now() ? ymdVN() : ngayISO(cuoi)
-    let pageToken: string | undefined
+    const hetDate = cuoi.getTime() > Date.now() ? new Date(`${ymdVN()}T00:00:00Z`) : cuoi
 
-    for (let i = 0; i < TRANG_TOI_DA; i++) {
-      try {
-        const data = await ttsRequest<{
-          videos?: Video[]
-          next_page_token?: string
-        }>({
-          path: PATH,
-          accessToken: ctx.accessToken,
-          shopCipher: ctx.shopCipher,
-          query: {
-            start_date_ge: thang,
-            end_date_lt: hetNgay,
-            page_size: 100,
-            sort_field: 'gmv',
-            sort_order: 'DESC',
-            currency: 'LOCAL',
-            account_type: 'ALL',
-            ...(pageToken ? { page_token: pageToken } : {}),
-          },
-        })
+    /* Cộng dồn CẢ THÁNG rồi mới ghi một lần.
+       API trả số đã gộp theo cửa sổ hỏi, nên upsert từng cửa sổ sẽ đè lên
+       nhau — tháng 31 ngày chia hai cửa sổ thì chỉ còn số của ngày cuối. */
+    const gop = new Map<string, Record<string, unknown>>()
+    const soCuaSo = new Map<string, number>()
+    let loiThang: string | null = null
 
-        trang += 1
-        const videos = (data.videos ?? []).filter((v) => v.id)
-        doc += videos.length
+    for (const { tu, den } of cacCuaSo(dau, hetDate)) {
+      if (loiThang) break
+      const tuISO = ngayISO(tu)
+      const denISO = ngayISO(den)
+      let pageToken: string | undefined
 
-        if (videos.length) {
-          const gop = new Map<string, Record<string, unknown>>()
+      for (let i = 0; i < TRANG_TOI_DA; i++) {
+        try {
+          const data = await ttsRequest<{
+            videos?: Video[]
+            next_page_token?: string
+          }>({
+            path: PATH,
+            accessToken: ctx.accessToken,
+            shopCipher: ctx.shopCipher,
+            query: {
+              start_date_ge: tuISO,
+              end_date_lt: denISO,
+              page_size: 100,
+              sort_field: 'gmv',
+              sort_order: 'DESC',
+              currency: 'LOCAL',
+              account_type: 'ALL',
+              ...(pageToken ? { page_token: pageToken } : {}),
+            },
+          })
+
+          trang += 1
+          const videos = (data.videos ?? []).filter((v) => v.id)
+          doc += videos.length
+
           for (const v of videos) {
+            const id = v.id as string
             const sp = v.products ?? []
-            gop.set(v.id as string, {
-              video_id: v.id as string,
+            const cu = gop.get(id)
+            soCuaSo.set(id, (soCuaSo.get(id) ?? 0) + 1)
+
+            const cong = (ten: string, them: number | null) => {
+              const a = Number(cu?.[ten] ?? 0)
+              const b = Number(them ?? 0)
+              return cu?.[ten] == null && them == null ? null : a + b
+            }
+
+            gop.set(id, {
+              video_id: id,
               thang,
 
-              username: v.username ?? v.creator?.user_name ?? null,
-              nick_name: v.creator?.nick_name ?? null,
-              author_type: v.creator?.author_type ?? null,
-              creator_id: v.creator?.creator_id ?? null,
-
-              title: v.title ?? null,
-              duration: v.duration ?? null,
+              // Phần mô tả: lấy của cửa sổ mới nhất, không cộng.
+              username: v.username ?? v.creator?.user_name ?? cu?.username ?? null,
+              nick_name: v.creator?.nick_name ?? cu?.nick_name ?? null,
+              author_type: v.creator?.author_type ?? cu?.author_type ?? null,
+              creator_id: v.creator?.creator_id ?? cu?.creator_id ?? null,
+              title: v.title ?? cu?.title ?? null,
+              duration: v.duration ?? cu?.duration ?? null,
               video_post_time: v.video_post_time
                 ? new Date(v.video_post_time.replace(' ', 'T') + 'Z').toISOString()
-                : null,
-              advertisable: v.advertisable ?? null,
-              hash_tags: v.hash_tags ?? null,
+                : (cu?.video_post_time ?? null),
+              advertisable: v.advertisable ?? cu?.advertisable ?? null,
+              hash_tags: v.hash_tags ?? cu?.hash_tags ?? null,
 
-              views: v.views ?? null,
-              product_impressions: v.product_impressions ?? null,
-              product_clicks: v.product_clicks ?? null,
+              // Phần đếm được: cộng qua các cửa sổ.
+              views: cong('views', v.views ?? null),
+              product_impressions: cong('product_impressions', v.product_impressions ?? null),
+              product_clicks: cong('product_clicks', v.product_clicks ?? null),
+              v_to_l_clicks: cong('v_to_l_clicks', v.v_to_l_clicks ?? null),
+              gmv: cong('gmv', soTien(v.gmv)),
+              indirect_gmv: cong('indirect_gmv', soTien(v.indirect_gmv)),
+              attributed_gmv: cong('attributed_gmv', soTien(v.attributed_gmv)),
+              sku_orders: cong('sku_orders', v.sku_orders ?? null),
+              items_sold: cong('items_sold', v.items_sold ?? null),
+              avg_customers: cong('avg_customers', v.avg_customers ?? null),
+              likes: cong('likes', v.likes ?? null),
+              comments: cong('comments', v.comments ?? null),
+              shares: cong('shares', v.shares ?? null),
+              new_followers: cong('new_followers', v.new_followers ?? null),
+
+              // Tỷ lệ: giữ nguyên của API khi tháng chỉ có MỘT cửa sổ; tháng
+              // bị chia thì tính lại từ tử số và mẫu số đã cộng, bên dưới.
               click_through_rate: soChuoi(v.click_through_rate),
               ctor: soChuoi(v.ctor),
-              v_to_l_clicks: v.v_to_l_clicks ?? null,
+              gpm: soTien(v.gpm),
+              // Hai tỷ lệ này không có mẫu số để tính lại, nên tháng bị chia
+              // thì để null còn hơn ghi số của một cửa sổ rồi gọi là cả tháng.
               v_to_l_rate: soChuoi(v.v_to_l_rate),
               video_finish_rate: soChuoi(v.video_finish_rate),
 
-              gmv: soTien(v.gmv),
-              indirect_gmv: soTien(v.indirect_gmv),
-              attributed_gmv: soTien(v.attributed_gmv),
-              gpm: soTien(v.gpm),
-              sku_orders: v.sku_orders ?? null,
-              items_sold: v.items_sold ?? null,
-              avg_customers: v.avg_customers ?? null,
-
-              likes: v.likes ?? null,
-              comments: v.comments ?? null,
-              shares: v.shares ?? null,
-              new_followers: v.new_followers ?? null,
-
-              product_id: sp[0]?.id ?? null,
-              product_name: sp[0]?.name ?? null,
-              so_product: sp.length,
+              product_id: sp[0]?.id ?? cu?.product_id ?? null,
+              product_name: sp[0]?.name ?? cu?.product_name ?? null,
+              so_product: sp.length || (cu?.so_product ?? 0),
 
               synced_at: new Date().toISOString(),
             })
           }
 
-          const { error } = await db
-            .from('shop_video_monthly')
-            .upsert(Array.from(gop.values()), { onConflict: 'video_id,thang' })
-          if (error) throw new Error(error.message)
-          ghi += gop.size
+          pageToken = data.next_page_token || undefined
+          if (!pageToken) break
+        } catch (e) {
+          loiThang = `${thang} (${tuISO}→${denISO}): ${e instanceof Error ? e.message : String(e)}`
+          break
         }
-
-        pageToken = data.next_page_token || undefined
-        if (!pageToken) break
-      } catch (e) {
-        errors.push(`${thang}: ${e instanceof Error ? e.message : String(e)}`)
-        break
       }
+    }
+
+    if (loiThang) {
+      errors.push(loiThang)
+      continue
+    }
+
+    /* Tháng bị chia nhiều cửa sổ: tỷ lệ của từng cửa sổ không cộng được,
+       nên tính lại từ tổng — đúng công thức Dashboard đang dùng để gộp. */
+    for (const [id, r] of gop) {
+      if ((soCuaSo.get(id) ?? 1) <= 1) continue
+      const views = Number(r.views ?? 0)
+      const clicks = Number(r.product_clicks ?? 0)
+      const don = Number(r.sku_orders ?? 0)
+      const tien = Number(r.gmv ?? 0)
+      r.click_through_rate = views ? (clicks / views) * 100 : null
+      r.ctor = clicks ? (don / clicks) * 100 : null
+      r.gpm = views ? (tien / views) * 1000 : null
+      r.v_to_l_rate = null
+      r.video_finish_rate = null
+    }
+
+    if (gop.size) {
+      const { error } = await db
+        .from('shop_video_monthly')
+        .upsert(Array.from(gop.values()), { onConflict: 'video_id,thang' })
+      if (error) {
+        errors.push(`${thang}: ghi thất bại — ${error.message}`)
+        continue
+      }
+      ghi += gop.size
     }
   }
 

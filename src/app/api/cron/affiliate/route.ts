@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { syncAffiliateOrders } from '@/lib/affiliate/sync'
+import { chayAffiliate } from '@/lib/affiliate/chay'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -10,8 +9,10 @@ export const maxDuration = 300
  *   /api/cron/affiliate?secret=<CRON_SECRET>             → 60 ngày gần nhất
  *   /api/cron/affiliate?secret=<CRON_SECRET>&days=400    → backfill
  *
- * Gói Hobby chỉ cho 2 cron job nên route này không tự chạy; nó được lượt
- * đồng bộ đơn hàng gọi tiếp.
+ * Gói Hobby chỉ cho 2 cron job nên route này không tự chạy. Lượt đồng bộ
+ * đêm KHÔNG gọi route này nữa — nó chạy chayAffiliate() thẳng trong tiến
+ * trình của route video, xem lib/affiliate/chay.ts. Route này giữ lại để
+ * gọi tay và để backfill.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url)
@@ -24,42 +25,7 @@ export async function GET(request: Request) {
   }
 
   const days = Number(url.searchParams.get('days'))
-  const db = supabaseAdmin()
-  const { data: shop } = await db.from('shops').select('id').limit(1).single()
-  const { data: run } = await db
-    .from('sync_runs')
-    .insert({ shop_id: shop?.id, resource: 'affiliate', status: 'running' })
-    .select('id')
-    .single()
-
-  try {
-    const res = await syncAffiliateOrders(Number.isFinite(days) && days > 0 ? days : 60)
-    if (run?.id) {
-      await db
-        .from('sync_runs')
-        .update({
-          finished_at: new Date().toISOString(),
-          status: res.errors.length ? 'error' : 'success',
-          records_read: res.orders,
-          records_written: res.rows,
-          page_count: res.pages,
-          error_message: res.errors.slice(0, 5).join(' | ') || null,
-        })
-        .eq('id', run.id)
-    }
-    return NextResponse.json({ ok: true, ...res })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    if (run?.id) {
-      await db
-        .from('sync_runs')
-        .update({
-          finished_at: new Date().toISOString(),
-          status: 'error',
-          error_message: message,
-        })
-        .eq('id', run.id)
-    }
-    return NextResponse.json({ error: message }, { status: 500 })
-  }
+  const res = await chayAffiliate(Number.isFinite(days) && days > 0 ? days : 60)
+  if ('loi' in res) return NextResponse.json({ error: res.loi }, { status: 500 })
+  return NextResponse.json({ ok: true, ...res })
 }

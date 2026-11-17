@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { syncShopVideos } from '@/lib/video/sync'
-import { goiTiep } from '@/lib/cron/chain'
+import { chayAffiliate } from '@/lib/affiliate/chay'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -54,9 +54,18 @@ export async function GET(request: Request) {
         })
         .eq('id', run.id)
     }
-    goiTiep(url.origin, '/api/cron/affiliate?days=60', secret, 'video')
+    /* Mắt xích cuối chạy THẲNG trong tiến trình này, không gọi tiếp qua
+       HTTP nữa. Bản cũ dùng goiTiep + after() và chưa bao giờ chạy được từ
+       cron: affiliate_order_skus đứng im từ 08/10 trong khi bốn nguồn kia
+       vẫn cập nhật mỗi đêm, mà không có log nào để lần ra.
 
-    return NextResponse.json({ ok: true, ...res })
+       Chạy thẳng thì rẻ và chắc: affiliate tốn 2–17 giây, route này tốn 25
+       giây, trần Vercel là 300. Lỗi của nó KHÔNG làm hỏng lượt video —
+       chayAffiliate tự ghi dòng sync_runs riêng và trả lỗi về chứ không
+       ném, nên hai nguồn độc lập nhau. */
+    const aff = await chayAffiliate(60)
+
+    return NextResponse.json({ ok: true, ...res, affiliate: aff })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (run?.id) {

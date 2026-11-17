@@ -7,7 +7,11 @@ import { after } from 'next/server'
  * cần chạy. Hai khe cron dành cho refresh-tokens và orders; phần còn lại
  * móc đuôi nhau:
  *
- *   orders → ads → live → product → video → affiliate
+ *   orders → ads → live → product → video
+ *
+ * affiliate KHÔNG còn trong chuỗi này. Nó từng là mắt xích cuối và chưa
+ * bao giờ chạy được từ cron — xem lib/affiliate/chay.ts. Giờ route video
+ * gọi thẳng chayAffiliate() trong tiến trình của nó.
  *
  * MỖI MẮT XÍCH LÀ MỘT LƯỢT GỌI RIÊNG, nên mỗi cái có trọn 300 giây của
  * nó. Gộp ba nguồn vào một route là chạm trần: riêng video đã mất 169
