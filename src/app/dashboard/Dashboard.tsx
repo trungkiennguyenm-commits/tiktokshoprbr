@@ -6585,7 +6585,7 @@ export default function Dashboard({
                 <span className="muted">
                   <b>CPM and CPC are blank for LGM and PGM on purpose.</b> TikTok does not report
                   impressions or clicks for GMV Max campaigns — blank means not reported, not zero.
-                  Judge those two on GMV per đồng (4.2, 4.6); the branding rows cannot be judged
+                  Judge those two on GMV per đồng (8.2, 8.6); the branding rows cannot be judged
                   that way because no revenue is attributed to them at all.
                 </span>
               </p>
@@ -6661,7 +6661,7 @@ export default function Dashboard({
                 <br /><br />
                 <b>None of these rows carry revenue.</b> The auction report only returns spend,
                 impressions and clicks, so branding spend cannot be given an ROAS here and should
-                not be added into the ad-efficiency numbers on 4.2 and 4.6, which are GMV Max only.
+                not be added into the ad-efficiency numbers on 8.2 and 8.6, which are GMV Max only.
               </div>
             </section>
           </>
@@ -8600,10 +8600,10 @@ export default function Dashboard({
                   sub="TikTok voucher that died with the order" />
                 <Tile label={`Cancelled ${pickup.moc[0]?.khoang ?? 'early'}`}
                   value={pct(p1(pickup.moc[0]?.tong ?? 0, pickup.tong))}
-                  sub="share of all cancellations — see 7.3" />
+                  sub="share of all cancellations — see 5.4" />
                 <Tile label="Cancelled after pickup" value={pct(pickup.pctSau)}
                   tone={pickup.pctSau > 40 ? 'bad' : 'ok'}
-                  sub="parcel had already shipped — see 7.4" />
+                  sub="of all cancellations — parcel had already shipped. See 5.5; the table in 5.12 counts the same thing over units ORDERED, so its number is lower." />
               </div>
             </section>
 
@@ -8746,7 +8746,7 @@ export default function Dashboard({
                 <b>The boundary is sharp and it is at 48 hours.</b> Everything cancelled inside two
                 days died before pickup; from the 2–3 day bucket onward, 94–99% died after it. That
                 gives one operating rule — a cancellation inside 48h is a lost sale, past 48h it is
-                an operations loss. 7.4 tracks that split over time.
+                an operations loss. 5.5 tracks that split over time.
               </div>
             </section>
 
@@ -8812,7 +8812,7 @@ export default function Dashboard({
                 <b>Why this matters more than the headline cancellation rate.</b> Half the
                 cancellations on this account happen after the parcel has left — the average one
                 spends about a week in the courier&rsquo;s hands before it dies. Those are the ones
-                with a real cost attached, and they are almost all the same reason code (7.5:
+                with a real cost attached, and they are almost all the same reason code (5.6:
                 delivery failed). The other half never shipped, and while they still cost the sale,
                 fixing them is a different job: firmer orders in the live room, a checkout that
                 works, and a price the buyer will not immediately go looking to beat.
@@ -8831,7 +8831,7 @@ export default function Dashboard({
                 shop&rsquo;s own data, not an inference from timing. The wording arrives in
                 Vietnamese, English and Chinese for the same reason, so it is folded into nine
                 groups. Each column is one {periodWord}, normalised to 100% — the mix, not the
-                volume. Volume per {periodWord} is already in 7.2.
+                volume. Volume per {periodWord} is already in 5.3.
               </p>
               <StackLine
                 rows={lyDo.theoKy.map((r) => ({ ky: r.ky, parts: r.parts }))}
@@ -8878,7 +8878,7 @@ export default function Dashboard({
                 </table>
               </div>
               <div className="note hot">
-                <b>The two clusters in 7.3 now have names.</b> The first-hour cluster is
+                <b>The two clusters in 5.4 now have names.</b> The first-hour cluster is
                 buyer-initiated — &ldquo;no longer needed&rdquo;, a payment that would not go
                 through, a better price found elsewhere; average lapse 1–3 hours. The day 3–7
                 cluster is almost entirely <b>Delivery failed</b>, cancelled by TikTok, average
@@ -8904,7 +8904,7 @@ export default function Dashboard({
                 cancellations carrying a real bill: outbound shipping, packing, the return leg, the
                 restock, and the days the unit spends unsellable in transit. Everything else died
                 before anything moved. It uses the same denominator as the plain cancellation rate
-                in 7.2, so the gap between the two is the half of the problem logistics never
+                in 5.3, so the gap between the two is the half of the problem logistics never
                 touches. Each column&rsquo;s tooltip carries all three readings.
                 <br /><br />
                 {campNgay.theoNgayThat ? (
@@ -9021,7 +9021,7 @@ export default function Dashboard({
             <section id="s5-8">
               <h2><span className="hno">5.8</span>Reason mix by campaign day — {periodNote}</h2>
               <p className="sub">
-                The same day types as 7.6, but split by <i>why</i> rather than <i>when</i>. Each row
+                The same day types as 5.7, but split by <i>why</i> rather than <i>when</i>. Each row
                 is 100% of the cancellations on that day type, so the columns say which reason a
                 given kind of day over-produces relative to the others.
               </p>
@@ -9038,7 +9038,7 @@ export default function Dashboard({
                 }))}
               />
               <div className="note">
-                Read this against 7.6&rsquo;s rate line. A day type whose cancellation rate is high
+                Read this against 5.7&rsquo;s rate line. A day type whose cancellation rate is high
                 <i> and</i> whose reasons lean to <b>Delivery failed</b> is losing buyers after the
                 parcel shipped — an operations cost. One that leans to <b>Found a better price</b> or
                 <b> No longer needed</b> is losing them at checkout, before anything moved, which is
@@ -9151,14 +9151,14 @@ export default function Dashboard({
                 is how a problem stays invisible.
                 <b> Days in transit</b> is how long a failed parcel sat outside the warehouse before
                 the order was closed — median first, average after the slash — counted from pickup,
-                not from the order. Red past 7 days. Like 7.2 it comes from a per-month figure the
+                not from the order. Red past 7 days. Like 5.3 it comes from a per-month figure the
                 database computed, so it follows the month chips and the category toggle but not the
                 7-day / 30-day ranges.
                 <br /><br />
                 <b>How long each one takes.</b> Before-pickup cancels are almost all immediate —
                 median 6 minutes, 90% inside 24 hours. After-pickup cancels cannot happen before the
                 courier comes, so the earliest in this data is 40 hours; the median is 6.7 days and
-                90% land inside 12 days. That is why the boundary in 7.3 sits at 48 hours: under two
+                90% land inside 12 days. That is why the boundary in 5.4 sits at 48 hours: under two
                 days is effectively always before pickup, over two days effectively always after.
               </p>
               <div className="filters" style={{ marginTop: 16 }}>
@@ -9176,9 +9176,9 @@ export default function Dashboard({
                   <thead>
                     <tr>
                       <th>Model</th><th className="n">Units ordered</th>
-                      <th className="n">Before pickup</th>
-                      <th className="n">After pickup</th>
-                      <th className="n">Cancelled</th>
+                      <th className="n">Before pickup<div className="uhint">of units ordered</div></th>
+                      <th className="n">After pickup<div className="uhint">of units ordered</div></th>
+                      <th className="n">Cancelled<div className="uhint">of units ordered</div></th>
                       <th className="n">Days in transit</th>
                       <th className="n">Value lost after pickup</th>
                     </tr>
@@ -9495,7 +9495,7 @@ export default function Dashboard({
                     <th className="n">Gross pcs</th>
                     <th className="n">Huỷ</th>
                     <th className="n">Tỷ lệ huỷ</th>
-                    <th className="n">Huỷ sau lấy hàng</th>
+                    <th className="n">Huỷ sau lấy hàng<div className="uhint">trên đơn huỷ</div></th>
                     <th className="n">NMV đặt<div className="uhint">bn</div></th>
                     <th className="n">NMV còn<div className="uhint">bn</div></th>
                     <th className="n">Giữ lại</th>
@@ -9694,7 +9694,7 @@ export default function Dashboard({
                 shop&rsquo;s books.</b> It is the same kind of number as gross revenue on the
                 Advertising sheet: counted before cancellation, and a single order can be credited
                 to more than one piece of content. Do not place it beside Seller NMV and subtract.
-                Section 9.7 is the only place where these numbers meet real orders.
+                Section 7.7 is the only place where these numbers meet real orders.
               </div>
               <div className="filters" style={{ marginTop: 20 }}>
                 <select className="drop" value={vidAcc} onChange={(e) => setVidAcc(e.target.value)}>
@@ -9959,7 +9959,7 @@ export default function Dashboard({
               <div className="note hot">
                 <b>The gap between the two GMV columns is the whole point of this sheet.</b>{' '}
                 TikTok&rsquo;s figure is what the content appeared to earn; GMV kept is what
-                survived to the shop&rsquo;s books. A video can top section 9.5 on attributed GMV
+                survived to the shop&rsquo;s books. A video can top section 7.5 on attributed GMV
                 and still leave almost nothing here. Rank creative, and ad budget behind it, on the
                 last column.
               </div>
