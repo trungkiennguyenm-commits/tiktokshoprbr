@@ -8598,12 +8598,19 @@ export default function Dashboard({
                   sub="what survived" />
                 <Tile label="Subsidy lost with them" value={bn(cancelTotals.subMat)} unit=" bn"
                   sub="TikTok voucher that died with the order" />
+                {/* Cả dải ô này dùng CHUNG mẫu số "đơn đặt" với ô Cancellation
+                    rate đầu hàng, nên đọc ngang được: 69,1% huỷ gồm 25,1% chết
+                    trong giờ đầu và 29,8% chết sau khi đã lấy hàng. Tỷ lệ trên
+                    tổng đơn HUỶ — tức cơ cấu của phần đã mất — để xuống dòng
+                    phụ, vì đặt hai mẫu số cạnh nhau mà không ghi rõ là đúng
+                    chỗ đã gây nhầm. */}
                 <Tile label={`Cancelled ${pickup.moc[0]?.khoang ?? 'early'}`}
-                  value={pct(p1(pickup.moc[0]?.tong ?? 0, pickup.tong))}
-                  sub="share of all cancellations — see 5.4" />
-                <Tile label="Cancelled after pickup" value={pct(pickup.pctSau)}
-                  tone={pickup.pctSau > 40 ? 'bad' : 'ok'}
-                  sub="of all cancellations — parcel had already shipped. See 5.5; the table in 5.12 counts the same thing over units ORDERED, so its number is lower." />
+                  value={pct(p1(pickup.moc[0]?.tong ?? 0, cancelTotals.gross))}
+                  sub={`${n0(pickup.moc[0]?.tong ?? 0)} of ${n0(cancelTotals.gross)} ordered · ${pct(p1(pickup.moc[0]?.tong ?? 0, pickup.tong))} of all cancellations — see 5.4`} />
+                <Tile label="Cancelled after pickup"
+                  value={pct(p1(pickup.sau, cancelTotals.gross))}
+                  tone={p1(pickup.sau, cancelTotals.gross) > 25 ? 'bad' : 'ok'}
+                  sub={`${n0(pickup.sau)} of ${n0(cancelTotals.gross)} ordered · ${pct(pickup.pctSau)} of all cancellations — parcel had already shipped, see 5.5`} />
               </div>
             </section>
 
@@ -8699,6 +8706,7 @@ export default function Dashboard({
                   if (!m) return null
                   return (
                     <><b>{d.ky}</b><br />{n0(d.v)} pcs · {pct(p1(m.tong, pickup.tong))} of all cancellations<br />
+                      {pct(p1(m.tong, cancelTotals.gross))} of {n0(cancelTotals.gross)} ordered<br />
                       After pickup {pct(m.pctSau)} · value lost {bn(m.nmv)} bn</>
                   )
                 }}
@@ -8707,9 +8715,12 @@ export default function Dashboard({
                 <table>
                   <thead>
                     <tr>
-                      <th>Time to cancel</th><th className="n">Pcs</th><th className="n">Share</th>
-                      <th className="n">Cumulative</th><th className="n">Before pickup</th>
-                      <th className="n">After pickup</th><th className="n">% after</th>
+                      <th>Time to cancel</th><th className="n">Pcs</th>
+                      <th className="n">Share<div className="uhint">of cancellations</div></th>
+                      <th className="n">Cumulative<div className="uhint">of cancellations</div></th>
+                      <th className="n">Before pickup</th>
+                      <th className="n">After pickup</th>
+                      <th className="n">% after<div className="uhint">of this row</div></th>
                       <th className="n">Value lost</th>
                     </tr>
                   </thead>
@@ -8761,11 +8772,14 @@ export default function Dashboard({
                 restock — and the unit is out of sellable stock for the days it spends in transit.
               </p>
               <div className="tiles" style={{ marginTop: 20 }}>
+                {/* Mục này nói về CƠ CẤU của phần đã huỷ nên mẫu số là đơn
+                    huỷ — khác ô cùng tên ở 5.1, vốn lấy mẫu số đơn đặt. Vì vậy
+                    cả hai dòng phụ đều ghi thẳng cả hai con số. */}
                 <Tile label="Cancelled after collection" value={pct(pickup.pctSau)}
                   tone={pickup.pctSau > 40 ? 'bad' : 'ok'}
-                  sub={`${n0(pickup.sau)} of ${n0(pickup.tong)} cancelled pcs`} />
+                  sub={`${n0(pickup.sau)} of ${n0(pickup.tong)} cancelled pcs · ${pct(p1(pickup.sau, cancelTotals.gross))} of ${n0(cancelTotals.gross)} ordered`} />
                 <Tile label="Cancelled before collection" value={pct(100 - pickup.pctSau)}
-                  sub={`${n0(pickup.truoc)} pcs — sale lost, nothing shipped`} />
+                  sub={`${n0(pickup.truoc)} of ${n0(pickup.tong)} cancelled pcs · ${pct(p1(pickup.truoc, cancelTotals.gross))} of ${n0(cancelTotals.gross)} ordered — sale lost, nothing shipped`} />
                 <Tile label="Time in the courier's hands"
                   value={pickup.gioTrongTayShipper == null ? '—' : n0(pickup.gioTrongTayShipper)}
                   unit="h" sub="collection to cancellation, average" />
