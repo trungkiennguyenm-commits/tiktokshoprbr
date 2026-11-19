@@ -248,6 +248,22 @@ export type LiveRoomMonth = LiveBase & {
  *  v_live_lgm_daily. */
 export type LiveLgm = { ten: string; ngay: string; lgm_vnd: number }
 
+/** ATR thật theo TỪNG phòng live, creator tách riêng từng người.
+ *
+ *  Khác LiveLgm ở chỗ không gộp creator vào một dòng 'KOC'. Gộp lại thì một
+ *  creator tiêu tiền mà không ra đơn bị creator khác che mất: tháng 9/26 cả
+ *  nhóm KOC có ATR 31,1%, nhưng bên trong huylomo chỉ 7,7% còn tekora và
+ *  thichnghi tiêu tiền với NMV bằng 0.
+ *
+ *  `atr` null nghĩa là KHÔNG TÍNH ĐƯỢC (phòng không có NMV), khác hẳn với 0.
+ *  `lgm_vnd` 0 kèm `nmv` dương là phòng bán tự nhiên, không chạy LGM. */
+export type PhongAtr = {
+  phong: string; nhom: string; thang: string
+  lgm_vnd: number; nmv: number; pcs: number
+  so_luong: number; sl_huy: number
+  cancel_rate: number | null; atr: number | null
+}
+
 /** Hiệu quả theo kênh bán, theo tháng. `kenh` là tên phòng live, 'Creator live',
  *  'Ngoài live' hoặc 'Live (không rõ phòng)'. `phu_song` là % line item của
  *  tháng đó có room_id — dưới ngưỡng thì cách chia kênh không đáng tin. */
@@ -326,6 +342,7 @@ type Props = {
   huyAffiliate: HuyAffiliate[]
   modelBand: ModelBand[]
   huyPhong: HuyPhong[]
+  phongAtr: PhongAtr[]
   /* huyChiTiet, huyModel, videoThang, productKenh KHONG o day: bon nguon
      nay nang 15,9 MB trong tong 21,6 MB cua trang, va moi cai chi duoc doc
      trong dung mot sheet. Chung duoc tai qua /api/data/<khoa> khi sheet do
@@ -483,7 +500,7 @@ const SECTIONS = [
         subs: ['Rooms side by side', 'Traffic and engagement', 'Funnel'] },
       { ten: 'Day by day', ghi: 'TikTok live',
         subs: ['Room by period', 'Audience', 'Conversion', 'Engagement vs CTR'] },
-      { ten: 'Detail', subs: ['Top sessions', 'Creator rooms'] },
+      { ten: 'Detail', subs: ['Top sessions', 'Creator rooms', 'ATR by room'] },
     ],
   },
   {
@@ -2281,7 +2298,7 @@ export default function Dashboard({
   adsVs, adsMonthly, adsCampaigns,
   liveDaily, liveMonthly, liveRooms, liveSessions, liveLgm, kenhMonthly, kenhDaily, kenhSku,
   campTong, campMatrix, hanhTrinh, transitModel, liveOverview, adsObjective, adsObjectiveDay,
-  huyAffiliate, modelBand, huyPhong,
+  huyAffiliate, modelBand, huyPhong, phongAtr,
 }: Props) {
   /* Chiều cao dải lọc dính. Đo thật thay vì đặt hằng số, vì nó đổi theo độ
      rộng màn hình và theo dòng "Showing:" của từng sheet — đặt sai thì thanh
@@ -2408,6 +2425,7 @@ export default function Dashboard({
   const [roomMetric, setRoomMetric] = useState<RoomMetric>('gmv')
   /** Chỉ số đang xem ở lưới kênh × tháng (doanh thu thật của shop). */
   const [kenhMetric, setKenhMetric] = useState<'nmv' | 'cancel' | 'atr' | 'pcs'>('nmv')
+  const [phongMetric, setPhongMetric] = useState<'atr' | 'lgm' | 'nmv' | 'pcs' | 'cancel'>('atr')
   /** Phần 5.6 xem theo tháng hay theo ngày. */
   const [kenhNgay, setKenhNgay] = useState(false)
   /** Phòng đang xem ở biểu đồ NMV vs ATR. 'all' = gộp ba phòng nhà. */
@@ -4116,6 +4134,94 @@ export default function Dashboard({
       }
     })
   }, [kenhBang, kenhBangNgay, kenhNgay, kenhRoom, lgmKenhThang, lgmKenhNgay])
+
+  /** ===== ATR theo TỪNG phòng live, creator không gộp =====
+   *
+   *  Nguồn là v_phong_atr_monthly, nối LGM và NMV bằng username của phòng
+   *  chứ không bằng tên hiển thị. Nối bằng tên hiển thị là chỗ đã hỏng một
+   *  lần: tài khoản ads VN đặt campaign theo handle ('LGMM_@roborockmaylausan')
+   *  nên không khớp bộ tên cũ, và tiền rơi vào '(chưa gắn)' rồi biến mất. */
+  const PHONG_METRICS = useMemo(() => ([
+    { id: 'atr' as const, ten: 'ATR on Seller NMV', don_vi: '%', xau_cao: true,
+      lay: (r: PhongAtr) => (r.atr == null ? null : Number(r.atr)),
+      tong: (a: PhongAtr[]) => {
+        // Tỷ lệ phải tính lại từ tử và mẫu, không được lấy trung bình các ô.
+        const lgm = a.reduce((t, r) => t + Number(r.lgm_vnd || 0), 0)
+        const nmv = a.reduce((t, r) => t + Number(r.nmv || 0), 0)
+        return nmv > 0 && lgm > 0 ? Math.round((lgm / nmv) * 1000) / 10 : null
+      },
+      fmt: (v: number) => `${v}%` },
+    { id: 'lgm' as const, ten: 'LGM spend', don_vi: 'VND mn', xau_cao: false,
+      lay: (r: PhongAtr) => Number(r.lgm_vnd || 0) || null,
+      tong: (a: PhongAtr[]) => a.reduce((t, r) => t + Number(r.lgm_vnd || 0), 0) || null,
+      fmt: (v: number) => (v / 1e6).toFixed(1) },
+    { id: 'nmv' as const, ten: 'Seller NMV', don_vi: 'VND bn', xau_cao: false,
+      lay: (r: PhongAtr) => Number(r.nmv || 0) || null,
+      tong: (a: PhongAtr[]) => a.reduce((t, r) => t + Number(r.nmv || 0), 0) || null,
+      fmt: (v: number) => (v / 1e9).toFixed(2) },
+    { id: 'pcs' as const, ten: 'Net pcs', don_vi: '', xau_cao: false,
+      lay: (r: PhongAtr) => Number(r.pcs || 0) || null,
+      tong: (a: PhongAtr[]) => a.reduce((t, r) => t + Number(r.pcs || 0), 0) || null,
+      fmt: (v: number) => n0(v) },
+    { id: 'cancel' as const, ten: 'Cancellation rate', don_vi: '%', xau_cao: true,
+      lay: (r: PhongAtr) => (r.cancel_rate == null ? null : Number(r.cancel_rate)),
+      tong: (a: PhongAtr[]) => {
+        const huy = a.reduce((t, r) => t + Number(r.sl_huy || 0), 0)
+        const tat = a.reduce((t, r) => t + Number(r.so_luong || 0), 0)
+        return tat > 0 ? Math.round((huy / tat) * 1000) / 10 : null
+      },
+      fmt: (v: number) => `${v}%` },
+  ]), [])
+
+  const pDef = useMemo(
+    () => PHONG_METRICS.find((m) => m.id === phongMetric) ?? PHONG_METRICS[0],
+    [PHONG_METRICS, phongMetric],
+  )
+
+  const phongBang = useMemo(() => {
+    const rows = new Map<string, Map<string, PhongAtr>>()
+    const nhom = new Map<string, string>()
+    const thangs = new Set<string>()
+    for (const r of phongAtr) {
+      const k = String(r.thang).slice(0, 7)
+      if (!liveKeep.has(k)) continue
+      // Tháng mà phòng vừa không chi LGM vừa không ra đơn thì không có gì để nói.
+      if (!Number(r.lgm_vnd || 0) && !Number(r.nmv || 0)) continue
+      thangs.add(k)
+      nhom.set(r.phong, r.nhom)
+      const m = rows.get(r.phong) ?? new Map<string, PhongAtr>()
+      m.set(k, r)
+      rows.set(r.phong, m)
+    }
+    const thang = Array.from(thangs).sort()
+    const tongLgm = (p: string) => {
+      let t = 0
+      for (const k of thang) t += Number(rows.get(p)?.get(k)?.lgm_vnd ?? 0)
+      return t
+    }
+    // Ba phòng nhà giữ đúng thứ tự dùng ở mọi nơi khác; creator xếp theo tổng
+    // LGM giảm dần, vì phòng tiêu nhiều nhất là dòng cần soi trước.
+    const own = PHONG_NHA.filter((t) => rows.has(t))
+    const koc = Array.from(rows.keys())
+      .filter((p) => !PHONG_NHA.includes(p))
+      .sort((a, b) => tongLgm(b) - tongLgm(a))
+    return { ten: [...own, ...koc], rows, thang, nhom }
+  }, [phongAtr, liveKeep])
+
+  /** Phòng có chi LGM nhưng NMV bằng 0 — ô ATR để trống, nên phải gọi tên ra,
+   *  nếu không ô trống bị đọc nhầm thành "không có dữ liệu". */
+  const phongTieuKhongRaDon = useMemo(() => {
+    const ra: string[] = []
+    for (const p of phongBang.ten) {
+      let lgm = 0; let nmv = 0
+      for (const k of phongBang.thang) {
+        const r = phongBang.rows.get(p)?.get(k)
+        lgm += Number(r?.lgm_vnd ?? 0); nmv += Number(r?.nmv ?? 0)
+      }
+      if (lgm > 0 && nmv <= 0) ra.push(p)
+    }
+    return ra
+  }, [phongBang])
 
   /** Sản phẩm × phòng, gộp các tháng đủ phủ sóng tag phòng.
    *
@@ -8049,6 +8155,97 @@ export default function Dashboard({
                 against their sessions is small &mdash; an order that starts in a creator room but
                 closes later, or through a video, is not counted here.
               </p>
+            </section>
+
+            <section id="s6-16">
+              <h2><span className="hno">6.16</span>ATR by room &mdash; every creator room on its own line</h2>
+              <p className="sub">
+                Section 6.3 collapses every creator into one &ldquo;Creator live&rdquo; row. Here
+                each room stands on its own, ours and the creators&rsquo; side by side, on one
+                definition: that room&rsquo;s LIVE GMV Max spend divided by the Seller NMV the room
+                actually kept after cancellations. Spend and revenue are matched by the room&rsquo;s
+                TikTok handle, not by its display name.
+              </p>
+              {!phongBang.thang.length ? (
+                <div className="note warn">
+                  No room had LIVE GMV Max spend or live-tagged orders in the months selected above.
+                </div>
+              ) : (
+                <>
+                  <div className="chips" style={{ marginTop: 14 }}>
+                    <span className="chips-l">Metric</span>
+                    {PHONG_METRICS.map((m) => (
+                      <button key={m.id} className={`chip ${phongMetric === m.id ? 'on' : ''}`}
+                        onClick={() => setPhongMetric(m.id)}>{m.ten}</button>
+                    ))}
+                  </div>
+                  <Matrix
+                    corner={`Room \u00b7 ${pDef.ten}`}
+                    cols={[...phongBang.thang.map((k) => mmyy(`${k}-01`)), 'All months']}
+                    fmt={pDef.fmt}
+                    heat={pDef.xau_cao ? 'high-bad' : 'high-good'}
+                    rows={[
+                      ...phongBang.ten.map((p, i2) => {
+                        const own = PHONG_NHA.includes(p)
+                        const oRows = phongBang.thang
+                          .map((k) => phongBang.rows.get(p)?.get(k))
+                          .filter((r): r is PhongAtr => !!r)
+                        return {
+                          label: own ? shortRoom(p) : `@${p}`,
+                          sub: own ? 'our room' : 'creator',
+                          color: own ? PALETTE[i2 % PALETTE.length] : GREY,
+                          vals: [
+                            ...phongBang.thang.map((k) => {
+                              const r = phongBang.rows.get(p)?.get(k)
+                              return r ? pDef.lay(r) : null
+                            }),
+                            pDef.tong(oRows),
+                          ],
+                        }
+                      }),
+                      {
+                        label: 'All rooms',
+                        sub: 'recomputed, not averaged',
+                        color: GREY,
+                        vals: [
+                          ...phongBang.thang.map((k) => pDef.tong(
+                            phongBang.ten
+                              .map((p) => phongBang.rows.get(p)?.get(k))
+                              .filter((r): r is PhongAtr => !!r),
+                          )),
+                          pDef.tong(
+                            phongBang.ten.flatMap((p) => phongBang.thang
+                              .map((k) => phongBang.rows.get(p)?.get(k))
+                              .filter((r): r is PhongAtr => !!r)),
+                          ),
+                        ],
+                      },
+                    ]}
+                  />
+                  <p className="foot">
+                    {pDef.ten}{pDef.don_vi ? ` (${pDef.don_vi})` : ''} per room per month. Every
+                    rate on the <b>All rooms</b> row is recomputed from its own numerator and
+                    denominator &mdash; averaging the cells above it would weight a room that sold
+                    two machines the same as one that sold three hundred.
+                  </p>
+                  <div className="note warn">
+                    <b>A blank ATR cell is not a zero.</b> It means that room kept no revenue that
+                    month, so there is no denominator to divide by &mdash; the spend was still
+                    real. A room showing <b>0.0</b> under LGM spend is the opposite case: it sold
+                    without any LIVE GMV Max behind it.
+                    {phongTieuKhongRaDon.length > 0 && (
+                      <> Over the months selected, spend with nothing kept against it:{' '}
+                        {phongTieuKhongRaDon.map((p) => (PHONG_NHA.includes(p) ? shortRoom(p) : `@${p}`)).join(' \u00b7 ')}.</>
+                    )}
+                  </div>
+                  <p className="foot">
+                    Creator rooms carry a second caveat: an order that starts in a creator&rsquo;s
+                    room but closes later, or through one of their videos, is tagged to that later
+                    path and never reaches this row. Read a creator&rsquo;s ATR here as an upper
+                    bound on cost, not as the whole of what they brought in.
+                  </p>
+                </>
+              )}
             </section>
           </>
         )}
